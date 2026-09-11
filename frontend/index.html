@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SOLVX — 3D Ocean Explorer</title>
+  
+  <!-- Modern Clean Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="styles.css?v=20260911-ui2">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.180.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="app">
+  <!-- 3D Ocean WebGL Canvas -->
+  <canvas id="renderCanvas"></canvas>
+
+  <!-- Loading & Error States -->
+  <div id="loading">
+    <div>
+      <b>SOLVX</b>
+      <span>BUILDING PHYSICAL 3D OCEAN CHUNK</span>
+    </div>
+  </div>
+  <div id="fatal">
+    <b>Viewer initialization failed</b>
+    <span id="fatalText"></span>
+  </div>
+
+  <!-- (TOP LEFT SOLVX HAS BEEN REMOVED) -->
+
+  <!-- Top Center Brand Pill -->
+  <div id="centerLogo" aria-label="SolvX logo">
+    <div class="logo-letters">
+      <span>S</span><span>O</span><span>L</span><span>V</span><span>X</span>
+    </div>
+    <span class="logo-tag">3D OCEAN EXPLORER</span>
+  </div>
+
+  <!-- Top Right Camera Presets -->
+  <nav id="views" class="panel">
+    <button class="view active" data-view="3d">3D</button>
+    <button class="view" data-view="top">TOP</button>
+    <button class="view" data-view="profile">PROFILE</button>
+    <button class="view" data-view="under">UNDER</button>
+    <button id="reset" class="view">RESET</button>
+    <button id="fullscreen" class="view">FULL</button>
+  </nav>
+
+  <!-- Top Interaction Hint -->
+  <div id="hint">Drag to orbit · right-drag to pan · scroll to zoom · click ocean to inspect</div>
+
+  <!-- Left Sidebar (Layers & Ocean Controls) -->
+  <aside id="controls" class="panel">
+    <section>
+      <div class="eyebrow">DATA FIELD · INSPECTION ONLY</div>
+      <div id="vars" class="vars"></div>
+      <div class="note">Variables do not recolor the ocean. Select one, then click any ocean point to inspect the real backend values.</div>
+    </section>
+
+    <section>
+      <div class="eyebrow">OCEAN CHUNK</div>
+      <div id="depthValue">Sea level → seabed</div>
+      <div class="note">Green land · light soil seabed · translucent blue water</div>
+    </section>
+
+    <section>
+      <div class="eyebrow">VERTICAL EXAGGERATION</div>
+      <div class="inline">
+        <input id="exaggeration" type="range" min="10" max="70" value="70">
+        <b id="exagValue">70×</b>
+      </div>
+    </section>
+
+    <section class="status">
+      <i id="statusDot"></i>
+      <span id="status">Building physical ocean chunk…</span>
+    </section>
+  </aside>
+
+  <!-- Right Sidebar (Point Inspector Readout) -->
+  <aside id="readout" class="panel hidden">
+    <div class="readoutHead">
+      <div>
+        <b>Ocean point</b>
+        <small id="coords">—</small>
+      </div>
+      <button id="closeReadout">×</button>
+    </div>
+    <div id="readoutGrid" class="readoutGrid"></div>
+    <div id="readoutTime" class="note">—</div>
+  </aside>
+
+  <!-- Bottom Timeline Dock -->
+  <footer id="timeline" class="panel">
+    <div class="timelineTop">
+      <div>
+        <b id="timeValue">Loading ocean time…</b>
+        <small id="timeRaw">—</small>
+      </div>
+      <button id="play">PLAY</button>
+    </div>
+    <div class="timelineRow">
+      <span>TIME</span>
+      <input id="timeSlider" type="range" min="0" max="0" value="0">
+      <span id="timeCount">0/0</span>
+    </div>
+  </footer>
+
+  <!-- Bottom Right Volume Toggle -->
+  <div id="depthBadge" class="panel">
+    <span class="depth-dot"></span>
+    Physical water volume
+  </div>
+</div>
+
+<!-- Original 3D script connection -->
+<script type="module" src="app4fix.js?v=20260911-three11"></script>
+</body>
+</html>

@@ -6,7 +6,7 @@ const API =
     window.location.hostname === '127.0.0.1' ||
         window.location.hostname === 'localhost'
         ? 'http://127.0.0.1:8000'
-        : 'https://respondent-scholar-strong-infections.trycloudflare.com/';
+        : 'https://respondent-scholar-strong-infections.trycloudflare.com';
 const S = { scene: null, camera: null, renderer: null, controls: null, root: null, g: null, land: null, landSides: null, landBottom: null, coast: null, seabed: null, water: null, catalog: [], times: [], ti: 0, depthEx: 70, ray: new THREE.Raycaster(), mouse: new THREE.Vector2(), playing: false, lastPlay: 0 };
 async function get(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw Error(`${r.status} ${await r.text()}`); return r.json() }
 function status(t, type = 'ok') { if ($('status')) $('status').textContent = t; if ($('statusDot')) $('statusDot').className = type === 'error' ? 'error' : type === 'busy' ? 'busy' : '' }

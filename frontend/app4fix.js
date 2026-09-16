@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const $ = id => document.getElementById(id), N = v => Number(v), ok = v => Number.isFinite(N(v));
+const $ = id => document.getElementById(id), N = v => Number(v), ok = v => v !== null && v !== undefined && v !== '' && Number.isFinite(N(v));
 const API =
+    window.location.port === '5500' ||
     window.location.hostname === '127.0.0.1' ||
-        window.location.hostname === 'localhost'
-        ? 'http://127.0.0.1:8000'
-        : 'https://respondent-scholar-strong-infections.trycloudflare.com';
+    window.location.hostname === 'localhost'
+        ? `http://${window.location.hostname || '127.0.0.1'}:8000`
+        : window.location.origin;
 const S = { scene: null, camera: null, renderer: null, controls: null, root: null, g: null, land: null, landSides: null, landBottom: null, coast: null, seabed: null, water: null, catalog: [], times: [], ti: 0, depthEx: 70, ray: new THREE.Raycaster(), mouse: new THREE.Vector2(), playing: false, lastPlay: 0 };
 async function get(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw Error(`${r.status} ${await r.text()}`); return r.json() }
 function status(t, type = 'ok') { if ($('status')) $('status').textContent = t; if ($('statusDot')) $('statusDot').className = type === 'error' ? 'error' : type === 'busy' ? 'busy' : '' }
@@ -37,12 +38,76 @@ function buildWater() {
     for (let k = 0; k < cells.length; k++) { const c = cells[k]; o.position.set(c.x, -c.h / 2, c.z); o.scale.set(c.sx, c.h, c.sz); o.updateMatrix(); mesh.setMatrixAt(k, o.matrix) } mesh.instanceMatrix.needsUpdate = true; mesh.userData = { isWater: true, cells }; S.water.add(mesh); S.root.add(S.water)
 }
 function drawCoast() { dispose(S.coast); const ls = [...(S.g.coast || []), ...(S.g.landBoundary || []), ...(S.g.islandCoast || [])]; S.coast = new THREE.LineSegments(lines(ls, .02), new THREE.LineBasicMaterial({ color: 0x18351d })); S.root.add(S.coast) }
-function renderVars() { const h = $('vars'); if (!h) return; h.innerHTML = ''; const icons = { temperature: 'T', temperature_anomaly: '∆', salinity: 'S', currents: 'C', sea_level: 'η', chlorophyll: 'Ch' }; for (const x of S.catalog) { const b = document.createElement('button'); b.className = `var ${x.id === S.catalog[0]?.id ? 'active' : ''} ${x.available === false ? 'off' : ''}`; b.disabled = x.available === false; b.innerHTML = `<span class="vicon">${icons[x.id] || '•'}</span><span><b>${x.label || x.id}</b><small>${x.units || 'inspection only'}</small></span><span class="dot"></span>`; b.onclick = () => { document.querySelectorAll('.var').forEach(v => v.classList.remove('active')); b.classList.add('active'); status(`${x.label || x.id} · inspection only`) }; h.appendChild(b) } }
-function showPoint(data, lon, lat) { const v = data?.values || data; $('coords').textContent = `${N(lat).toFixed(4)}° N · ${N(lon).toFixed(4)}° E`; $('readoutGrid').innerHTML = [['Temperature', v.temperature, '°C'], ['Salinity', v.salinity, 'PSU'], ['Chlorophyll', v.chlorophyll, 'mg m⁻³'], ['Sea level', v.sea_level ?? v.seaLevel, 'm'], ['SST anomaly', v.temperature_anomaly ?? v.sst_anomaly, '°C']].map(r => `<div class="rval"><b>${r[0]}</b><span>${ok(r[1]) ? `${N(r[1]).toFixed(Math.abs(N(r[1])) < 1 ? 4 : 2)} ${r[2]}` : '—'}</span></div>`).join(''); $('readoutTime').textContent = data?.time || S.times[S.ti] || 'Current time'; $('readout')?.classList.remove('hidden') }
-async function inspect(lon, lat) { try { status('Reading ocean point…', 'busy'); const q = new URLSearchParams({ longitude: String(lon), latitude: String(lat) }); if (S.times[S.ti]) q.set('time', S.times[S.ti]); showPoint(await get(`${API}/ocean/point?${q}`), lon, lat); status('Ocean point inspected') } catch (e) { status(`Point lookup failed · ${e.message}`, 'error') } }
-function clickOcean(e) { const r = S.renderer.domElement.getBoundingClientRect(); S.mouse.x = (e.clientX - r.left) / r.width * 2 - 1; S.mouse.y = -(e.clientY - r.top) / r.height * 2 + 1; S.ray.setFromCamera(S.mouse, S.camera); const h = S.ray.intersectObjects(S.water.children, true).find(x => x.object?.userData?.isWater && x.instanceId != null); if (!h) return; const c = h.object.userData.cells[h.instanceId], b = S.g.bounds, midLat = (b[2] + b[3]) / 2, k = 111.32 * Math.cos(midLat * Math.PI / 180); inspect(midLat + c.x / 111.32, (b[0] + b[1]) / 2 + c.z / k) }
+function renderVars() { const h = $('vars'); if (!h) return; h.innerHTML = ''; const icons = { temperature: 'T', temperature_anomaly: '∆', salinity: 'S', currents: 'C', sea_level: 'η', chlorophyll: 'Ch' }; for (const x of S.catalog) { const b = document.createElement('button'); b.className = `var ${x.id === S.catalog[0]?.id ? 'active' : ''} ${x.available === false ? 'off' : ''}`; b.disabled = x.available === false; b.innerHTML = `<span class="vicon">${icons[x.id] || '•'}</span><span><b>${x.label || x.id}</b><small>${x.units || 'inspection only'}</small></span><span class="dot"></span>`; b.onclick = () => { document.querySelectorAll('.var').forEach(v => v.classList.remove('active')); b.classList.add('active'); status(`${x.label || x.id} · ready to inspect`) }; h.appendChild(b) } }
+function showPoint(data, lat, lon) {
+    $('coords').textContent = `${N(lat).toFixed(4)}° N · ${N(lon).toFixed(4)}° E`;
+    const map = {};
+    if (Array.isArray(data?.values)) {
+        for (const item of data.values) if (item && item.id) map[item.id] = item;
+    } else if (data?.values && typeof data.values === 'object') {
+        Object.assign(map, data.values);
+    }
+    const tempVal = map['temperature']?.value ?? map['temperature'];
+    const salVal = map['salinity']?.value ?? map['salinity'];
+    const chVal = map['chlorophyll']?.value ?? map['chlorophyll'];
+    const slVal = map['sea_level']?.value ?? map['seaLevel']?.value ?? map['sea_level'] ?? map['seaLevel'];
+    const anomVal = map['temperature_anomaly']?.value ?? map['sst_anomaly']?.value ?? map['temperature_anomaly'] ?? map['sst_anomaly'];
+    const curItem = map['currents'];
+    let curVal = curItem?.speed ?? (curItem?.value && typeof curItem.value === 'object' ? Math.hypot(curItem.value.uo || 0, curItem.value.vo || 0) : null);
+
+    const rows = [
+        ['Temperature', tempVal, '°C'],
+        ['Salinity', salVal, 'PSU'],
+        ['Current speed', curVal, 'm s⁻¹'],
+        ['Sea level', slVal, 'm'],
+        ['SST anomaly', anomVal, '°C'],
+        ['Chlorophyll', chVal, 'mg m⁻³']
+    ];
+    $('readoutGrid').innerHTML = rows.map(r => `<div class="rval"><b>${r[0]}</b><span>${ok(r[1]) ? `${N(r[1]).toFixed(Math.abs(N(r[1])) < 1 ? 4 : 2)} ${r[2]}` : '—'}</span></div>`).join('');
+    $('readoutTime').textContent = data?.time || S.times[S.ti] || 'Current time';
+    $('readout')?.classList.remove('hidden');
+}
+async function inspect(lat, lon) {
+    try {
+        status('Reading ocean point…', 'busy');
+        const q = new URLSearchParams({ latitude: String(lat), longitude: String(lon) });
+        if (S.times[S.ti]) q.set('time', S.times[S.ti]);
+        const data = await get(`${API}/ocean/point?${q}`);
+        showPoint(data, lat, lon);
+        status('Ocean point inspected');
+    } catch (e) {
+        status(`Point lookup failed · ${e.message}`, 'error');
+    }
+}
+function clickOcean(e) {
+    const r = S.renderer.domElement.getBoundingClientRect();
+    S.mouse.x = (e.clientX - r.left) / r.width * 2 - 1;
+    S.mouse.y = -(e.clientY - r.top) / r.height * 2 + 1;
+    S.ray.setFromCamera(S.mouse, S.camera);
+    const h = S.ray.intersectObjects(S.water.children, true).find(x => x.object?.userData?.isWater && x.instanceId != null);
+    if (!h) return;
+    const c = h.object.userData.cells[h.instanceId];
+    if (!c) return;
+    const b = S.g.bounds;
+    const midLat = (b[2] + b[3]) / 2;
+    const k = 111.32 * Math.cos(midLat * Math.PI / 180);
+    const lat = midLat + c.x / 111.32;
+    const lon = (b[0] + b[1]) / 2 + c.z / k;
+    inspect(lat, lon);
+}
 function fit() { const b = new THREE.Box3().setFromObject(S.root); if (b.isEmpty()) return; const c = b.getCenter(new THREE.Vector3()), s = b.getSize(new THREE.Vector3()), r = Math.max(s.x, s.z, s.y, 1); S.controls.target.set(c.x, c.y * .12, c.z); S.camera.position.set(c.x + r * .95, c.y - r * .62, c.z - r * 1.05); S.controls.update() }
-function views() { document.querySelectorAll('#views .view').forEach(b => b.onclick = () => { const box = new THREE.Box3().setFromObject(S.root), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()), r = Math.max(s.x, s.z, s.y, 1), v = b.dataset.view; if (v === 'top') S.camera.position.set(c.x, c.y + r * 1.55, c.z); else if (v === 'profile') S.camera.position.set(c.x + r * 1.55, c.y, c.z); else if (v === 'under') S.camera.position.set(c.x + r * .7, c.y - r * .58, c.z - r * 1.2); else S.camera.position.set(c.x + r * .95, c.y - r * .62, c.z - r * 1.05); S.controls.target.copy(c); S.controls.update(); document.querySelectorAll('#views .view').forEach(x => x.classList.remove('active')); b.classList.add('active') }) }
+function views() {
+    document.querySelectorAll('#views button[data-view]').forEach(b => b.onclick = () => {
+        const box = new THREE.Box3().setFromObject(S.root), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()), r = Math.max(s.x, s.z, s.y, 1), v = b.dataset.view;
+        if (v === 'top') S.camera.position.set(c.x, c.y + r * 1.55, c.z + 0.001);
+        else if (v === 'profile') S.camera.position.set(c.x + r * 1.55, c.y, c.z);
+        else if (v === 'under') S.camera.position.set(c.x + r * .7, c.y - r * .58, c.z - r * 1.2);
+        else S.camera.position.set(c.x + r * .95, c.y - r * .62, c.z - r * 1.05);
+        S.controls.target.copy(c); S.controls.update();
+        document.querySelectorAll('#views button[data-view]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+    })
+}
 function timeUI() { const t = S.times[S.ti] || ''; if ($('timeValue')) $('timeValue').textContent = t ? new Date(t).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : 'Ocean time'; if ($('timeRaw')) $('timeRaw').textContent = t || '—'; if ($('timeSlider')) { $('timeSlider').max = Math.max(0, S.times.length - 1); $('timeSlider').value = S.ti } if ($('timeCount')) $('timeCount').textContent = `${S.ti + 1}/${Math.max(1, S.times.length)}` }
 function ui() { $('reset')?.addEventListener('click', fit); $('fullscreen')?.addEventListener('click', () => document.documentElement.requestFullscreen?.()); $('closeReadout')?.addEventListener('click', () => $('readout')?.classList.add('hidden')); $('renderCanvas')?.addEventListener('click', clickOcean); $('exaggeration')?.addEventListener('input', e => { S.depthEx = N(e.target.value); if ($('exagValue')) $('exagValue').textContent = `${S.depthEx}×`; drawLand(); drawSeabed(); buildWater(); drawCoast(); fit() }); $('play')?.addEventListener('click', () => { S.playing = !S.playing; $('play').textContent = S.playing ? 'PAUSE' : 'PLAY' }); $('timeSlider')?.addEventListener('input', e => { S.ti = N(e.target.value); timeUI() }) }
 function animate(ms = 0) { requestAnimationFrame(animate); if (S.playing && S.times.length > 1 && ms - S.lastPlay > 900) { S.lastPlay = ms; S.ti = (S.ti + 1) % S.times.length; timeUI() } S.controls?.update(); S.renderer?.render(S.scene, S.camera) }

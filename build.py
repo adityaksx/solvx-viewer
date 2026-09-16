@@ -1,7 +1,11 @@
 from pathlib import Path
 import argparse
-from .data import prepare
-from .html_template import render
+try:
+    from .data import prepare
+    from .html_template import render
+except ImportError:
+    from data import prepare
+    from html_template import render
 
 def main():
     p=argparse.ArgumentParser()

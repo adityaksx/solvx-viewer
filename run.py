@@ -15,12 +15,16 @@ def start_api():
     uvicorn.run(app,host='127.0.0.1',port=8000,log_level='info')
 
 def main():
-    from data import prepare
     data_dir=ROOT/'data'
     FRONTEND.mkdir(parents=True,exist_ok=True)
-    print('Preparing GEBCO/coast/EEZ geometry…')
-    geometry=prepare(data_dir)
-    (FRONTEND/'geometry.json').write_text(json.dumps(geometry,separators=(',',':')),encoding='utf-8')
+    geom_file = FRONTEND / 'geometry.json'
+    if not geom_file.exists():
+        from data import prepare
+        print('Preparing GEBCO/coast/EEZ geometry…')
+        geometry=prepare(data_dir)
+        geom_file.write_text(json.dumps(geometry,separators=(',',':')),encoding='utf-8')
+    else:
+        print('Using existing GEBCO/coast/EEZ geometry.json.')
     threading.Thread(target=start_api,daemon=True).start()
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(FRONTEND),**kwargs)
@@ -29,7 +33,10 @@ def main():
     url='http://127.0.0.1:5500/'
     print(f'SolvX: {url}')
     print('API: http://127.0.0.1:8000/docs')
-    threading.Timer(1.2,lambda:webbrowser.open(url)).start()
+    def safe_open():
+        try:webbrowser.open(url)
+        except Exception:pass
+    threading.Timer(1.2,safe_open).start()
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close()

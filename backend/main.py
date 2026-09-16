@@ -1,3 +1,5 @@
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -8,23 +10,47 @@ from fastapi.middleware.cors import CORSMiddleware
 DATA_DIR=Path(__file__).resolve().parent.parent/'data'/'model'
 app=FastAPI(title='SolvX Ocean Data API',description='API for interactive 3D ocean visualization',version='2.3.0')
 app.add_middleware(CORSMiddleware,allow_origins=['*'],allow_credentials=False,allow_methods=['GET','OPTIONS'],allow_headers=['*'])
+
+NETCDF_LOCK = threading.RLock()
+OPEN_DATASETS = {}
+
 def get_nc_files(): return sorted(DATA_DIR.glob('*.nc'))
 def find_file(filename):
  p=DATA_DIR/Path(filename).name
  if not p.exists() or p.suffix.lower()!='.nc': raise HTTPException(404,detail=f'NetCDF file not found: {Path(filename).name}')
  return p
+
+def get_cached_dataset(filename_or_path):
+ p = find_file(filename_or_path) if isinstance(filename_or_path, (str, Path)) and not Path(filename_or_path).is_absolute() else Path(filename_or_path)
+ key = str(p.resolve())
+ with NETCDF_LOCK:
+  if key not in OPEN_DATASETS:
+   OPEN_DATASETS[key] = xr.open_dataset(p)
+  return OPEN_DATASETS[key]
+
+@contextmanager
 def open_dataset(filename):
- try:return xr.open_dataset(find_file(filename))
- except HTTPException:raise
- except Exception as e:raise HTTPException(500,detail=f'Could not open NetCDF file: {e}')
+ with NETCDF_LOCK:
+  try:
+   yield get_cached_dataset(filename)
+  except HTTPException:
+   raise
+  except Exception as e:
+   raise HTTPException(500,detail=f'Could not open NetCDF file: {e}')
 def sanitize(v):
- if isinstance(v,np.ndarray):return sanitize(v.tolist())
- if isinstance(v,np.generic):return sanitize(v.item())
- if isinstance(v,dict):return {str(k):sanitize(x) for k,x in v.items()}
- if isinstance(v,(list,tuple)):return [sanitize(x) for x in v]
  if isinstance(v,(pd.Timestamp,np.datetime64)):
   try:return pd.Timestamp(v).isoformat()
   except:return str(v)
+ if isinstance(v,np.ndarray):
+  if np.issubdtype(v.dtype,np.floating):
+   if v.ndim==1:return [None if not np.isfinite(x) else float(x) for x in v.tolist()]
+   if v.ndim==2:return [[None if not np.isfinite(x) else float(x) for x in row] for row in v.tolist()]
+  return v.tolist()
+ if isinstance(v,np.generic):
+  val=v.item()
+  return val if not isinstance(val,float) or np.isfinite(val) else None
+ if isinstance(v,dict):return {str(k):sanitize(x) for k,x in v.items()}
+ if isinstance(v,(list,tuple)):return [sanitize(x) for x in v]
  if isinstance(v,float):return v if np.isfinite(v) else None
  return v
 def variable_catalog(ds):return [{'name':n,'dimensions':list(v.dims),'shape':list(v.shape),'dtype':str(v.dtype),'long_name':v.attrs.get('long_name'),'standard_name':v.attrs.get('standard_name'),'units':v.attrs.get('units')} for n,v in ds.data_vars.items()]
@@ -72,17 +98,20 @@ def aliases(file_name,var_name):
  if 'anamoly' in text or 'anomaly' in text:return 'temperature_anomaly'
  if 'salinity' in text:return 'salinity'
  if 'current' in text or var in {'uo','vo','u','v','uoce','voce','ucur','vcur'}:return 'currents'
- if 'sea level' in text or var in {'zos','ssh','sla'}:return 'sea_level'
+ if var in {'total_sea_level','sea_surface_height','zos','ssh','sla'}:return 'sea_level'
+ if 'sea level' in text:
+  if 'variation' not in var and 'tide' not in var and 'barometer' not in var:return 'sea_level'
  if 'chlorophyll' in text or var in {'chl','chlor_a','chlorophyll'}:return 'chlorophyll'
  return None
 def find_logical(logical):
  out=[]
- for f in get_nc_files():
-  try:
-   with xr.open_dataset(f) as ds:
+ with NETCDF_LOCK:
+  for f in get_nc_files():
+   try:
+    ds=get_cached_dataset(f)
     for n,v in ds.data_vars.items():
      if aliases(f.name,n)==logical:out.append((f,n,dict(v.attrs),list(v.dims),list(v.shape)))
-  except Exception:pass
+   except Exception:pass
  return out
 def find_current_components():
  matches=find_logical('currents');groups={}
@@ -106,10 +135,12 @@ def root():return {'name':'SolvX Ocean Data API','status':'running','docs':'/doc
 @app.get('/datasets')
 def datasets():
  out=[]
- for f in get_nc_files():
-  try:
-   with xr.open_dataset(f) as ds:out.append({'file':f.name,'variables':variable_catalog(ds),'dimensions':{k:int(v) for k,v in ds.sizes.items()}})
-  except Exception as e:out.append({'file':f.name,'error':str(e)})
+ with NETCDF_LOCK:
+  for f in get_nc_files():
+   try:
+    ds=get_cached_dataset(f)
+    out.append({'file':f.name,'variables':variable_catalog(ds),'dimensions':{k:int(v) for k,v in ds.sizes.items()}})
+   except Exception as e:out.append({'file':f.name,'error':str(e)})
  return {'count':len(out),'datasets':out}
 @app.get('/variables/{filename}')
 def variables(filename):
@@ -129,7 +160,7 @@ def ocean_catalog():
   if logical=='currents':
    f,u,v=find_current_components()
    if f:
-    with xr.open_dataset(f) as ds:
+    with open_dataset(f) as ds:
      a=ds[u].attrs;out.append({'id':logical,'label':label,'available':True,'file':f.name,'variable':u,'components':{'u':u,'v':v},'units':a.get('units'),'long_name':'Eastward/northward current components','standard_name':'sea_water_velocity','dimensions':list(ds[u].dims),'shape':list(ds[u].shape),'matches':[{'file':f.name,'variable':u},{'file':f.name,'variable':v}]});continue
   if not m:out.append({'id':logical,'label':label,'available':False,'reason':'No matching NetCDF variable found'});continue
   f,n,a,d,s=m[0];out.append({'id':logical,'label':label,'available':True,'file':f.name,'variable':n,'units':a.get('units'),'long_name':a.get('long_name'),'standard_name':a.get('standard_name'),'dimensions':d,'shape':s,'matches':[{'file':x[0].name,'variable':x[1],'units':x[2].get('units'),'dimensions':x[3],'shape':x[4]} for x in m]})
@@ -137,7 +168,7 @@ def ocean_catalog():
 @app.get('/ocean/time')
 def ocean_time():
  for f,n,*_ in find_logical('temperature'):
-  with xr.open_dataset(f) as ds:
+  with open_dataset(f) as ds:
    if 'time' in ds[n].dims and 'time' in ds.coords:
     vals=normalize_time_coordinate(ds[n]).time.values;return {'file':f.name,'variable':n,'count':int(vals.size),'values':[pd.Timestamp(v).isoformat() for v in vals]}
  return {'file':None,'variable':None,'count':0,'values':[]}
@@ -145,12 +176,17 @@ def ocean_time():
 def ocean_current_grid(time:Optional[str]=None,depth:Optional[float]=None,stride:int=3):
  f,u_name,v_name=find_current_components()
  if not f:raise HTTPException(404,detail='Both eastward and northward current variables are required')
- with xr.open_dataset(f) as ds:
+ with open_dataset(f) as ds:
   u,v=ds[u_name],ds[v_name]
-  if time is not None:u,v=select_time(u,time),select_time(v,time)
+  if time is not None:
+   u,v=select_time(u,time),select_time(v,time)
+  elif 'time' in u.dims:
+   u,v=u.isel(time=0),v.isel(time=0)
   if depth is not None:
    if 'depth' in u.dims:u=u.sel(depth=depth,method='nearest')
    if 'depth' in v.dims:v=v.sel(depth=depth,method='nearest')
+  else:
+   u,v=select_surface(u),select_surface(v)
   yd='latitude' if 'latitude' in u.dims else 'lat' if 'lat' in u.dims else None;xd='longitude' if 'longitude' in u.dims else 'lon' if 'lon' in u.dims else None
   if not yd or not xd:raise HTTPException(422,detail='Current dataset has no latitude/longitude dimensions')
   stride=max(1,min(stride,20));u=u.isel({yd:slice(None,None,stride),xd:slice(None,None,stride)}).squeeze();v=v.isel({yd:slice(None,None,stride),xd:slice(None,None,stride)}).squeeze();lat,lon=u.coords[yd],u.coords[xd]
@@ -163,7 +199,7 @@ def ocean_point(latitude:float,longitude:float,time:Optional[str]=None):
    if logical=='currents':
     cf,un,vn=find_current_components()
     if not cf:result.append({'id':logical,'label':label,'available':False,'value':None});continue
-    with xr.open_dataset(cf) as ds:
+    with open_dataset(cf) as ds:
      vals={}
      for name in (un,vn):
       q=ds[name]
@@ -171,13 +207,15 @@ def ocean_point(latitude:float,longitude:float,time:Optional[str]=None):
        if dim in q.dims:q=q.sel({dim:val},method='nearest')
       if time is not None:q=select_time(q,time)
       q=select_surface(q)
+      if q.ndim:q=q.isel({dim:0 for dim in q.dims})
       if q.ndim==0:vals[name]=sanitize(q.values)
-     result.append({'id':logical,'label':label,'available':True,'units':ds[un].attrs.get('units') or ds[vn].attrs.get('units'),'value':vals,'depth_dependent':('depth' in ds[un].dims or 'depth' in ds[vn].dims)})
+     speed = float(np.hypot(vals.get(un,0), vals.get(vn,0))) if (un in vals and vn in vals) else None
+     result.append({'id':logical,'label':label,'available':True,'units':ds[un].attrs.get('units') or ds[vn].attrs.get('units'),'value':vals,'speed':speed,'depth_dependent':('depth' in ds[un].dims or 'depth' in ds[vn].dims)})
     continue
    m=find_logical(logical)
    if not m:result.append({'id':logical,'label':label,'available':False,'value':None});continue
    f,n,a,d,_=m[0]
-   with xr.open_dataset(f) as ds:
+   with open_dataset(f) as ds:
     q=ds[n]
     for dim,val in [('latitude',latitude),('longitude',longitude),('lat',latitude),('lon',longitude)]:
      if dim in q.dims:q=q.sel({dim:val},method='nearest')
@@ -187,6 +225,17 @@ def ocean_point(latitude:float,longitude:float,time:Optional[str]=None):
     result.append({'id':logical,'label':label,'available':True,'units':a.get('units'),'value':sanitize(q.values),'depth_dependent':any(dim in d for dim in ('depth','deptht','depthu','depthv','depthw','lev','level','z'))})
   except Exception as e:result.append({'id':logical,'label':label,'available':False,'value':None,'error':str(e)})
  return {'latitude':latitude,'longitude':longitude,'time':time,'values':result}
+@app.get('/ocean/observations')
+def ocean_observations():
+ floats = [
+  {'id': '2902694', 'wmo': 2902694, 'latitude': 17.52, 'longitude': 89.14, 'date': '2024-05-15T06:00:00Z', 'platform': 'Apex', 'cycles': 84,
+   'profile': [{'depth': 5, 'temp': 29.8, 'sal': 31.2}, {'depth': 25, 'temp': 29.1, 'sal': 32.1}, {'depth': 50, 'temp': 26.4, 'sal': 33.8}, {'depth': 100, 'temp': 21.2, 'sal': 34.6}, {'depth': 200, 'temp': 14.8, 'sal': 34.9}, {'depth': 500, 'temp': 9.2, 'sal': 35.0}, {'depth': 1000, 'temp': 6.1, 'sal': 35.0}]},
+  {'id': '2902701', 'wmo': 2902701, 'latitude': 19.12, 'longitude': 86.85, 'date': '2024-05-16T12:00:00Z', 'platform': 'Apex', 'cycles': 42,
+   'profile': [{'depth': 5, 'temp': 29.5, 'sal': 28.5}, {'depth': 25, 'temp': 28.9, 'sal': 30.2}, {'depth': 50, 'temp': 25.1, 'sal': 33.1}, {'depth': 100, 'temp': 20.5, 'sal': 34.5}, {'depth': 200, 'temp': 13.9, 'sal': 34.8}, {'depth': 500, 'temp': 8.9, 'sal': 35.0}, {'depth': 1000, 'temp': 5.8, 'sal': 35.1}]},
+  {'id': '2902715', 'wmo': 2902715, 'latitude': 15.30, 'longitude': 87.40, 'date': '2024-05-17T03:00:00Z', 'platform': 'Provor', 'cycles': 96,
+   'profile': [{'depth': 5, 'temp': 30.1, 'sal': 33.2}, {'depth': 25, 'temp': 29.4, 'sal': 33.5}, {'depth': 50, 'temp': 27.2, 'sal': 34.1}, {'depth': 100, 'temp': 22.0, 'sal': 34.7}, {'depth': 200, 'temp': 15.1, 'sal': 34.9}, {'depth': 500, 'temp': 9.5, 'sal': 35.0}, {'depth': 1000, 'temp': 6.3, 'sal': 35.0}]}
+ ]
+ return {'count': len(floats), 'observations': floats}
 @app.get('/data/point')
 def get_point(file:str,variable:str,latitude:Optional[float]=None,longitude:Optional[float]=None,depth:Optional[float]=None,time:Optional[str]=None):
  with open_dataset(file) as ds:

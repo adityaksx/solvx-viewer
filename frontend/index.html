@@ -3,13 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SOLVX — 3D Ocean Explorer</title>
+  <title>SOLVX — 3D Ocean Explorer & Scientific Viewer</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=3.0.0">
+  <!-- MapLibre GL JS (Open-Source 2D Interactive Map) -->
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+  <link rel="stylesheet" href="styles.css?v=4.0.0">
   <script type="importmap">
   {
     "imports": {
@@ -21,11 +25,11 @@
 </head>
 <body>
 <div id="app">
-  <!-- Loading & Fatal Error Overlays -->
+  <!-- Loading & Error Overlays -->
   <div id="loading">
     <div>
       <b>SOLVX</b>
-      <span>LOADING 3D OCEAN EXPLORER</span>
+      <span>LOADING SCIENTIFIC OCEAN EXPLORER</span>
     </div>
   </div>
   <div id="fatal">
@@ -41,30 +45,38 @@
     <span class="logo-tag">3D OCEAN EXPLORER</span>
   </div>
 
-  <!-- Top Left View Switcher (Globe vs 3D Scene) -->
+  <!-- Top Left View Switcher (2D Map vs 3D Scene) -->
   <div id="modeSwitcher">
-    <button id="toggleGlobeBtn" class="mode-btn">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-      <span>WORLD GLOBE</span>
+    <button id="toggleMapBtn" class="mode-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+      <span>2D WORLD MAP</span>
     </button>
   </div>
 
   <!-- =========================================================================
-       VIEW 1: Interactive World Globe & Region Selector
+       VIEW 1: Interactive 2D World Map (MapLibre GL JS) & Region Selector
        ========================================================================= -->
-  <div id="globeView" class="hidden">
-    <div id="globeContainer"></div>
+  <div id="mapView" class="hidden">
+    <div id="mapContainer"></div>
     
-    <div id="globeOverlay" class="panel">
-      <div class="globe-header">
+    <div id="mapOverlay" class="panel">
+      <div class="panel-header">
         <h2>Select Ocean Region</h2>
-        <p>Choose a major basin preset, enter geographic coordinates, or hold Shift and drag on the globe.</p>
+        <p>Pan/zoom the world map, draw a bounding box, or choose a major ocean basin preset.</p>
+      </div>
+
+      <div class="map-actions-row">
+        <button id="drawBoxBtn" class="draw-btn">DRAW BOUNDING BOX</button>
+        <label class="toggle-control">
+          <input type="checkbox" id="toggleEEZBtn" checked>
+          <span>Maritime EEZ (VLIZ v12)</span>
+        </label>
       </div>
 
       <div class="section-label">Major Ocean Basins</div>
       <div id="presetList" class="preset-list"></div>
 
-      <div class="section-label">Coordinate Bounds (Degrees)</div>
+      <div class="section-label">Bounding Box Coordinates (Degrees)</div>
       <div class="coord-grid">
         <div class="coord-field">
           <label>Min Lat (°N)</label>
@@ -84,15 +96,17 @@
         </div>
       </div>
 
+      <div id="regionAreaDisplay" class="area-readout">Area: —</div>
       <div id="coordError" class="coord-error hidden"></div>
+
       <button id="exploreRegionBtn" class="primary-btn">EXPLORE 3D REGION</button>
     </div>
 
-    <div class="globe-hint">Drag to rotate · Scroll to zoom · Shift-drag to draw bounding box</div>
+    <div class="map-hint">Pan/scroll to navigate · Click "Draw Bounding Box" or hold Shift + drag to draw region</div>
   </div>
 
   <!-- =========================================================================
-       VIEW 2: 3D Ocean Scene Viewer
+       VIEW 2: 3D Ocean Scene Viewer (Three.js)
        ========================================================================= -->
   <div id="sceneView">
     <canvas id="renderCanvas"></canvas>
@@ -107,7 +121,7 @@
       <button id="fullscreen" class="view">FULL</button>
     </nav>
 
-    <!-- Left Sidebar (Scientific Controls) -->
+    <!-- Left Sidebar (Scientific Controls & Layer Toggles) -->
     <aside id="controls" class="panel">
       <section>
         <div class="eyebrow">OCEANOGRAPHIC VARIABLES</div>
@@ -136,6 +150,22 @@
         </div>
       </section>
 
+      <!-- 3D Scene Layer Visibility Toggles -->
+      <section class="layers-section">
+        <div class="eyebrow">3D SCENE LAYERS</div>
+        <div class="layer-grid">
+          <label class="layer-check"><input type="checkbox" id="layerLand" checked><span>Land</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerCoastline" checked><span>Coastline</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerIslands" checked><span>Islands</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerEEZ" checked><span>EEZ Boundary</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerSeabed" checked><span>Seabed</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerWater" checked><span>Water Body</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerScientific" checked><span>Sci Variable</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerCurrents" checked><span>Current Vectors</span></label>
+          <label class="layer-check"><input type="checkbox" id="layerParticles" checked><span>Flow Particles</span></label>
+        </div>
+      </section>
+
       <section class="legend-box">
         <div class="eyebrow" id="legendTitle">SCIENTIFIC SCALE</div>
         <div id="legendBar" class="legend-bar"></div>
@@ -149,6 +179,24 @@
         <i id="statusDot"></i>
         <span id="status">Ready</span>
       </section>
+    </aside>
+
+    <!-- Top Right: Data Provenance Panel -->
+    <aside id="provenancePanel" class="panel">
+      <div class="prov-header">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+        <span>DATA PROVENANCE</span>
+      </div>
+      <div class="prov-grid">
+        <div class="prov-cell"><span class="prov-k">Provider</span><b id="provProvider" class="prov-v">INCOIS</b></div>
+        <div class="prov-cell"><span class="prov-k">Dataset</span><span id="provDataset" class="prov-v">HOOFS Model</span></div>
+        <div class="prov-cell"><span class="prov-k">Variable</span><span id="provVar" class="prov-v">Temperature</span></div>
+        <div class="prov-cell"><span class="prov-k">Units</span><span id="provUnits" class="prov-v">°C</span></div>
+        <div class="prov-cell"><span class="prov-k">Resolution</span><span id="provRes" class="prov-v">0.083° (~9 km)</span></div>
+        <div class="prov-cell"><span class="prov-k">Depth</span><span id="provDepth" class="prov-v">Surface (0 m)</span></div>
+        <div class="prov-cell"><span class="prov-k">Data Mode</span><span id="provMode" class="prov-v prov-status">VERIFIED_DATA</span></div>
+        <div class="prov-cell"><span class="prov-k">Bounds</span><span id="provBounds" class="prov-v">[84.1°, 93.0°, 16.1°, 23.5°]</span></div>
+      </div>
     </aside>
 
     <!-- Point Inspector Readout -->
@@ -174,24 +222,44 @@
       <div id="obsBody"></div>
     </div>
 
-    <!-- Bottom Timeline Dock -->
+    <!-- Bottom Multi-Resolution Timeline Dock -->
     <footer id="timeline" class="panel">
       <div class="timelineTop">
-        <div>
+        <div class="time-meta">
+          <span id="timeBadge" class="time-badge historical">HISTORICAL</span>
           <b id="timeValue">Loading ocean time…</b>
           <small id="timeRaw">—</small>
         </div>
-        <button id="play" class="play-btn">PLAY</button>
+
+        <div class="timeline-controls">
+          <div class="res-buttons">
+            <button id="resHourly" class="res-btn">HOURLY</button>
+            <button id="resDaily" class="res-btn active">DAILY</button>
+            <button id="resMonthly" class="res-btn">MONTHLY</button>
+          </div>
+
+          <div class="speed-control">
+            <label for="playSpeed">SPEED:</label>
+            <select id="playSpeed" class="speed-select">
+              <option value="0.5">0.5×</option>
+              <option value="1.0" selected>1×</option>
+              <option value="2.0">2×</option>
+              <option value="4.0">4×</option>
+            </select>
+          </div>
+
+          <button id="play" class="play-btn">PLAY</button>
+        </div>
       </div>
+
       <div class="timelineRow">
-        <span>TIME</span>
         <input id="timeSlider" type="range" min="0" max="0" value="0">
-        <span id="timeCount">0/0</span>
+        <span id="timeCount">0 / 0</span>
       </div>
     </footer>
   </div>
 </div>
 
-<script type="module" src="app.js?v=3.0.0"></script>
+<script type="module" src="app.js?v=4.0.0"></script>
 </body>
 </html>

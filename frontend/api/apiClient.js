@@ -29,6 +29,111 @@ export const ApiClient = {
         return API_BASE;
     },
 
+    // =========================================================================
+    // Central SolvX Data Collector Endpoints (/api/data/*)
+    // =========================================================================
+
+    async getConfig() {
+        return request('/api/config');
+    },
+
+    async getDataVariables() {
+        return request('/api/data/variables');
+    },
+
+    async getDataTimeline({ variable, bbox = null, depth = null }) {
+        const q = new URLSearchParams({ variable });
+        if (bbox) {
+            q.set('min_lon', String(bbox.min_lon));
+            q.set('max_lon', String(bbox.max_lon));
+            q.set('min_lat', String(bbox.min_lat));
+            q.set('max_lat', String(bbox.max_lat));
+        }
+        if (depth != null) q.set('depth', String(depth));
+        return request(`/api/data/timeline?${q}`);
+    },
+
+    async getDataEEZ(bbox) {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat)
+        });
+        return request(`/api/data/eez?${q}`);
+    },
+
+    async getOceanVariable({ variable, bbox, depth = null, time = null, stride = 1 }) {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat),
+            stride: String(stride)
+        });
+        if (depth != null) q.set('depth', String(depth));
+        if (time) q.set('time', time);
+        return request(`/api/data/ocean/${encodeURIComponent(variable)}?${q}`);
+    },
+
+    async getOceanVariables({ bbox, depth = null, time = null }) {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat)
+        });
+        if (depth != null) q.set('depth', String(depth));
+        if (time) q.set('time', time);
+        return request(`/api/data/ocean?${q}`);
+    },
+
+    async getDataGeometry(bbox) {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat)
+        });
+        return request(`/api/data/geometry?${q}`);
+    },
+
+    async getDataCoastline(bbox) {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat)
+        });
+        return request(`/api/data/coastline?${q}`);
+    },
+
+    async getDataBathymetry(bbox, resolution = '0.083deg') {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat),
+            resolution
+        });
+        return request(`/api/data/bathymetry?${q}`);
+    },
+
+    async getDataObservations(bbox = null) {
+        const q = new URLSearchParams();
+        if (bbox) {
+            q.set('min_lon', String(bbox.min_lon));
+            q.set('max_lon', String(bbox.max_lon));
+            q.set('min_lat', String(bbox.min_lat));
+            q.set('max_lat', String(bbox.max_lat));
+        }
+        return request(`/api/data/observations?${q}`);
+    },
+
+    // =========================================================================
+    // Region & Geography Endpoints
+    // =========================================================================
+
     async getPresets() {
         return request('/api/region/presets');
     },

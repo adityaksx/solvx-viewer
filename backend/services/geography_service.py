@@ -178,14 +178,15 @@ def get_geography_data(min_lon: float, max_lon: float, min_lat: float, max_lat: 
 
     if eez_zip.exists():
         try:
-            gdf = gpd.read_file(f"zip://{eez_zip}", bbox=b_box)
+            shp_path = f"zip://{eez_zip}!World_EEZ_v12_20231025_LR/eez_v12_lowres.shp"
+            gdf = gpd.read_file(shp_path, bbox=b_box)
             if not gdf.empty:
                 gdf['geometry'] = gdf.geometry.intersection(clip_box)
                 gdf = gdf[~gdf.geometry.is_empty]
                 eez_lines = extract_lines(gdf, min_lon, max_lon, min_lat, max_lat)
                 eez_beads = extract_beads(eez_lines)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error reading eez_zip: {e}")
 
     result = {
         'bounds': [min_lon, max_lon, min_lat, max_lat],

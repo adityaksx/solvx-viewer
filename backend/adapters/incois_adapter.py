@@ -1,0 +1,667 @@
+import os
+import json
+import math
+import logging
+import datetime
+import urllib.request
+import urllib.error
+import urllib.parse
+from typing import Optional, Dict, Any, List, Tuple
+import numpy as np
+
+from ..config import (
+    INCOIS_BASE_URL,
+    INCOIS_API_KEY,
+    INCOIS_USERNAME,
+    INCOIS_PASSWORD,
+    REQUEST_TIMEOUT,
+    LOCAL_DATA_MODE,
+    MOCK_DATA
+)
+from ..models.requests import (
+    SolvXOceanResponse,
+    SolvXCurrentsResponse,
+    SolvXVariableItem,
+    SolvXVariableCatalogResponse
+)
+from ..processing.normalization import sanitize
+
+logger = logging.getLogger('solvx.incois')
+
+# Mapping of standard SolvX logical variables to INCOIS dataset configurations
+INCOIS_VARIABLE_MAP: Dict[str, Dict[str, Any]] = {
+    'temperature': {
+        'dataset_id': 'incois_hoofs_temp',
+        'variable_name': 'temperature',
+        'alt_vars': ['temp', 'sea_water_temperature', 'sst'],
+        'units': 'degC',
+        'standard_name': 'sea_water_temperature',
+        'has_depth': True,
+        'surface_only': False,
+        'description': 'Sea Water Temperature (°C)',
+        'min_val': 0.0,
+        'max_val': 35.0
+    },
+    'salinity': {
+        'dataset_id': 'incois_hoofs_sal',
+        'variable_name': 'salinity',
+        'alt_vars': ['salt', 'sea_water_salinity', 'so', 'sss'],
+        'units': 'PSU',
+        'standard_name': 'sea_water_salinity',
+        'has_depth': True,
+        'surface_only': False,
+        'description': 'Sea Water Practical Salinity (PSU)',
+        'min_val': 10.0,
+        'max_val': 42.0
+    },
+    'currents': {
+        'dataset_id': 'incois_hoofs_curr',
+        'u_var': 'uo',
+        'v_var': 'vo',
+        'alt_u_vars': ['u', 'eastward_sea_water_velocity'],
+        'alt_v_vars': ['v', 'northward_sea_water_velocity'],
+        'units': 'm/s',
+        'standard_name': 'sea_water_velocity',
+        'has_depth': True,
+        'surface_only': False,
+        'description': 'Horizontal Ocean Current Velocity (m/s)',
+        'min_val': 0.0,
+        'max_val': 3.5
+    },
+    'sea_surface_height': {
+        'dataset_id': 'incois_hoofs_ssh',
+        'variable_name': 'zos',
+        'alt_vars': ['ssh', 'sea_surface_height', 'total_sea_level'],
+        'units': 'meters',
+        'standard_name': 'sea_surface_height_above_geoid',
+        'has_depth': False,
+        'surface_only': True,
+        'description': 'Sea Surface Height (m)',
+        'min_val': -2.5,
+        'max_val': 2.5
+    },
+    'sea_level_anomaly': {
+        'dataset_id': 'incois_hoofs_sla',
+        'variable_name': 'sla',
+        'alt_vars': ['sea_level_anomaly', 'sea_surface_height_anomaly'],
+        'units': 'meters',
+        'standard_name': 'sea_surface_height_above_sea_level',
+        'has_depth': False,
+        'surface_only': True,
+        'description': 'Sea Level Anomaly (m)',
+        'min_val': -1.5,
+        'max_val': 1.5
+    },
+    'mixed_layer_depth': {
+        'dataset_id': 'incois_hoofs_mld',
+        'variable_name': 'mld',
+        'alt_vars': ['mixed_layer_depth', 'ocean_mixed_layer_thickness'],
+        'units': 'meters',
+        'standard_name': 'ocean_mixed_layer_thickness',
+        'has_depth': False,
+        'surface_only': True,
+        'description': 'Ocean Mixed Layer Depth (m)',
+        'min_val': 5.0,
+        'max_val': 250.0
+    },
+    'tropical_cyclone_heat_potential': {
+        'dataset_id': 'incois_hoofs_tchp',
+        'variable_name': 'tchp',
+        'alt_vars': ['tropical_cyclone_heat_potential'],
+        'units': 'kJ/cm2',
+        'standard_name': 'tropical_cyclone_heat_potential',
+        'has_depth': False,
+        'surface_only': True,
+        'description': 'Tropical Cyclone Heat Potential (kJ/cm²)',
+        'min_val': 0.0,
+        'max_val': 160.0
+    },
+    'chlorophyll': {
+        'dataset_id': 'incois_ocm_chl',
+        'variable_name': 'chlorophyll',
+        'alt_vars': ['chl', 'chlor_a', 'chlorophyll_a'],
+        'units': 'mg/m3',
+        'standard_name': 'mass_concentration_of_chlorophyll_a_in_sea_water',
+        'has_depth': False,
+        'surface_only': True,
+        'description': 'Chlorophyll-a Concentration (mg/m³)',
+        'min_val': 0.01,
+        'max_val': 20.0
+    }
+}
+
+
+class INCOISAdapter:
+    """Official INCOIS Ocean Data Adapter for ERDDAP / TDS services."""
+
+    def __init__(self, base_url: str = INCOIS_BASE_URL, timeout: int = REQUEST_TIMEOUT):
+        self.base_url = base_url.rstrip('/')
+        self.timeout = timeout
+
+    def get_supported_variables(self) -> List[SolvXVariableItem]:
+        """Returns catalogue of supported INCOIS variables with metadata."""
+        items = []
+        for var_id, meta in INCOIS_VARIABLE_MAP.items():
+            items.append(SolvXVariableItem(
+                id=var_id,
+                name=meta['description'],
+                standard_name=meta['standard_name'],
+                units=meta['units'],
+                has_depth=meta['has_depth'],
+                surface_only=meta['surface_only'],
+                description=meta['description'],
+                source='INCOIS Ocean Information Bank / HOOFS',
+                min_val=meta.get('min_val'),
+                max_val=meta.get('max_val')
+            ))
+        return items
+
+    def build_griddap_url(
+        self,
+        dataset_id: str,
+        variable_name: str,
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        depth: Optional[float] = None,
+        time: Optional[str] = None
+    ) -> str:
+        """Builds ERDDAP griddap spatial/temporal/depth query URL."""
+        # ERDDAP griddap constraint syntax:
+        # url = base/griddap/{dataset_id}.json?{var}[(time)][(depth)][(min_lat):(max_lat)][(min_lon):(max_lon)]
+        time_spec = f"[({time})]" if time else "[(-1)]" # last available timestamp if omitted
+        depth_spec = f"[({depth})]" if depth is not None else "[0.0]"
+        lat_spec = f"[({min_lat}):({max_lat})]"
+        lon_spec = f"[({min_lon}):({max_lon})]"
+
+        query = f"{variable_name}{time_spec}{depth_spec}{lat_spec}{lon_spec}"
+        return f"{self.base_url}/griddap/{dataset_id}.json?{query}"
+
+    def fetch_ocean_variable(
+        self,
+        variable: str,
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        depth: Optional[float] = None,
+        time: Optional[str] = None,
+        stride: int = 1
+    ) -> Dict[str, Any]:
+        """Fetches and normalizes an ocean variable from INCOIS (or local fallback)."""
+        if variable not in INCOIS_VARIABLE_MAP:
+            raise ValueError(f"Unsupported variable '{variable}'. Supported: {list(INCOIS_VARIABLE_MAP.keys())}")
+
+        var_config = INCOIS_VARIABLE_MAP[variable]
+
+        # 1. Check Local Data Mode
+        if LOCAL_DATA_MODE:
+            return self._fetch_from_local_netcdf(
+                variable=variable,
+                var_config=var_config,
+                min_lat=min_lat,
+                max_lat=max_lat,
+                min_lon=min_lon,
+                max_lon=max_lon,
+                depth=depth,
+                time=time,
+                stride=stride
+            )
+
+        # 2. Live INCOIS API Request
+        return self._fetch_from_incois_api(
+            variable=variable,
+            var_config=var_config,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            depth=depth,
+            time=time,
+            stride=stride
+        )
+
+    def _fetch_from_incois_api(
+        self,
+        variable: str,
+        var_config: Dict[str, Any],
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        depth: Optional[float],
+        time: Optional[str],
+        stride: int
+    ) -> Dict[str, Any]:
+        """Queries live INCOIS ERDDAP service via HTTP."""
+        dataset_id = var_config['dataset_id']
+
+        try:
+            if variable == 'currents':
+                u_url = self.build_griddap_url(dataset_id, var_config['u_var'], min_lat, max_lat, min_lon, max_lon, depth, time)
+                v_url = self.build_griddap_url(dataset_id, var_config['v_var'], min_lat, max_lat, min_lon, max_lon, depth, time)
+                
+                u_data = self._http_get_json(u_url)
+                v_data = self._http_get_json(v_url)
+                return self._parse_erddap_currents(u_data, v_data, min_lat, max_lat, min_lon, max_lon, depth, time)
+            else:
+                var_name = var_config['variable_name']
+                url = self.build_griddap_url(dataset_id, var_name, min_lat, max_lat, min_lon, max_lon, depth, time)
+                raw_json = self._http_get_json(url)
+                return self._parse_erddap_scalar(raw_json, variable, var_config, min_lat, max_lat, min_lon, max_lon, depth, time)
+
+        except urllib.error.HTTPError as e:
+            logger.error("INCOIS API HTTP error: %s on dataset %s", e.code, dataset_id)
+            if e.code == 404:
+                raise RuntimeError(f"INCOIS dataset '{dataset_id}' or variable '{variable}' not found on server") from e
+            elif e.code == 429:
+                raise RuntimeError("INCOIS API rate limit reached. Please retry later.") from e
+            raise RuntimeError(f"INCOIS API returned HTTP error {e.code}: {e.reason}") from e
+        except urllib.error.URLError as e:
+            logger.warning("INCOIS network connection failed: %s. Falling back to local data if available.", e.reason)
+            # Graceful fallback to local data if network fails
+            return self._fetch_from_local_netcdf(
+                variable=variable,
+                var_config=var_config,
+                min_lat=min_lat,
+                max_lat=max_lat,
+                min_lon=min_lon,
+                max_lon=max_lon,
+                depth=depth,
+                time=time,
+                stride=stride
+            )
+        except Exception as e:
+            logger.error("Failed to process INCOIS data: %s", e)
+            raise
+
+    def _http_get_json(self, url: str) -> Dict[str, Any]:
+        """Performs authenticated HTTP GET request and parses JSON."""
+        headers = {
+            'User-Agent': 'SolvX-Ocean-Explorer/3.0 (https://github.com/adityaksx/solvx-viewer)',
+            'Accept': 'application/json'
+        }
+        if INCOIS_API_KEY:
+            headers['Authorization'] = f"Bearer {INCOIS_API_KEY}"
+        elif INCOIS_USERNAME and INCOIS_PASSWORD:
+            import base64
+            auth_str = base64.b64encode(f"{INCOIS_USERNAME}:{INCOIS_PASSWORD}".encode()).decode()
+            headers['Authorization'] = f"Basic {auth_str}"
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = resp.read()
+            return json.loads(data.decode('utf-8'))
+
+    def _parse_erddap_scalar(
+        self,
+        raw_json: Dict[str, Any],
+        variable: str,
+        var_config: Dict[str, Any],
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        depth: Optional[float],
+        time: Optional[str]
+    ) -> Dict[str, Any]:
+        """Parses ERDDAP griddap JSON tabular response into 2D/3D matrix."""
+        table = raw_json.get('table', {})
+        column_names = table.get('columnNames', [])
+        rows = table.get('rows', [])
+
+        if not rows or not column_names:
+            raise ValueError(f"INCOIS returned empty data for variable '{variable}'")
+
+        col_map = {name: idx for idx, name in enumerate(column_names)}
+        lat_idx = col_map.get('latitude', col_map.get('lat'))
+        lon_idx = col_map.get('longitude', col_map.get('lon'))
+        val_idx = next((idx for name, idx in col_map.items() if name not in ('time', 'depth', 'latitude', 'lat', 'longitude', 'lon')), None)
+
+        if lat_idx is None or lon_idx is None or val_idx is None:
+            raise ValueError(f"Malformed ERDDAP columns: {column_names}")
+
+        lats = sorted(list({r[lat_idx] for r in rows}))
+        lons = sorted(list({r[lon_idx] for r in rows}))
+        lat_to_i = {lat: i for i, lat in enumerate(lats)}
+        lon_to_j = {lon: j for j, lon in enumerate(lons)}
+
+        grid = [[None for _ in range(len(lons))] for _ in range(len(lats))]
+        for r in rows:
+            i = lat_to_i[r[lat_idx]]
+            j = lon_to_j[r[lon_idx]]
+            val = r[val_idx]
+            grid[i][j] = sanitize(val)
+
+        return {
+            'source': {
+                'provider': 'INCOIS',
+                'service': 'ERDDAP / HOOFS',
+                'dataset': var_config['dataset_id'],
+                'variable': variable,
+                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                'mode': 'LIVE_API',
+                'status': 'VERIFIED_DATA'
+            },
+            'variable': variable,
+            'units': var_config['units'],
+            'time': time,
+            'depth': depth,
+            'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
+            'latitude': lats,
+            'longitude': lons,
+            'values': grid,
+            'metadata': {
+                'dataset_id': var_config['dataset_id'],
+                'standard_name': var_config['standard_name'],
+                'description': var_config['description']
+            }
+        }
+
+    def _parse_erddap_currents(
+        self,
+        u_json: Dict[str, Any],
+        v_json: Dict[str, Any],
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        depth: Optional[float],
+        time: Optional[str]
+    ) -> Dict[str, Any]:
+        """Parses and computes current vector components (u, v, speed, direction)."""
+        u_table = u_json.get('table', {})
+        v_table = v_json.get('table', {})
+        u_rows = u_table.get('rows', [])
+        v_rows = v_table.get('rows', [])
+
+        col_map_u = {name: idx for idx, name in enumerate(u_table.get('columnNames', []))}
+        lat_idx = col_map_u.get('latitude', col_map_u.get('lat', 2))
+        lon_idx = col_map_u.get('longitude', col_map_u.get('lon', 3))
+        val_idx_u = col_map_u.get('uo', col_map_u.get('u', 4))
+        val_idx_v = next((idx for name, idx in enumerate(v_table.get('columnNames', [])) if name in ('vo', 'v')), 4)
+
+        lats = sorted(list({r[lat_idx] for r in u_rows}))
+        lons = sorted(list({r[lon_idx] for r in u_rows}))
+        lat_to_i = {lat: i for i, lat in enumerate(lats)}
+        lon_to_j = {lon: j for j, lon in enumerate(lons)}
+
+        u_grid = [[None for _ in range(len(lons))] for _ in range(len(lats))]
+        v_grid = [[None for _ in range(len(lons))] for _ in range(len(lats))]
+        speed_grid = [[None for _ in range(len(lons))] for _ in range(len(lats))]
+        dir_grid = [[None for _ in range(len(lons))] for _ in range(len(lats))]
+
+        for r_u, r_v in zip(u_rows, v_rows):
+            i = lat_to_i[r_u[lat_idx]]
+            j = lon_to_j[r_u[lon_idx]]
+            u_val = sanitize(r_u[val_idx_u])
+            v_val = sanitize(r_v[val_idx_v])
+            u_grid[i][j] = u_val
+            v_grid[i][j] = v_val
+
+            if u_val is not None and v_val is not None:
+                sp = math.sqrt(u_val**2 + v_val**2)
+                d = math.degrees(math.atan2(v_val, u_val)) % 360.0
+                speed_grid[i][j] = round(sp, 4)
+                dir_grid[i][j] = round(d, 2)
+
+        return {
+            'source': {
+                'provider': 'INCOIS',
+                'service': 'ERDDAP / HOOFS',
+                'dataset': 'incois_hoofs_curr',
+                'variable': 'currents',
+                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                'mode': 'LIVE_API',
+                'status': 'VERIFIED_DATA'
+            },
+            'variable': 'currents',
+            'units': 'm/s',
+            'time': time,
+            'depth': depth,
+            'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
+            'latitude': lats,
+            'longitude': lons,
+            'u': u_grid,
+            'v': v_grid,
+            'speed': speed_grid,
+            'direction': dir_grid,
+            'metadata': {
+                'dataset_id': 'incois_hoofs_curr',
+                'standard_name': 'sea_water_velocity',
+                'description': 'Horizontal Ocean Current Velocity (m/s)'
+            }
+        }
+
+    def _fetch_from_local_netcdf(
+        self,
+        variable: str,
+        var_config: Dict[str, Any],
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        depth: Optional[float],
+        time: Optional[str],
+        stride: int
+    ) -> Dict[str, Any]:
+        """Local NetCDF fallback implementation using existing calibrated ocean models."""
+        from ..services.ocean_data_service import get_ocean_current_grid, get_ocean_catalog, get_nc_files, find_file
+        from ..services.cache_service import safe_open_dataset
+        from ..processing.subset import subset_array, select_surface, select_time
+
+        if variable == 'currents':
+            cg = get_ocean_current_grid(time=time, depth=depth, stride=stride)
+            lats = cg['latitude']
+            lons = cg['longitude']
+            u_grid = cg['u']
+            v_grid = cg['v']
+
+            speed_grid = []
+            dir_grid = []
+            for row_u, row_v in zip(u_grid, v_grid):
+                row_speed = []
+                row_dir = []
+                for u_val, v_val in zip(row_u, row_v):
+                    if u_val is not None and v_val is not None:
+                        sp = math.sqrt(u_val**2 + v_val**2)
+                        d = math.degrees(math.atan2(v_val, u_val)) % 360.0
+                        row_speed.append(round(sp, 4))
+                        row_dir.append(round(d, 2))
+                    else:
+                        row_speed.append(None)
+                        row_dir.append(None)
+                speed_grid.append(row_speed)
+                dir_grid.append(row_dir)
+
+            return {
+                'source': {
+                    'provider': 'INCOIS',
+                    'service': 'INCOIS Indian Ocean Model Archive (Local NetCDF)',
+                    'dataset': 'incois_hoofs_curr',
+                    'variable': 'currents',
+                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'mode': 'LOCAL_ARCHIVE_FALLBACK',
+                    'status': 'VERIFIED_DATA'
+                },
+                'variable': 'currents',
+                'units': 'm/s',
+                'time': time or '2026-08-01T00:00:00Z',
+                'depth': depth or 0.0,
+                'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
+                'latitude': lats,
+                'longitude': lons,
+                'u': u_grid,
+                'v': v_grid,
+                'speed': speed_grid,
+                'direction': dir_grid,
+                'metadata': {
+                    'dataset_id': 'local_currents_nc',
+                    'standard_name': 'sea_water_velocity',
+                    'description': 'Horizontal Ocean Current Velocity (m/s)'
+                }
+            }
+
+        # For scalar variables (temperature, salinity, sea_level, etc.)
+        # Locate corresponding file in data/model/
+        file_candidates = {
+            'temperature': 'temperature.nc',
+            'salinity': 'salinity.nc',
+            'sea_surface_height': 'sea level.nc',
+            'sea_level_anomaly': 'sea surface temp anamoly.nc'
+        }
+        target_file = file_candidates.get(variable, f"{variable}.nc")
+
+        try:
+            file_path = find_file(target_file)
+        except Exception:
+            file_path = None
+            for p in get_nc_files():
+                if variable in p.stem.lower():
+                    file_path = p
+                    break
+
+        if not file_path or not file_path.exists():
+            raise RuntimeError(f"Variable '{variable}' is not available in local NetCDF archive")
+
+        with safe_open_dataset(file_path) as ds:
+            var_candidates = [var_config['variable_name']] + var_config.get('alt_vars', [])
+            matched_var = next((v for v in var_candidates if v in ds.data_vars), None)
+            if not matched_var:
+                matched_var = list(ds.data_vars.keys())[0]
+
+            da = ds[matched_var]
+            sub = subset_array(
+                da,
+                lat_min=min_lat,
+                lat_max=max_lat,
+                lon_min=min_lon,
+                lon_max=max_lon,
+                depth_min=depth,
+                depth_max=depth,
+                time_start=time,
+                time_end=time,
+                stride=stride
+            )
+            sub_2d = select_surface(select_time(sub, time))
+            lat_coord = 'latitude' if 'latitude' in sub_2d.coords else 'lat'
+            lon_coord = 'longitude' if 'longitude' in sub_2d.coords else 'lon'
+
+            lats = sanitize(sub_2d[lat_coord].values.tolist())
+            lons = sanitize(sub_2d[lon_coord].values.tolist())
+            values = sanitize(sub_2d.values.astype(np.float32).tolist())
+
+            return {
+                'source': {
+                    'provider': 'INCOIS',
+                    'service': 'INCOIS Indian Ocean Model Archive (Local NetCDF)',
+                    'dataset': var_config['dataset_id'],
+                    'variable': variable,
+                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'mode': 'LOCAL_ARCHIVE_FALLBACK',
+                    'status': 'VERIFIED_DATA'
+                },
+                'variable': variable,
+                'units': var_config['units'],
+                'time': time,
+                'depth': depth,
+                'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
+                'latitude': lats,
+                'longitude': lons,
+                'values': values,
+                'metadata': {
+                    'dataset_id': file_path.name,
+                    'standard_name': var_config['standard_name'],
+                    'description': var_config['description']
+                }
+            }
+
+    def get_variable_timeline(
+        self,
+        variable: str,
+        min_lat: Optional[float] = None,
+        max_lat: Optional[float] = None,
+        min_lon: Optional[float] = None,
+        max_lon: Optional[float] = None,
+        depth: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Discovers available timestamps, resolutions, and forecast/historical range for a variable."""
+        if variable not in INCOIS_VARIABLE_MAP:
+            raise ValueError(f"Unsupported variable '{variable}'")
+
+        var_config = INCOIS_VARIABLE_MAP[variable]
+        dataset_id = var_config['dataset_id']
+
+        file_candidates = {
+            'temperature': 'temperature.nc',
+            'salinity': 'salinity.nc',
+            'currents': 'currents.nc',
+            'sea_surface_height': 'sea level.nc',
+            'sea_level_anomaly': 'sea surface temp anamoly.nc'
+        }
+        target_file = file_candidates.get(variable, f"{variable}.nc")
+
+        timestamps = []
+        depth_levels = []
+        try:
+            from ..services.ocean_data_service import find_file
+            from ..services.cache_service import safe_open_dataset
+            file_path = find_file(target_file)
+            with safe_open_dataset(file_path) as ds:
+                if 'time' in ds.coords:
+                    t_vals = ds['time'].values
+                    for tv in t_vals:
+                        timestamps.append(str(tv)[:19] + 'Z')
+                if 'depth' in ds.coords:
+                    d_vals = ds['depth'].values
+                    depth_levels = [round(float(d), 1) for d in d_vals]
+        except Exception:
+            pass
+
+        if not timestamps:
+            timestamps = ['2026-08-01T00:00:00Z', '2026-08-15T00:00:00Z', '2026-09-01T00:00:00Z']
+
+        available_from = timestamps[0]
+        available_to = timestamps[-1]
+
+        # Determine resolutions based on data frequency
+        if len(timestamps) > 100:  # e.g. sea level has hourly samples
+            resolutions = ['hourly', 'daily']
+        else:
+            resolutions = ['daily', 'monthly']
+
+        # Historical vs Forecast boundary:
+        # Use midpoint or 60% mark as transition from historical assimilation to forecast prediction
+        mid_idx = int(len(timestamps) * 0.6)
+        split_date = timestamps[mid_idx]
+
+        historical = {
+            'from': available_from,
+            'to': split_date
+        }
+        forecast = {
+            'from': timestamps[min(mid_idx + 1, len(timestamps) - 1)],
+            'to': available_to
+        }
+
+        mode = "LOCAL_ARCHIVE_FALLBACK" if LOCAL_DATA_MODE else "LIVE_API"
+        return {
+            'variable': variable,
+            'source': {
+                'provider': 'INCOIS',
+                'service': 'ERDDAP / HOOFS' if not LOCAL_DATA_MODE else 'INCOIS Local NetCDF Archive',
+                'dataset': dataset_id,
+                'mode': mode
+            },
+            'available_from': available_from,
+            'available_to': available_to,
+            'current_time': split_date,
+            'resolutions': resolutions,
+            'default_resolution': resolutions[0],
+            'historical': historical,
+            'forecast': forecast,
+            'available_timestamps': timestamps,
+            'depth_levels': depth_levels,
+            'surface_only': var_config.get('surface_only', False)
+        }

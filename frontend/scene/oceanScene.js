@@ -21,6 +21,18 @@ export class OceanScene {
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
 
+        this.layers = {
+            land: null,
+            coastline: null,
+            islands: null,
+            eez: null,
+            seabed: null,
+            water: null,
+            scientific: null,
+            currents: null,
+            particles: null
+        };
+
         this.init();
     }
 
@@ -79,6 +91,25 @@ export class OceanScene {
         while (this.root.children.length) {
             const child = this.root.children.pop();
             this.disposeObject(child);
+        }
+        for (const k of Object.keys(this.layers)) {
+            this.layers[k] = null;
+        }
+    }
+
+    setLayer(name, obj) {
+        if (this.layers[name] && this.layers[name] !== obj) {
+            this.disposeObject(this.layers[name]);
+        }
+        this.layers[name] = obj;
+        if (obj && !this.root.children.includes(obj)) {
+            this.root.add(obj);
+        }
+    }
+
+    setLayerVisibility(name, visible) {
+        if (this.layers[name]) {
+            this.layers[name].visible = !!visible;
         }
     }
 

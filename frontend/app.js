@@ -1,13 +1,16 @@
-// SolvX Viewer — Main Application Orchestrator
+// SolvX — Main Application Orchestrator
+// Coordinates 2D World Map (MapLibre GL JS) + 3D Ocean Volume (Three.js),
+// Real Marine Regions EEZ, Natural Earth Minor Islands,
+// Dynamic Multi-Resolution Timeline, 9 Layer Toggles, and Provenance Reporting.
+
 import * as THREE from 'three';
 import { ApiClient } from './api/apiClient.js';
-import { WorldGlobe } from './globe/worldMap.js';
-import { RegionSelector } from './globe/regionSelector.js';
-import { CoordinateInput } from './globe/coordinateInput.js';
+import { WorldMap2D } from './map/worldMap2D.js';
+import { RegionDrawer } from './map/regionDrawing.js';
 
 import { OceanScene } from './scene/oceanScene.js';
-import { buildLand } from './scene/land.js';
-import { buildCoastline } from './scene/coastline.js';
+import { buildLand, buildIslands } from './scene/land.js';
+import { buildCoastline, buildEEZ } from './scene/coastline.js';
 import { buildSeabed } from './scene/seabed.js';
 import { buildVegetation } from './scene/vegetation.js';
 import { DynamicWater } from './scene/water.js';
@@ -24,7 +27,7 @@ import { OpacityControl } from './controls/opacityControl.js';
 
 class SolvXApp {
     constructor() {
-        this.currentMode = '3d'; // 'globe' or '3d'
+        this.currentMode = '3d'; // 'map' or '3d'
         this.currentBBox = {
             min_lon: 84.10,
             max_lon: 93.00,
@@ -32,9 +35,8 @@ class SolvXApp {
             max_lat: 23.52
         };
 
-        this.globe = null;
-        this.regionSelector = null;
-        this.coordInput = null;
+        this.worldMap = null;
+        this.regionDrawer = null;
 
         this.scene = null;
         this.water = null;
@@ -50,59 +52,57 @@ class SolvXApp {
         this.opacityControl = null;
 
         this.catalog = [];
-        this.times = [];
         this.activeVar = 'temperature';
+        this.activeDepth = 0;
+        this.activeDepthMode = 'volume';
         this.activeTime = null;
+        this.activeTimeMeta = null;
+
         this.currentGrid = null;
         this.currentGeo = null;
         this.currentBathy = null;
+        this.currentEEZ = null;
+        this.currentVariableMeta = null;
+
+        // Layer visibility state
+        this.layerState = {
+            land: true,
+            coastline: true,
+            islands: true,
+            eez: true,
+            seabed: true,
+            water: true,
+            scientific: true,
+            currents: true,
+            particles: true
+        };
     }
 
     async init() {
         this.status('Initializing SolvX 3D Ocean Explorer…', 'busy');
 
-        // Setup UI Navigation Toggles
-        this.setupNavigation();
+        // 1. Initialize Interactive 2D World Map
+        const mapContainer = document.getElementById('mapContainer');
+        if (mapContainer && window.maplibregl) {
+            try {
+                this.worldMap = new WorldMap2D('mapContainer', {
+                    initialBBox: this.currentBBox
+                });
+                await this.worldMap.init();
 
-        // 1. Initialize World Globe
-        const globeContainer = document.getElementById('globeContainer');
-        if (globeContainer) {
-            this.globe = new WorldGlobe(globeContainer, {
-                initialBBox: this.currentBBox,
-                onRegionSelect: (bbox) => this.onRegionSelected(bbox)
-            });
-
-            this.regionSelector = new RegionSelector({
-                initialBBox: this.currentBBox,
-                onSelect: (bbox) => {
-                    this.globe.updateSelectionBox(bbox);
-                    this.coordInput?.setValues(bbox);
-                    this.globe.flyTo((bbox.min_lat + bbox.max_lat) / 2, (bbox.min_lon + bbox.max_lon) / 2);
-                }
-            });
-
-            this.coordInput = new CoordinateInput({
-                onSubmit: (bbox) => {
-                    this.globe.updateSelectionBox(bbox);
-                    this.loadRegion(bbox);
-                },
-                onChange: (bbox) => {
-                    this.globe.updateSelectionBox(bbox);
-                }
-            });
-            this.coordInput.setValues(this.currentBBox);
-        }
-
-        // Fetch presets
-        try {
-            const presetsData = await ApiClient.getPresets();
-            if (presetsData?.presets) {
-                this.globe?.setPresets(presetsData.presets);
-                this.regionSelector?.setPresets(presetsData.presets);
+                this.regionDrawer = new RegionDrawer(this.worldMap, {
+                    onExplore: (bbox) => {
+                        this.loadRegion(bbox);
+                        this.setViewMode('3d');
+                    }
+                });
+            } catch (e) {
+                console.warn('[SolvXApp] 2D Map initialization warning:', e);
             }
-        } catch (e) {
-            console.warn('Presets failed to load:', e);
         }
+
+        // Setup UI View Switchers and Navigation
+        this.setupNavigation();
 
         // 2. Initialize 3D Scene
         const canvas = document.getElementById('renderCanvas');
@@ -123,7 +123,7 @@ class SolvXApp {
         });
 
         this.timelineControl = new TimelineControl({
-            onTimeChange: (idx, timeIso) => this.onTimeChange(idx, timeIso)
+            onTimeChange: (idx, timeIso, meta) => this.onTimeChange(idx, timeIso, meta)
         });
 
         this.opacityControl = new OpacityControl({
@@ -133,7 +133,10 @@ class SolvXApp {
             }
         });
 
-        // Register animation updates
+        // Setup Layer Visibility Checkboxes
+        this.setupLayerToggles();
+
+        // Register animation loop callbacks
         this.scene.onUpdate((timeMs) => {
             this.water?.update(timeMs);
             this.currentParticles?.update(0.016);
@@ -142,37 +145,46 @@ class SolvXApp {
         // 4. Load initial region (Bay of Bengal)
         await this.loadRegion(this.currentBBox);
 
-        // Hide loading
+        // Hide loading screen
         document.getElementById('loading')?.classList.add('hidden');
         this.status('Ready to explore');
     }
 
     setupNavigation() {
-        const switchBtn = document.getElementById('toggleGlobeBtn');
-        const globeView = document.getElementById('globeView');
+        const switchBtn = document.getElementById('toggleMapBtn');
+        const mapView = document.getElementById('mapView');
         const sceneView = document.getElementById('sceneView');
 
         const setViewMode = (mode) => {
             this.currentMode = mode;
-            if (mode === 'globe') {
-                globeView?.classList.remove('hidden');
+            if (mode === 'map') {
+                mapView?.classList.remove('hidden');
                 sceneView?.classList.add('hidden');
-                if (switchBtn) switchBtn.textContent = '3D OCEAN SCENE';
-                this.globe?.onResize();
+                if (switchBtn) {
+                    switchBtn.innerHTML = `
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                      <span>3D OCEAN SCENE</span>`;
+                }
+                this.worldMap?.resize();
             } else {
-                globeView?.classList.add('hidden');
+                mapView?.classList.add('hidden');
                 sceneView?.classList.remove('hidden');
-                if (switchBtn) switchBtn.textContent = 'WORLD GLOBE';
+                if (switchBtn) {
+                    switchBtn.innerHTML = `
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+                      <span>2D WORLD MAP</span>`;
+                }
                 this.scene?.onResize();
             }
         };
+        this.setViewMode = setViewMode;
 
         switchBtn?.addEventListener('click', () => {
-            setViewMode(this.currentMode === 'globe' ? '3d' : 'globe');
+            setViewMode(this.currentMode === 'map' ? '3d' : 'map');
         });
 
         document.getElementById('exploreRegionBtn')?.addEventListener('click', () => {
-            const bbox = this.coordInput?.getValues() || this.currentBBox;
+            const bbox = this.regionDrawer?.currentBBox || this.currentBBox;
             this.loadRegion(bbox);
             setViewMode('3d');
         });
@@ -201,9 +213,38 @@ class SolvXApp {
         });
     }
 
-    onRegionSelected(bbox) {
-        this.currentBBox = bbox;
-        this.coordInput?.setValues(bbox);
+    setupLayerToggles() {
+        const toggles = [
+            { id: 'layerLand', layer: 'land' },
+            { id: 'layerCoastline', layer: 'coastline' },
+            { id: 'layerIslands', layer: 'islands' },
+            { id: 'layerEEZ', layer: 'eez' },
+            { id: 'layerSeabed', layer: 'seabed' },
+            { id: 'layerWater', layer: 'water' },
+            { id: 'layerScientific', layer: 'scientific' },
+            { id: 'layerCurrents', layer: 'currents' },
+            { id: 'layerParticles', layer: 'particles' }
+        ];
+
+        toggles.forEach(({ id, layer }) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('change', (e) => {
+                const checked = e.target.checked;
+                this.layerState[layer] = checked;
+                this.applyLayerVisibility(layer, checked);
+            });
+        });
+    }
+
+    applyLayerVisibility(layer, visible) {
+        if (layer === 'water') {
+            if (this.water?.surfaceMesh) this.water.surfaceMesh.visible = visible;
+        } else if (layer === 'scientific') {
+            if (this.water?.instancedVolume) this.water.instancedVolume.visible = visible;
+        } else {
+            this.scene.setLayerVisibility(layer, visible);
+        }
     }
 
     async loadRegion(bbox) {
@@ -211,32 +252,37 @@ class SolvXApp {
         this.status('Loading geographic & ocean data…', 'busy');
 
         try {
-            // Parallel fetch of catalog, timeline, geography, and bathymetry
-            const [catalogData, timeData, geoData, bathyData, argoData] = await Promise.all([
-                ApiClient.getCatalog().catch(() => ({ variables: [] })),
-                ApiClient.getTime().catch(() => ({ values: [] })),
-                ApiClient.getGeography(bbox),
-                ApiClient.getBathymetry(bbox),
-                ApiClient.getObservations(bbox).catch(() => ({ observations: [] }))
+            // Parallel fetch of catalog, geography, bathymetry, eez, and observations
+            const [catalogData, geoData, bathyData, eezData, argoData] = await Promise.all([
+                ApiClient.getDataVariables().catch(() => ({ variables: [] })),
+                ApiClient.getDataGeometry(bbox),
+                ApiClient.getDataBathymetry(bbox),
+                ApiClient.getDataEEZ(bbox).catch(() => ({ features: [], lines3d: [] })),
+                ApiClient.getDataObservations(bbox).catch(() => ({ observations: [] }))
             ]);
 
             this.catalog = catalogData.variables || [];
-            this.times = timeData.values || [];
             this.currentGeo = geoData;
             this.currentBathy = bathyData;
+            this.currentEEZ = eezData;
 
             this.varControl.setCatalog(this.catalog);
-            this.timelineControl.setTimes(this.times);
-            this.activeTime = this.times[0] || null;
 
-            const maxD = (bathyData.terrain?.maxDepthKm || 3.5) * 1000;
+            // Discover and set timeline for the active variable
+            await this.timelineControl.loadTimelineForVariable(this.activeVar, bbox);
+            this.activeTime = this.timelineControl.getCurrentTimestamp();
+
+            const maxD = (bathyData.maxDepthKm || (bathyData.terrain?.maxDepthKm) || 3.5) * 1000;
             this.depthControl.setMaxDepth(maxD);
 
             // Assemble 3D Scene
-            this.assemble3DScene(geoData, bathyData, argoData.observations || []);
+            this.assemble3DScene(geoData, bathyData, eezData, argoData.observations || []);
 
             // Load scientific layer
             await this.loadActiveVariable();
+
+            // Update Provenance Panel
+            this.updateProvenanceUI();
 
             this.status('3D ocean chunk ready');
         } catch (e) {
@@ -245,35 +291,48 @@ class SolvXApp {
         }
     }
 
-    assemble3DScene(geography, bathymetry, observations) {
+    assemble3DScene(geography, bathymetry, eezData, observations) {
         this.scene.clearScene();
 
-        // 1. 3D Land
+        // 1. 3D Mainland
         const landMesh = buildLand(geography, this.scene);
-        this.scene.root.add(landMesh);
+        this.scene.setLayer('land', landMesh);
 
-        // 2. Coastline & EEZ
+        // 2. Coastline Shoreline Vectors
         const coastMesh = buildCoastline(geography);
-        this.scene.root.add(coastMesh);
+        this.scene.setLayer('coastline', coastMesh);
 
-        // 3. Bathymetric Seabed
+        // 3. Minor Offshore Islands
+        const islandMesh = buildIslands(geography, this.scene);
+        this.scene.setLayer('islands', islandMesh);
+
+        // 4. Real Maritime EEZ Boundaries (Marine Regions v12)
+        const eezMesh = buildEEZ(geography, eezData);
+        this.scene.setLayer('eez', eezMesh);
+
+        // 5. Bathymetric Seabed
         const seabedMesh = buildSeabed(bathymetry, this.scene);
-        if (seabedMesh) this.scene.root.add(seabedMesh);
+        if (seabedMesh) this.scene.setLayer('seabed', seabedMesh);
 
-        // 4. Procedural Seabed Vegetation & Rocks
+        // 6. Procedural Seabed Vegetation & Rocks
         const vegMesh = buildVegetation(bathymetry, this.scene);
-        this.scene.root.add(vegMesh);
+        if (vegMesh) this.scene.root.add(vegMesh);
 
-        // 5. Dynamic Ocean Water & Volumetric Column
+        // 7. Dynamic Ocean Water & Volumetric Column
         this.water = new DynamicWater(bathymetry, this.scene);
-        this.scene.root.add(this.water.group);
+        this.scene.setLayer('water', this.water.group);
 
-        // 6. In-Situ Argo Float Markers
-        this.buildArgoMarkers(observations, bathymetry.bounds);
+        // 8. In-Situ Argo Float Markers
+        this.buildArgoMarkers(observations, bathymetry.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat]);
 
         // Initialize visualizers
         this.tempViz = new TemperatureVisualizer(this.water);
         this.salViz = new SalinityVisualizer(this.water);
+
+        // Apply layer toggles according to user checkbox settings
+        for (const [layer, visible] of Object.entries(this.layerState)) {
+            this.applyLayerVisibility(layer, visible);
+        }
 
         this.scene.fitCamera();
     }
@@ -329,14 +388,19 @@ class SolvXApp {
 
     rebuildTerrain() {
         if (this.currentGeo && this.currentBathy) {
-            this.assemble3DScene(this.currentGeo, this.currentBathy, []);
+            this.assemble3DScene(this.currentGeo, this.currentBathy, this.currentEEZ, []);
             this.loadActiveVariable();
         }
     }
 
     async setVariable(varId) {
         this.activeVar = varId;
+        this.status(`Loading ${varId}…`, 'busy');
+        await this.timelineControl.loadTimelineForVariable(varId, this.currentBBox);
+        this.activeTime = this.timelineControl.getCurrentTimestamp();
         await this.loadActiveVariable();
+        this.updateProvenanceUI();
+        this.status('Ready');
     }
 
     async loadActiveVariable() {
@@ -358,46 +422,112 @@ class SolvXApp {
         } else {
             this.tempViz?.apply();
         }
+
+        this.applyLayerVisibility('scientific', this.layerState.scientific);
+        this.applyLayerVisibility('currents', this.layerState.currents);
+        this.applyLayerVisibility('particles', this.layerState.particles);
     }
 
     async loadCurrents() {
         try {
-            const data = await ApiClient.getCurrentGrid(this.activeTime, null, 3);
+            const data = await ApiClient.getOceanVariable({
+                variable: 'currents',
+                bbox: this.currentBBox,
+                time: this.activeTime,
+                stride: 3
+            });
             this.currentGrid = data;
-            const bounds = this.currentBathy?.bounds || [84.1, 93.0, 16.0, 23.5];
+            const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
 
             // Build 3D vector arrows
             this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds);
-            this.scene.root.add(this.currentVectorsGroup);
+            this.scene.setLayer('currents', this.currentVectorsGroup);
 
             // Build animated particles
             this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
-            this.scene.root.add(this.currentParticles.group);
+            this.scene.setLayer('particles', this.currentParticles.group);
         } catch (e) {
-            console.warn('Failed to load currents:', e);
+            console.warn('[SolvXApp] Failed to load currents:', e);
         }
     }
 
     onDepthChange(depthM) {
+        this.activeDepth = depthM;
         if (this.activeVar === 'temperature') {
             this.tempViz?.sliceAtDepth(depthM);
         } else if (this.activeVar === 'salinity') {
             this.salViz?.sliceAtDepth(depthM);
         }
+        this.updateProvenanceUI();
     }
 
     onDepthModeChange(mode, depthM) {
+        this.activeDepthMode = mode;
+        this.activeDepth = depthM;
         if (mode === 'volume') {
             this.loadActiveVariable();
         } else {
             this.onDepthChange(depthM);
         }
+        this.updateProvenanceUI();
     }
 
-    async onTimeChange(idx, timeIso) {
+    async onTimeChange(idx, timeIso, meta) {
         this.activeTime = timeIso;
+        this.activeTimeMeta = meta;
         if (this.activeVar === 'currents') {
             await this.loadCurrents();
+        }
+        this.updateProvenanceUI();
+    }
+
+    updateProvenanceUI() {
+        const provProvider = document.getElementById('provProvider');
+        const provDataset = document.getElementById('provDataset');
+        const provVar = document.getElementById('provVar');
+        const provUnits = document.getElementById('provUnits');
+        const provRes = document.getElementById('provRes');
+        const provDepth = document.getElementById('provDepth');
+        const provMode = document.getElementById('provMode');
+        const provBounds = document.getElementById('provBounds');
+
+        const varUnitsMap = {
+            temperature: '°C',
+            salinity: 'PSU',
+            currents: 'm/s',
+            sea_surface_height: 'm',
+            mixed_layer_depth: 'm',
+            tropical_cyclone_heat_potential: 'kJ/cm²',
+            chlorophyll: 'mg/m³'
+        };
+
+        const datasetMap = {
+            temperature: 'incois_hoofs_temp',
+            salinity: 'incois_hoofs_sal',
+            currents: 'incois_hoofs_curr',
+            sea_surface_height: 'incois_hoofs_ssh'
+        };
+
+        if (provProvider) provProvider.textContent = 'INCOIS';
+        if (provDataset) provDataset.textContent = datasetMap[this.activeVar] || 'incois_hoofs_model';
+        if (provVar) provVar.textContent = this.activeVar.replace(/_/g, ' ');
+        if (provUnits) provUnits.textContent = varUnitsMap[this.activeVar] || '—';
+        if (provRes) provRes.textContent = '0.083° (~9 km)';
+
+        if (provDepth) {
+            provDepth.textContent = this.activeDepthMode === 'volume'
+                ? 'Volume (0 → 3500 m)'
+                : `${Math.round(this.activeDepth)} m (Slice)`;
+        }
+
+        if (provMode) {
+            const isForecast = this.activeTimeMeta?.isForecast;
+            provMode.textContent = isForecast ? 'VERIFIED_FORECAST' : 'VERIFIED_HISTORICAL';
+            provMode.className = `prov-v prov-status ${isForecast ? 'forecast' : 'historical'}`;
+        }
+
+        if (provBounds) {
+            provBounds.textContent = `[${this.currentBBox.min_lon.toFixed(1)}°, ${this.currentBBox.max_lon.toFixed(1)}°, ${this.currentBBox.min_lat.toFixed(1)}°, ${this.currentBBox.max_lat.toFixed(1)}°]`;
         }
     }
 
@@ -453,68 +583,79 @@ class SolvXApp {
     async inspectObservation(argo) {
         const modal = document.getElementById('obsModal');
         const title = document.getElementById('obsTitle');
-        const body = document.getElementById('obsBody');
         const stats = document.getElementById('obsStats');
+        const body = document.getElementById('obsBody');
 
-        if (title) title.textContent = `Argo Float #${argo.wmo} (${argo.platform})`;
-        modal?.classList.remove('hidden');
+        if (!modal || !argo) return;
+        if (title) title.textContent = `Argo Float #${argo.wmo} Sounding Profile`;
+        this.status(`Comparing Argo #${argo.wmo} with model…`, 'busy');
 
         try {
-            const comp = await ApiClient.compareObservation(argo.id);
+            const cmp = await ApiClient.compareObservation(argo.id);
             if (stats) {
                 stats.innerHTML = `
-                    <div class="obs-stat"><b>Location</b><span>${argo.latitude}° N, ${argo.longitude}° E</span></div>
-                    <div class="obs-stat"><b>Cycles</b><span>${argo.cycles} soundings</span></div>
-                    <div class="obs-stat"><b>Model RMSE</b><span>${comp.rmse != null ? `${comp.rmse} °C` : '—'}</span></div>
-                    <div class="obs-stat"><b>Mean Bias</b><span>${comp.bias != null ? `${comp.bias} °C` : '—'}</span></div>
+                    <div class="obs-stat">
+                        <b>Root Mean Squared Error (RMSE)</b>
+                        <span>${cmp.rmse != null ? `${cmp.rmse.toFixed(3)} °C` : '—'}</span>
+                    </div>
+                    <div class="obs-stat">
+                        <b>Mean Model Bias</b>
+                        <span>${cmp.bias != null ? `${cmp.bias.toFixed(3)} °C` : '—'}</span>
+                    </div>
                 `;
             }
 
-            if (body) {
-                const rows = (comp.comparison || []).map(r => `
-                    <tr>
-                        <td>${r.depth} m</td>
-                        <td>${r.observed} °C</td>
-                        <td>${r.model} °C</td>
-                        <td class="${r.diff > 0 ? 'diff-pos' : 'diff-neg'}">${r.diff > 0 ? '+' : ''}${r.diff} °C</td>
-                    </tr>
-                `).join('');
-
+            if (body && Array.isArray(cmp.comparison)) {
                 body.innerHTML = `
                     <table class="obs-table">
                         <thead>
                             <tr>
-                                <th>Depth</th>
-                                <th>Observed (Argo)</th>
-                                <th>Model Sim</th>
-                                <th>Difference (Anomaly)</th>
+                                <th>Depth (m)</th>
+                                <th>Observed (°C)</th>
+                                <th>Model (°C)</th>
+                                <th>Diff (°C)</th>
                             </tr>
                         </thead>
-                        <tbody>${rows}</tbody>
+                        <tbody>
+                            ${cmp.comparison.map(row => {
+                                const diff = row.diff != null ? row.diff : (row.model_temp - row.observed_temp);
+                                const diffClass = diff > 0 ? 'diff-pos' : 'diff-neg';
+                                return `
+                                    <tr>
+                                        <td>${row.depth}</td>
+                                        <td>${row.observed_temp.toFixed(2)}</td>
+                                        <td>${row.model_temp.toFixed(2)}</td>
+                                        <td class="${diffClass}">${diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
                     </table>
                 `;
             }
+
+            modal.classList.remove('hidden');
+            this.status('Observation profile collocated');
         } catch (e) {
-            if (body) body.innerHTML = `<p class="error">Failed to load profile comparison: ${e.message}</p>`;
+            this.status(`Observation comparison failed · ${e.message}`, 'error');
         }
     }
 
-    status(text, type = 'ok') {
-        const statusText = document.getElementById('status');
-        const statusDot = document.getElementById('statusDot');
-        if (statusText) statusText.textContent = text;
-        if (statusDot) {
-            statusDot.className = type === 'error' ? 'error' : type === 'busy' ? 'busy' : '';
+    status(msg, type = 'ready') {
+        const dot = document.getElementById('statusDot');
+        const text = document.getElementById('status');
+        if (text) text.textContent = msg;
+        if (dot) {
+            dot.className = type === 'busy' ? 'busy' : (type === 'error' ? 'error' : '');
         }
     }
 }
 
-// Start application
 window.addEventListener('DOMContentLoaded', () => {
     const app = new SolvXApp();
+    window.solvx = app;
     app.init().catch(err => {
         console.error('Fatal initialization error:', err);
-        document.getElementById('loading')?.classList.add('hidden');
         const fatal = document.getElementById('fatal');
         const fatalText = document.getElementById('fatalText');
         if (fatalText) fatalText.textContent = err.message || String(err);

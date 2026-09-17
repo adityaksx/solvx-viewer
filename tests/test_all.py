@@ -44,6 +44,12 @@ class TestSolvXBackend(unittest.TestCase):
         h = health()
         self.assertEqual(h['status'], 'healthy')
 
+        from backend.main import get_client_config
+        cfg = get_client_config()
+        self.assertIn('maptiler_api_key', cfg)
+        self.assertIn('local_data_mode', cfg)
+        self.assertIn('default_bbox', cfg)
+
     def test_region_presets_and_validation(self):
         presets = get_presets()
         self.assertIn('presets', presets)

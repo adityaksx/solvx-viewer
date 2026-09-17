@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import region, geography, bathymetry, ocean, observations
+from .api import region, geography, bathymetry, ocean, observations, data
 from .services.ocean_data_service import (
     get_nc_files,
     find_file,
@@ -20,7 +20,7 @@ from .processing.normalization import variable_catalog, sanitize
 app = FastAPI(
     title='SolvX Ocean Data API',
     description='High-performance API for dynamic 3D oceanographic visualization and observation analysis',
-    version='3.0.0'
+    version='3.1.0'
 )
 
 app.add_middleware(
@@ -32,6 +32,7 @@ app.add_middleware(
 )
 
 # Register modular API routers
+app.include_router(data.router)
 app.include_router(region.router)
 app.include_router(geography.router)
 app.include_router(bathymetry.router)
@@ -45,6 +46,7 @@ def root():
         'status': 'running',
         'version': app.version,
         'endpoints': {
+            'data': '/api/data',
             'region': '/api/region',
             'geography': '/api/geography',
             'bathymetry': '/api/bathymetry',
@@ -57,6 +59,16 @@ def root():
 @app.get('/health')
 def health():
     return {'status': 'healthy', 'version': app.version}
+
+@app.get('/api/config')
+def get_client_config():
+    from .config import MAPTILER_API_KEY, LOCAL_DATA_MODE, DEFAULT_BBOX, PRESET_REGIONS
+    return {
+        'maptiler_api_key': MAPTILER_API_KEY,
+        'local_data_mode': LOCAL_DATA_MODE,
+        'default_bbox': DEFAULT_BBOX,
+        'preset_regions': PRESET_REGIONS
+    }
 
 # ==============================================================================
 # Backward Compatibility Layer for Legacy Routes

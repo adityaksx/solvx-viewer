@@ -23,16 +23,15 @@ function polyGeometry(parts, y = 0) {
     return g;
 }
 
-export function buildLand(geography, sceneManager) {
+function createExtrudedMeshes(parts, sceneManager, topColor = 0x35b94d) {
     const group = new THREE.Group();
-    const parts = [...(geography.land || []), ...(geography.islands || [])];
-    if (!parts.length) return group;
+    if (!parts || !parts.length) return group;
 
     const topY = 0;
     const bottomY = sceneManager.depthY(3500); // 3.5 km bedrock base
 
-    const greenMat = new THREE.MeshStandardMaterial({
-        color: 0x35b94d,
+    const topMat = new THREE.MeshStandardMaterial({
+        color: topColor,
         roughness: 0.85,
         metalness: 0.05,
         side: THREE.DoubleSide
@@ -45,11 +44,11 @@ export function buildLand(geography, sceneManager) {
         side: THREE.DoubleSide
     });
 
-    // 1. Land Top (Green)
-    const topMesh = new THREE.Mesh(polyGeometry(parts, topY), greenMat);
+    // 1. Top surface
+    const topMesh = new THREE.Mesh(polyGeometry(parts, topY), topMat);
     group.add(topMesh);
 
-    // 2. Extruded Land Sides (Soil)
+    // 2. Extruded sides (soil)
     const sidePos = [];
     const sideIdx = [];
 
@@ -80,9 +79,17 @@ export function buildLand(geography, sceneManager) {
         group.add(sideMesh);
     }
 
-    // 3. Land Bottom Slab
+    // 3. Bottom bedrock slab
     const bottomMesh = new THREE.Mesh(polyGeometry(parts, bottomY), soilMat);
     group.add(bottomMesh);
 
     return group;
+}
+
+export function buildLand(geography, sceneManager) {
+    return createExtrudedMeshes(geography.land || [], sceneManager, 0x35b94d);
+}
+
+export function buildIslands(geography, sceneManager) {
+    return createExtrudedMeshes(geography.islands || [], sceneManager, 0x2e9b42);
 }

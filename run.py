@@ -18,13 +18,10 @@ def main():
     data_dir=ROOT/'data'
     FRONTEND.mkdir(parents=True,exist_ok=True)
     geom_file = FRONTEND / 'geometry.json'
-    if not geom_file.exists():
-        from data import prepare
-        print('Preparing GEBCO/coast/EEZ geometry…')
-        geometry=prepare(data_dir)
-        geom_file.write_text(json.dumps(geometry,separators=(',',':')),encoding='utf-8')
+    if geom_file.exists():
+        print('Using existing GEBCO/coast/EEZ geometry cache.')
     else:
-        print('Using existing GEBCO/coast/EEZ geometry.json.')
+        print('Dynamic geometry mode enabled (fetching on demand via /api/geography and /api/bathymetry).')
     threading.Thread(target=start_api,daemon=True).start()
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(FRONTEND),**kwargs)

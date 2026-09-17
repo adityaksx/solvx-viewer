@@ -1,269 +1,148 @@
-import threading
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
-import numpy as np
-import pandas as pd
-import xarray as xr
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-DATA_DIR=Path(__file__).resolve().parent.parent/'data'/'model'
-app=FastAPI(title='SolvX Ocean Data API',description='API for interactive 3D ocean visualization',version='2.3.0')
-app.add_middleware(CORSMiddleware,allow_origins=['*'],allow_credentials=False,allow_methods=['GET','OPTIONS'],allow_headers=['*'])
 
-NETCDF_LOCK = threading.RLock()
-OPEN_DATASETS = {}
+from .api import region, geography, bathymetry, ocean, observations
+from .services.ocean_data_service import (
+    get_nc_files,
+    find_file,
+    get_ocean_catalog,
+    get_ocean_time,
+    get_ocean_current_grid,
+    get_ocean_point,
+    get_region_array
+)
+from .services.observation_service import get_observations
+from .services.cache_service import safe_open_dataset
+from .processing.normalization import variable_catalog, sanitize
 
-def get_nc_files(): return sorted(DATA_DIR.glob('*.nc'))
-def find_file(filename):
- p=DATA_DIR/Path(filename).name
- if not p.exists() or p.suffix.lower()!='.nc': raise HTTPException(404,detail=f'NetCDF file not found: {Path(filename).name}')
- return p
+app = FastAPI(
+    title='SolvX Ocean Data API',
+    description='High-performance API for dynamic 3D oceanographic visualization and observation analysis',
+    version='3.0.0'
+)
 
-def get_cached_dataset(filename_or_path):
- p = find_file(filename_or_path) if isinstance(filename_or_path, (str, Path)) and not Path(filename_or_path).is_absolute() else Path(filename_or_path)
- key = str(p.resolve())
- with NETCDF_LOCK:
-  if key not in OPEN_DATASETS:
-   OPEN_DATASETS[key] = xr.open_dataset(p)
-  return OPEN_DATASETS[key]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_credentials=False,
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['*']
+)
 
-@contextmanager
-def open_dataset(filename):
- with NETCDF_LOCK:
-  try:
-   yield get_cached_dataset(filename)
-  except HTTPException:
-   raise
-  except Exception as e:
-   raise HTTPException(500,detail=f'Could not open NetCDF file: {e}')
-def sanitize(v):
- if isinstance(v,(pd.Timestamp,np.datetime64)):
-  try:return pd.Timestamp(v).isoformat()
-  except:return str(v)
- if isinstance(v,np.ndarray):
-  if np.issubdtype(v.dtype,np.floating):
-   if v.ndim==1:return [None if not np.isfinite(x) else float(x) for x in v.tolist()]
-   if v.ndim==2:return [[None if not np.isfinite(x) else float(x) for x in row] for row in v.tolist()]
-  return v.tolist()
- if isinstance(v,np.generic):
-  val=v.item()
-  return val if not isinstance(val,float) or np.isfinite(val) else None
- if isinstance(v,dict):return {str(k):sanitize(x) for k,x in v.items()}
- if isinstance(v,(list,tuple)):return [sanitize(x) for x in v]
- if isinstance(v,float):return v if np.isfinite(v) else None
- return v
-def variable_catalog(ds):return [{'name':n,'dimensions':list(v.dims),'shape':list(v.shape),'dtype':str(v.dtype),'long_name':v.attrs.get('long_name'),'standard_name':v.attrs.get('standard_name'),'units':v.attrs.get('units')} for n,v in ds.data_vars.items()]
-def normalize_time_coordinate(data):
- if 'time' not in data.dims or 'time' not in data.coords:return data
- raw=data.time.values
- try:
-  if np.issubdtype(np.asarray(raw).dtype,np.number):
-   units=str(data.time.attrs.get('units','')).lower()
-   if 'since' in units:
-    try: raw=xr.coding.times.decode_cf_datetime(raw,units,data.time.attrs.get('calendar','standard'))
-    except Exception: raw=pd.to_datetime(raw,unit='ns',utc=True)
-   else: raw=pd.to_datetime(raw,unit='ns',utc=True)
-  else: raw=pd.to_datetime(raw,utc=True)
-  return data.assign_coords(time=('time',pd.DatetimeIndex(raw).tz_localize(None).to_numpy(dtype='datetime64[ns]')))
- except Exception as e:raise HTTPException(422,detail=f'Could not normalize NetCDF time coordinate: {e}')
-def normalize_time_value(value):
- if value is None:return None
- try:
-  if isinstance(value,(int,float,np.integer,np.floating)):
-   n=float(value);a=abs(n);u='ns' if a>=1e17 else 'us' if a>=1e14 else 'ms' if a>=1e11 else 's';p=pd.to_datetime(n,unit=u,utc=True)
-  else:
-   text=str(value).strip()
-   if text.isdigit() and len(text)>=10:
-    n=float(text);a=abs(n);u='ns' if a>=1e17 else 'us' if a>=1e14 else 'ms' if a>=1e11 else 's';p=pd.to_datetime(n,unit=u,utc=True)
-   else:p=pd.to_datetime(text,utc=True)
-  return p.tz_convert(None) if getattr(p,'tzinfo',None) is not None else p
- except Exception as e:raise HTTPException(422,detail=f"Invalid time value '{value}': {e}")
-def select_time(data,value,method='nearest'):
- if value is None or 'time' not in data.dims:return data
- return normalize_time_coordinate(data).sel(time=normalize_time_value(value),method=method)
-def coord_slice(data,dim,lo,hi):
- if dim not in data.dims or lo is None or hi is None:return data
- if dim=='time':data=normalize_time_coordinate(data);lo,hi=normalize_time_value(lo),normalize_time_value(hi)
- c=data[dim].values
- if not c.size:return data
- return data.sel({dim:slice(lo,hi) if c[0]<=c[-1] else slice(hi,lo)})
-def select(data,lat_min=None,lat_max=None,lon_min=None,lon_max=None,depth_min=None,depth_max=None,time_start=None,time_end=None):
- for d,lo,hi in [('latitude',lat_min,lat_max),('longitude',lon_min,lon_max),('depth',depth_min,depth_max),('lat',lat_min,lat_max),('lon',lon_min,lon_max)]:
-  if lo is not None and hi is not None:data=coord_slice(data,d,lo,hi)
- return coord_slice(data,'time',time_start,time_end)
-def aliases(file_name,var_name):
- text,var=f'{file_name} {var_name}'.lower(),var_name.lower()
- if 'temperature' in text and 'anomaly' not in text and 'anamoly' not in text:return 'temperature'
- if 'anamoly' in text or 'anomaly' in text:return 'temperature_anomaly'
- if 'salinity' in text:return 'salinity'
- if 'current' in text or var in {'uo','vo','u','v','uoce','voce','ucur','vcur'}:return 'currents'
- if var in {'total_sea_level','sea_surface_height','zos','ssh','sla'}:return 'sea_level'
- if 'sea level' in text:
-  if 'variation' not in var and 'tide' not in var and 'barometer' not in var:return 'sea_level'
- if 'chlorophyll' in text or var in {'chl','chlor_a','chlorophyll'}:return 'chlorophyll'
- return None
-def find_logical(logical):
- out=[]
- with NETCDF_LOCK:
-  for f in get_nc_files():
-   try:
-    ds=get_cached_dataset(f)
-    for n,v in ds.data_vars.items():
-     if aliases(f.name,n)==logical:out.append((f,n,dict(v.attrs),list(v.dims),list(v.shape)))
-   except Exception:pass
- return out
-def find_current_components():
- matches=find_logical('currents');groups={}
- for f,n,a,d,s in matches:groups.setdefault(f,[]).append((n,a))
- for f,items in groups.items():
-  u=v=None
-  for n,a in items:
-   name=n.lower();std=str(a.get('standard_name','')).lower();long=str(a.get('long_name','')).lower()
-   if u is None and (name in {'uo','u','ucur'} or 'eastward' in std or 'eastward' in long):u=n
-   if v is None and (name in {'vo','v','vcur'} or 'northward' in std or 'northward' in long):v=n
-  if u and v:return f,u,v
- return None,None,None
-def select_surface(data):
- for dim in ('depth','deptht','depthu','depthv','depthw','lev','level','z'):
-  if dim in data.dims:
-   try:return data.sel({dim:0},method='nearest')
-   except Exception:return data.isel({dim:0})
- return data
+# Register modular API routers
+app.include_router(region.router)
+app.include_router(geography.router)
+app.include_router(bathymetry.router)
+app.include_router(ocean.router)
+app.include_router(observations.router)
+
 @app.get('/')
-def root():return {'name':'SolvX Ocean Data API','status':'running','docs':'/docs','version':app.version}
-@app.get('/datasets')
-def datasets():
- out=[]
- with NETCDF_LOCK:
-  for f in get_nc_files():
-   try:
-    ds=get_cached_dataset(f)
-    out.append({'file':f.name,'variables':variable_catalog(ds),'dimensions':{k:int(v) for k,v in ds.sizes.items()}})
-   except Exception as e:out.append({'file':f.name,'error':str(e)})
- return {'count':len(out),'datasets':out}
-@app.get('/variables/{filename}')
-def variables(filename):
- with open_dataset(filename) as ds:return {'file':filename,'variables':variable_catalog(ds)}
-@app.get('/metadata/{filename}')
-def metadata(filename):
- with open_dataset(filename) as ds:
-  coords={}
-  for n,c in ds.coords.items():
-   vals=c.values;step=max(1,vals.size//5000);coords[n]={'size':int(vals.size),'min':sanitize(vals.min()) if vals.size else None,'max':sanitize(vals.max()) if vals.size else None,'values':sanitize(vals.tolist() if n=='time' or vals.size<=5000 else vals[::step].tolist()),'units':c.attrs.get('units')}
-  return {'file':filename,'variables':variable_catalog(ds),'coordinates':coords}
+def root():
+    return {
+        'name': 'SolvX Ocean Data API',
+        'status': 'running',
+        'version': app.version,
+        'endpoints': {
+            'region': '/api/region',
+            'geography': '/api/geography',
+            'bathymetry': '/api/bathymetry',
+            'ocean': '/api/ocean',
+            'observations': '/api/observations',
+            'docs': '/docs'
+        }
+    }
+
+@app.get('/health')
+def health():
+    return {'status': 'healthy', 'version': app.version}
+
+# ==============================================================================
+# Backward Compatibility Layer for Legacy Routes
+# ==============================================================================
+
 @app.get('/ocean/catalog')
-def ocean_catalog():
- labels=[('temperature','Temperature'),('temperature_anomaly','Sea surface temperature anomaly'),('salinity','Salinity'),('currents','Currents'),('sea_level','Sea level'),('chlorophyll','Chlorophyll')];out=[]
- for logical,label in labels:
-  m=find_logical(logical)
-  if logical=='currents':
-   f,u,v=find_current_components()
-   if f:
-    with open_dataset(f) as ds:
-     a=ds[u].attrs;out.append({'id':logical,'label':label,'available':True,'file':f.name,'variable':u,'components':{'u':u,'v':v},'units':a.get('units'),'long_name':'Eastward/northward current components','standard_name':'sea_water_velocity','dimensions':list(ds[u].dims),'shape':list(ds[u].shape),'matches':[{'file':f.name,'variable':u},{'file':f.name,'variable':v}]});continue
-  if not m:out.append({'id':logical,'label':label,'available':False,'reason':'No matching NetCDF variable found'});continue
-  f,n,a,d,s=m[0];out.append({'id':logical,'label':label,'available':True,'file':f.name,'variable':n,'units':a.get('units'),'long_name':a.get('long_name'),'standard_name':a.get('standard_name'),'dimensions':d,'shape':s,'matches':[{'file':x[0].name,'variable':x[1],'units':x[2].get('units'),'dimensions':x[3],'shape':x[4]} for x in m]})
- return {'variables':out}
+def legacy_ocean_catalog():
+    return get_ocean_catalog()
+
 @app.get('/ocean/time')
-def ocean_time():
- for f,n,*_ in find_logical('temperature'):
-  with open_dataset(f) as ds:
-   if 'time' in ds[n].dims and 'time' in ds.coords:
-    vals=normalize_time_coordinate(ds[n]).time.values;return {'file':f.name,'variable':n,'count':int(vals.size),'values':[pd.Timestamp(v).isoformat() for v in vals]}
- return {'file':None,'variable':None,'count':0,'values':[]}
+def legacy_ocean_time():
+    return get_ocean_time()
+
 @app.get('/ocean/current-grid')
-def ocean_current_grid(time:Optional[str]=None,depth:Optional[float]=None,stride:int=3):
- f,u_name,v_name=find_current_components()
- if not f:raise HTTPException(404,detail='Both eastward and northward current variables are required')
- with open_dataset(f) as ds:
-  u,v=ds[u_name],ds[v_name]
-  if time is not None:
-   u,v=select_time(u,time),select_time(v,time)
-  elif 'time' in u.dims:
-   u,v=u.isel(time=0),v.isel(time=0)
-  if depth is not None:
-   if 'depth' in u.dims:u=u.sel(depth=depth,method='nearest')
-   if 'depth' in v.dims:v=v.sel(depth=depth,method='nearest')
-  else:
-   u,v=select_surface(u),select_surface(v)
-  yd='latitude' if 'latitude' in u.dims else 'lat' if 'lat' in u.dims else None;xd='longitude' if 'longitude' in u.dims else 'lon' if 'lon' in u.dims else None
-  if not yd or not xd:raise HTTPException(422,detail='Current dataset has no latitude/longitude dimensions')
-  stride=max(1,min(stride,20));u=u.isel({yd:slice(None,None,stride),xd:slice(None,None,stride)}).squeeze();v=v.isel({yd:slice(None,None,stride),xd:slice(None,None,stride)}).squeeze();lat,lon=u.coords[yd],u.coords[xd]
-  return {'file':f.name,'u_variable':u_name,'v_variable':v_name,'latitude':sanitize(lat.values),'longitude':sanitize(lon.values),'u':sanitize(np.asarray(u.values,dtype=np.float32)),'v':sanitize(np.asarray(v.values,dtype=np.float32)),'units':u.attrs.get('units') or v.attrs.get('units')}
+def legacy_ocean_current_grid(time: Optional[str] = None, depth: Optional[float] = None, stride: int = 3):
+    return get_ocean_current_grid(time=time, depth=depth, stride=stride)
+
 @app.get('/ocean/point')
-def ocean_point(latitude:float,longitude:float,time:Optional[str]=None):
- result=[]
- for logical,label in [('temperature','Temperature'),('temperature_anomaly','SST anomaly'),('salinity','Salinity'),('currents','Currents'),('sea_level','Sea level'),('chlorophyll','Chlorophyll')]:
-  try:
-   if logical=='currents':
-    cf,un,vn=find_current_components()
-    if not cf:result.append({'id':logical,'label':label,'available':False,'value':None});continue
-    with open_dataset(cf) as ds:
-     vals={}
-     for name in (un,vn):
-      q=ds[name]
-      for dim,val in [('latitude',latitude),('longitude',longitude),('lat',latitude),('lon',longitude)]:
-       if dim in q.dims:q=q.sel({dim:val},method='nearest')
-      if time is not None:q=select_time(q,time)
-      q=select_surface(q)
-      if q.ndim:q=q.isel({dim:0 for dim in q.dims})
-      if q.ndim==0:vals[name]=sanitize(q.values)
-     speed = float(np.hypot(vals.get(un,0), vals.get(vn,0))) if (un in vals and vn in vals) else None
-     result.append({'id':logical,'label':label,'available':True,'units':ds[un].attrs.get('units') or ds[vn].attrs.get('units'),'value':vals,'speed':speed,'depth_dependent':('depth' in ds[un].dims or 'depth' in ds[vn].dims)})
-    continue
-   m=find_logical(logical)
-   if not m:result.append({'id':logical,'label':label,'available':False,'value':None});continue
-   f,n,a,d,_=m[0]
-   with open_dataset(f) as ds:
-    q=ds[n]
-    for dim,val in [('latitude',latitude),('longitude',longitude),('lat',latitude),('lon',longitude)]:
-     if dim in q.dims:q=q.sel({dim:val},method='nearest')
-    if time is not None:q=select_time(q,time)
-    q=select_surface(q)
-    if q.ndim:q=q.isel({dim:0 for dim in q.dims})
-    result.append({'id':logical,'label':label,'available':True,'units':a.get('units'),'value':sanitize(q.values),'depth_dependent':any(dim in d for dim in ('depth','deptht','depthu','depthv','depthw','lev','level','z'))})
-  except Exception as e:result.append({'id':logical,'label':label,'available':False,'value':None,'error':str(e)})
- return {'latitude':latitude,'longitude':longitude,'time':time,'values':result}
+def legacy_ocean_point(latitude: float, longitude: float, time: Optional[str] = None):
+    return get_ocean_point(latitude=latitude, longitude=longitude, time=time)
+
 @app.get('/ocean/observations')
-def ocean_observations():
- floats = [
-  {'id': '2902694', 'wmo': 2902694, 'latitude': 17.52, 'longitude': 89.14, 'date': '2024-05-15T06:00:00Z', 'platform': 'Apex', 'cycles': 84,
-   'profile': [{'depth': 5, 'temp': 29.8, 'sal': 31.2}, {'depth': 25, 'temp': 29.1, 'sal': 32.1}, {'depth': 50, 'temp': 26.4, 'sal': 33.8}, {'depth': 100, 'temp': 21.2, 'sal': 34.6}, {'depth': 200, 'temp': 14.8, 'sal': 34.9}, {'depth': 500, 'temp': 9.2, 'sal': 35.0}, {'depth': 1000, 'temp': 6.1, 'sal': 35.0}]},
-  {'id': '2902701', 'wmo': 2902701, 'latitude': 19.12, 'longitude': 86.85, 'date': '2024-05-16T12:00:00Z', 'platform': 'Apex', 'cycles': 42,
-   'profile': [{'depth': 5, 'temp': 29.5, 'sal': 28.5}, {'depth': 25, 'temp': 28.9, 'sal': 30.2}, {'depth': 50, 'temp': 25.1, 'sal': 33.1}, {'depth': 100, 'temp': 20.5, 'sal': 34.5}, {'depth': 200, 'temp': 13.9, 'sal': 34.8}, {'depth': 500, 'temp': 8.9, 'sal': 35.0}, {'depth': 1000, 'temp': 5.8, 'sal': 35.1}]},
-  {'id': '2902715', 'wmo': 2902715, 'latitude': 15.30, 'longitude': 87.40, 'date': '2024-05-17T03:00:00Z', 'platform': 'Provor', 'cycles': 96,
-   'profile': [{'depth': 5, 'temp': 30.1, 'sal': 33.2}, {'depth': 25, 'temp': 29.4, 'sal': 33.5}, {'depth': 50, 'temp': 27.2, 'sal': 34.1}, {'depth': 100, 'temp': 22.0, 'sal': 34.7}, {'depth': 200, 'temp': 15.1, 'sal': 34.9}, {'depth': 500, 'temp': 9.5, 'sal': 35.0}, {'depth': 1000, 'temp': 6.3, 'sal': 35.0}]}
- ]
- return {'count': len(floats), 'observations': floats}
-@app.get('/data/point')
-def get_point(file:str,variable:str,latitude:Optional[float]=None,longitude:Optional[float]=None,depth:Optional[float]=None,time:Optional[str]=None):
- with open_dataset(file) as ds:
-  if variable not in ds.data_vars:raise HTTPException(404,detail={'error':f"Variable '{variable}' not found",'available_variables':list(ds.data_vars)})
-  data=ds[variable]
-  for dim,value in [('latitude',latitude),('longitude',longitude),('lat',latitude),('lon',longitude),('depth',depth)]:
-   if value is not None and dim in data.dims:data=data.sel({dim:value},method='nearest')
-  if time is not None:data=select_time(data,time)
-  if data.ndim==0:return {'variable':variable,'value':sanitize(data.item()),'coordinates':{k:sanitize(v.item() if getattr(v,'ndim',1)==0 else v.values) for k,v in data.coords.items()}}
-  if data.size>10000:raise HTTPException(413,detail={'error':'Too much data requested','remaining_dimensions':dict(data.sizes)})
-  frame=data.to_dataframe(name=variable).reset_index().replace({np.nan:None});return {'variable':variable,'dimensions':list(data.dims),'shape':list(data.shape),'data':frame.to_dict(orient='records')}
-@app.get('/data/region')
-def get_region(file:str,variable:str,lat_min:Optional[float]=None,lat_max:Optional[float]=None,lon_min:Optional[float]=None,lon_max:Optional[float]=None,depth_min:Optional[float]=None,depth_max:Optional[float]=None,time_start:Optional[str]=None,time_end:Optional[str]=None):
- with open_dataset(file) as ds:
-  if variable not in ds.data_vars:raise HTTPException(404,detail=f"Variable '{variable}' not found")
-  data=select(ds[variable],lat_min,lat_max,lon_min,lon_max,depth_min,depth_max,time_start,time_end)
-  if data.size>50000:raise HTTPException(413,detail={'error':'Region is too large','number_of_values':int(data.size)})
-  frame=data.to_dataframe(name=variable).reset_index().replace({np.nan:None});return {'file':file,'variable':variable,'dimensions':list(data.dims),'shape':list(data.shape),'data':frame.to_dict(orient='records')}
+def legacy_ocean_observations(min_lon: Optional[float] = None, max_lon: Optional[float] = None, min_lat: Optional[float] = None, max_lat: Optional[float] = None):
+    obs = get_observations(min_lon=min_lon, max_lon=max_lon, min_lat=min_lat, max_lat=max_lat)
+    return {'count': len(obs), 'observations': obs}
+
 @app.get('/data/region/array')
-def get_region_array(file:str,variable:str,lat_min:Optional[float]=None,lat_max:Optional[float]=None,lon_min:Optional[float]=None,lon_max:Optional[float]=None,depth_min:Optional[float]=None,depth_max:Optional[float]=None,time_start:Optional[str]=None,time_end:Optional[str]=None,stride:int=1):
- with open_dataset(file) as ds:
-  if variable not in ds.data_vars:raise HTTPException(404,detail=f"Variable '{variable}' not found")
-  data=select(ds[variable],lat_min,lat_max,lon_min,lon_max,depth_min,depth_max,time_start,time_end);stride=max(1,min(stride,20))
-  for dim in ('latitude','longitude','lat','lon'):
-   if dim in data.dims and stride>1:data=data.isel({dim:slice(None,None,stride)})
-  if data.size>500000:raise HTTPException(413,detail={'error':'Region is too large','number_of_values':int(data.size)})
-  values=np.asarray(data.values,dtype=np.float32)
-  return {'file':file,'variable':variable,'dimensions':list(data.dims),'shape':list(values.shape),'dtype':str(values.dtype),'coordinates':{d:sanitize(data[d].values) for d in data.dims if d in data.coords},'data':sanitize(values)}
-if __name__=='__main__':
- import uvicorn
- uvicorn.run('backend.main:app',host='127.0.0.1',port=8000,reload=False)
+def legacy_get_region_array(
+    file: str,
+    variable: str,
+    lat_min: Optional[float] = None,
+    lat_max: Optional[float] = None,
+    lon_min: Optional[float] = None,
+    lon_max: Optional[float] = None,
+    depth_min: Optional[float] = None,
+    depth_max: Optional[float] = None,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    stride: int = 1
+):
+    return get_region_array(
+        file=file,
+        variable=variable,
+        lat_min=lat_min,
+        lat_max=lat_max,
+        lon_min=lon_min,
+        lon_max=lon_max,
+        depth_min=depth_min,
+        depth_max=depth_max,
+        time_start=time_start,
+        time_end=time_end,
+        stride=stride
+    )
+
+@app.get('/datasets')
+def legacy_datasets():
+    out = []
+    for f in get_nc_files():
+        try:
+            with safe_open_dataset(f) as ds:
+                out.append({'file': f.name, 'variables': variable_catalog(ds), 'dimensions': {k: int(v) for k, v in ds.sizes.items()}})
+        except Exception as e:
+            out.append({'file': f.name, 'error': str(e)})
+    return {'count': len(out), 'datasets': out}
+
+@app.get('/variables/{filename}')
+def legacy_variables(filename: str):
+    with safe_open_dataset(find_file(filename)) as ds:
+        return {'file': filename, 'variables': variable_catalog(ds)}
+
+@app.get('/metadata/{filename}')
+def legacy_metadata(filename: str):
+    with safe_open_dataset(find_file(filename)) as ds:
+        coords = {}
+        for n, c in ds.coords.items():
+            vals = c.values
+            step = max(1, vals.size // 5000)
+            coords[n] = {
+                'size': int(vals.size),
+                'min': sanitize(vals.min()) if vals.size else None,
+                'max': sanitize(vals.max()) if vals.size else None,
+                'values': sanitize(vals.tolist() if n == 'time' or vals.size <= 5000 else vals[::step].tolist()),
+                'units': c.attrs.get('units')
+            }
+        return {'file': filename, 'variables': variable_catalog(ds), 'coordinates': coords}
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run('backend.main:app', host='127.0.0.1', port=8000, reload=False)

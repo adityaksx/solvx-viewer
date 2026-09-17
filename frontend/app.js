@@ -1,50 +1,523 @@
+// SolvX Viewer — Main Application Orchestrator
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ApiClient } from './api/apiClient.js';
+import { WorldGlobe } from './globe/worldMap.js';
+import { RegionSelector } from './globe/regionSelector.js';
+import { CoordinateInput } from './globe/coordinateInput.js';
 
-const $=id=>document.getElementById(id);
-const finite=v=>Number.isFinite(Number(v));
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const flat=v=>{const a=[];(function f(x){Array.isArray(x)?x.forEach(f):a.push(x)})(v);return a};
-const API=`${location.protocol==='file:'?'http:':location.protocol}//${location.hostname||'127.0.0.1'}:8000`;
-const LABEL={temperature:'Temperature',temperature_anomaly:'SST anomaly',salinity:'Salinity',currents:'Currents',sea_level:'Sea level',chlorophyll:'Chlorophyll'};
-const PAL={
- temperature:[[0x071b8f,0],[0x075cff,.15],[0x00c6ff,.32],[0x00e79a,.48],[0xfff000,.62],[0xff6b00,.8],[0xb40000,1]],
- temperature_anomaly:[[0x06349e,0],[0x4b9fe8,.25],[0xffffff,.5],[0xffa060,.75],[0xb60018,1]],
- salinity:[[0x071d9b,0],[0x00a6ff,.2],[0x00d49a,.42],[0xb8e52e,.68],[0xffe600,1]],
- sea_level:[[0x102caa,0],[0x00a9ff,.25],[0x26d08b,.5],[0xffd21a,.75],[0xd40000,1]],
- chlorophyll:[[0xf7fff0,0],[0xb7ef59,.2],[0x42c83e,.45],[0x078d38,.72],[0x003d20,1]],
- fallback:[[0x071b8f,0],[0x00cfff,.25],[0xfff000,.5],[0xff6a00,.75],[0xb40000,1]]};
-const S={scene:null,camera:null,renderer:null,controls:null,root:null,water:null,seabed:null,land:null,coast:null,field:null,layers:null,shell:null,current:null,catalog:[],times:[],ti:0,active:'temperature',domain:null,descriptor:null,range:null,bathy:null,depthMode:'volume',sliceDepth:0,depthEx:10,request:0,playing:false,lastPlay:0};
-async function get(p){const r=await fetch(API+p,{cache:'no-store'});if(!r.ok)throw Error(`${r.status} ${await r.text()}`);return r.json()}
-function status(t,type='ok'){$('status').textContent=t;$('statusDot').className=type==='error'?'error':type==='busy'?'busy':''}
-function fail(e){console.error(e);$('loading').classList.add('hidden');$('fatalText').textContent=e?.message||String(e);$('fatal').classList.add('show');status(`Viewer failed · ${e?.message||e}`,'error')}
-function qtl(a,p){if(!a.length)return 0;const x=(a.length-1)*p,i=Math.floor(x),j=Math.ceil(x);return a[i]+(a[j]-a[i])*(x-i)}
-function range(a){const v=a.filter(finite).sort((a,b)=>a-b);if(!v.length)throw Error('No finite values returned');let lo=qtl(v,.01),hi=qtl(v,.99);if(S.active==='temperature_anomaly'){const m=Math.max(Math.abs(lo),Math.abs(hi));lo=-m;hi=m}if(!(hi>lo)){const d=Math.max(Math.abs(lo)*.02,1e-6);lo-=d;hi+=d}return{lo,hi}}
-function color(t){const s=PAL[S.active]||PAL.fallback;t=clamp(t,0,1);let a=s[0],b=s[s.length-1];for(let i=0;i<s.length-1;i++)if(t<=s[i+1][1]){a=s[i];b=s[i+1];break}const u=(t-a[1])/(b[1]-a[1]||1),ca=a[0],cb=b[0];return new THREE.Color((((ca>>16)&255)+(((cb>>16)&255)-((ca>>16)&255))*u)/255,(((ca>>8)&255)+(((cb>>8)&255)-((ca>>8)&255))*u)/255,((ca&255)+((cb&255)-(ca&255))*u)/255)}
-function meta(file){return get(`/metadata/${encodeURIComponent(file)}`)}
-function domain(m){const c=m.coordinates||{},lat=c.latitude||c.lat,lon=c.longitude||c.lon;if(!lat||!lon)throw Error(`No latitude/longitude in ${m.file}`);return{lat:[+lat.min,+lat.max],lon:[+lon.min,+lon.max]}}
-function varMeta(m,n){return(m.variables||[]).find(v=>v.name===n)}
-function stride(m,n){const v=varMeta(m,n),d=v?.dimensions||[],s=v?.shape||[];let z=1;for(let i=0;i<d.length;i++)if(/^(latitude|lat|longitude|lon|depth|deptht|depthu|depthv|depthw|lev|level|z)$/.test(d[i]))z*=s[i]||1;return z>900000?5:z>500000?4:z>250000?3:z>120000?2:1}
-function parse(f){const dims=f.dimensions||[],shape=f.shape||[],c=f.coordinates||{},latN=dims.find(x=>x==='latitude'||x==='lat'),lonN=dims.find(x=>x==='longitude'||x==='lon'),depN=dims.find(x=>['depth','deptht','depthu','depthv','depthw','lev','level','z'].includes(x));if(!latN||!lonN)throw Error('Field has no lat/lon dimensions');const lat=(c[latN]||[]).map(Number),lon=(c[lonN]||[]).map(Number),dep=depN?(c[depN]||[]).map(Number):[0],st=[];let n=1;for(let i=shape.length-1;i>=0;i--){st[i]=n;n*=shape[i]}const li=dims.indexOf(latN),xi=dims.indexOf(lonN),zi=depN?dims.indexOf(depN):-1,raw=flat(f.data||[]).map(Number),yo=lat.map((v,i)=>[v,i]).sort((a,b)=>a[0]-b[0]),xo=lon.map((v,i)=>[v,i]).sort((a,b)=>a[0]-b[0]),zo=dep.map((v,i)=>[v,i]).sort((a,b)=>a[0]-b[0]),w=xo.length,h=yo.length,z=zo.length,out=new Float32Array(w*h*z);out.fill(NaN);const idx=(x,y,k)=>{let p=0;for(let d=0;d<dims.length;d++){let i=0;if(d===xi)i=x;if(d===li)i=y;if(d===zi)i=k;p+=i*st[d]}return Number(raw[p])};const valid=[];for(let k=0;k<z;k++)for(let j=0;j<h;j++)for(let i=0;i<w;i++){const v=idx(xo[i][1],yo[j][1],zi<0?0:zo[k][1]);out[k*w*h+j*w+i]=v;if(finite(v))valid.push(v)}return{width:w,height:h,depth:z,lon:xo.map(x=>x[0]),lat:yo.map(x=>x[0]),levels:zo.map(x=>x[0]),values:out,valid,depthDependent:z>1}}
-function size(){const d=S.domain||{lat:[0,1],lon:[0,1]},dx=Math.max(.1,Math.abs(d.lon[1]-d.lon[0])),dy=Math.max(.1,Math.abs(d.lat[1]-d.lat[0]));return{w:30,h:Math.max(16,30*dy/dx)}}
-function xy(lon,lat){const d=S.domain,z=size();return[(lon-(d.lon[0]+d.lon[1])/2)/(d.lon[1]-d.lon[0]||1)*z.w,(lat-(d.lat[0]+d.lat[1])/2)/(d.lat[1]-d.lat[0]||1)*z.h]}
-function clear(o){if(!o)return;o.traverse(x=>{x.geometry?.dispose();if(x.material){if(Array.isArray(x.material))x.material.forEach(m=>m.dispose());else x.material.dispose()}});o.parent?.remove(o)}
-function gridGeometry(desc,level){const w=desc.width,h=desc.height,pos=[],col=[],idx=[],map=new Int32Array(w*h);map.fill(-1);for(let j=0;j<h;j++)for(let i=0;i<w;i++){const v=desc.values[level*w*h+j*w+i];if(!finite(v))continue;const p=xy(desc.lon[i],desc.lat[j]),id=pos.length/3;map[j*w+i]=id;pos.push(p[0],-desc.levels[level]*S.depthEx*.018,p[1]);const c=color((v-S.range.lo)/(S.range.hi-S.range.lo));col.push(c.r,c.g,c.b,1)}for(let j=0;j<h-1;j++)for(let i=0;i<w-1;i++){const a=map[j*w+i],b=map[j*w+i+1],c=map[(j+1)*w+i],e=map[(j+1)*w+i+1];if(a>=0&&b>=0&&c>=0&&e>=0)idx.push(a,c,b,b,c,e)}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('color',new THREE.Float32BufferAttribute(col,4));g.setIndex(idx);g.computeVertexNormals();return g}
-function drawLayers(desc){clear(S.layers);S.layers=new THREE.Group();for(let k=0;k<desc.depth;k++){const g=gridGeometry(desc,k);if(!g.attributes.position?.count)continue;const top=k===0,op=S.depthMode==='volume'?(top?.82:.20):(Math.abs(desc.levels[k]-S.sliceDepth)<Math.max(1,(desc.levels.at(-1)||1)*.025)?.9:.025);const m=new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:op,side:THREE.DoubleSide,depthWrite:false});const mesh=new THREE.Mesh(g,m);mesh.userData.depth=desc.levels[k];S.layers.add(mesh)}S.root.add(S.layers);const z=size(),max=Math.max(1,desc.levels.at(-1)||1);clear(S.shell);S.shell=new THREE.Mesh(new THREE.BoxGeometry(z.w,max*S.depthEx*.018,z.h),new THREE.MeshBasicMaterial({color:0x1979c9,transparent:true,opacity:.035,depthWrite:false,side:THREE.DoubleSide}));S.shell.position.y=-max*S.depthEx*.009;S.root.add(S.shell)}
-function drawSurface(desc){clear(S.field);const g=gridGeometry(desc,0);S.field=new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide}));S.root.add(S.field)}
-function drawBathy(info){clear(S.seabed);clear(S.land);clear(S.coast);const w=info.width,h=info.height,vals=info.values,d=S.domain,valid=info.valid,z=size(),pos=[],idx=[],map=new Int32Array(w*h);map.fill(-1);const positive=valid.length?Math.min(...valid)>=0:true,dep=v=>positive?Math.max(0,v):Math.max(0,-v);for(let j=0;j<h;j++)for(let i=0;i<w;i++){const v=vals[j*w+i];if(!finite(v))continue;const p=xy(info.lon[i],info.lat[j]),id=pos.length/3;map[j*w+i]=id;pos.push(p[0],-dep(v)*S.depthEx*.018,p[1])}for(let j=0;j<h-1;j++)for(let i=0;i<w-1;i++){const a=map[j*w+i],b=map[j*w+i+1],c=map[(j+1)*w+i],e=map[(j+1)*w+i+1];if(a>=0&&b>=0&&c>=0&&e>=0)idx.push(a,c,b,b,c,e)}let g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setIndex(idx);g.computeVertexNormals();S.seabed=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0x79512a,roughness:1,side:THREE.DoubleSide}));S.root.add(S.seabed);const lp=[],li=[],cp=[];const cell=(i,j)=>{const p=xy(info.lon[i],info.lat[j]);return[p[0],.12,p[1]]},land=v=>!finite(v);for(let j=0;j<h-1;j++)for(let i=0;i<w-1;i++){const q=[vals[j*w+i],vals[j*w+i+1],vals[(j+1)*w+i+1],vals[(j+1)*w+i]];if(q.every(land)){const a=cell(i,j),b=cell(i+1,j),c=cell(i+1,j+1),e=cell(i,j+1),n=lp.length/3;lp.push(...a,...b,...c,...e);li.push(n,n+1,n+2,n,n+2,n+3)}const a=cell(i,j),b=cell(i+1,j),c=cell(i+1,j+1),e=cell(i,j+1);if(land(q[0])!==land(q[1]))cp.push(a,b);if(land(q[1])!==land(q[2]))cp.push(b,c);if(land(q[2])!==land(q[3]))cp.push(c,e);if(land(q[3])!==land(q[0]))cp.push(e,a)}g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(lp,3));g.setIndex(li);S.land=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0x2f8b3a,roughness:1,side:THREE.DoubleSide}));S.root.add(S.land);g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(cp.flat(),3));S.coast=new THREE.LineSegments(g,new THREE.LineBasicMaterial({color:0x123d18}));S.root.add(S.coast);S.bathy=info}
-async function loadBathymetry(){try{const ds=await get('/datasets'),cand=ds.datasets?.find(x=>/bathy|baymetry|gebco|seabed/i.test(x.file||''));if(!cand)return;const v=(cand.variables||[]).find(x=>/depth|elev|bathym|topo/i.test(`${x.name} ${x.long_name||''} ${x.standard_name||''}`)&&x.dimensions?.filter(d=>/lat|lon/i.test(d)).length>=2);if(!v)return;const m=await meta(cand.file),d=domain(m);S.domain=S.domain||d;const f=await get(`/data/region/array?file=${encodeURIComponent(cand.file)}&variable=${encodeURIComponent(v.name)}&lat_min=${d.lat[0]}&lat_max=${d.lat[1]}&lon_min=${d.lon[0]}&lon_max=${d.lon[1]}&stride=${stride(m,v.name)}`),x=parse(f),vals=x.values.slice(0,x.width*x.height);S.bathy={...x,values:vals,valid:vals.filter(finite)};drawBathy(S.bathy)}catch(e){console.warn('Bathymetry:',e)}}
-function surfaceWater(){clear(S.water);const z=size();S.water=new THREE.Mesh(new THREE.PlaneGeometry(z.w,z.h),new THREE.MeshPhysicalMaterial({color:0x0877d1,transparent:true,opacity:.12,roughness:.08,metalness:.03,depthWrite:false,side:THREE.DoubleSide}));S.water.rotation.x=-Math.PI/2;S.water.position.y=.15;S.root.add(S.water)}
-async function loadField(){const token=++S.request,item=S.catalog.find(x=>x.id===S.active);if(!item?.available){status(`${LABEL[S.active]} unavailable`,'error');return}status(`Loading ${LABEL[S.active]}…`,'busy');try{const m=await meta(item.file);S.domain=domain(m);const f=await get(`/data/region/array?file=${encodeURIComponent(item.file)}&variable=${encodeURIComponent(item.variable)}&lat_min=${S.domain.lat[0]}&lat_max=${S.domain.lat[1]}&lon_min=${S.domain.lon[0]}&lon_max=${S.domain.lon[1]}&stride=${stride(m,item.variable)}${S.times[S.ti]?`&time_start=${encodeURIComponent(S.times[S.ti])}&time_end=${encodeURIComponent(S.times[S.ti])}`:''}`);if(token!==S.request)return;const desc=parse(f);S.descriptor=desc;S.range=range(desc.valid);clear(S.field);clear(S.layers);clear(S.shell);if(desc.depthDependent){$('depthSection').classList.remove('hidden');$('depthMax').textContent=`${desc.levels.at(-1).toFixed(0)} m`;S.sliceDepth=clamp(S.sliceDepth,0,desc.levels.at(-1)||0);drawLayers(desc)}else{$('depthSection').classList.add('hidden');drawSurface(desc)}$('legendLo').textContent=S.range.lo.toPrecision(5);$('legendHi').textContent=S.range.hi.toPrecision(5);$('legendNote').textContent=`1–99 percentile · ${desc.valid.length.toLocaleString()} finite samples`;status(`${LABEL[S.active]} · ${desc.depthDependent?`${desc.depth} real depth levels`:'surface field'}`);drawCurrents(S.times[S.ti])}catch(e){if(token===S.request){clear(S.field);clear(S.layers);clear(S.shell);status(`${LABEL[S.active]} failed · ${e.message}`,'error')}}}
-async function drawCurrents(time){clear(S.current);if(!time)return;try{const d=await get(`/ocean/current-grid?time=${encodeURIComponent(time)}&depth=0&stride=5`),lat=d.latitude||[],lon=d.longitude||[],u=flat(d.u||[]).map(Number),v=flat(d.v||[]).map(Number),nx=lon.length,g=new THREE.Group(),mx=Math.max(.001,...u.map((x,i)=>Math.hypot(x,v[i]||0)).filter(finite));for(let j=0;j<lat.length;j++)for(let i=0;i<nx;i++){const k=j*nx+i,uu=u[k],vv=v[k];if(!finite(uu)||!finite(vv))continue;const mag=Math.hypot(uu,vv),p=xy(lon[i],lat[j]),dir=new THREE.Vector2(vv,uu);if(dir.lengthSq()<1e-12)continue;dir.normalize();const len=.15+clamp(mag/mx,0,1)*.65,gg=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,.35,0),new THREE.Vector3(dir.x*len,.35,dir.y*len)]),line=new THREE.Line(gg,new THREE.LineBasicMaterial({color:color(mag/mx)}));line.position.set(p[0],0,p[1]);g.add(line)}S.current=g;S.root.add(g)}catch(e){console.warn('Currents:',e)}}
-function updateDepth(){if(!S.descriptor)return;for(const m of S.layers?.children||[]){const d=m.userData.depth;m.material.opacity=S.depthMode==='volume'?(d===0?.82:.20):(Math.abs(d-S.sliceDepth)<Math.max(1,S.descriptor.levels.at(-1)*.025)?.9:.025)}$('depthBadge').textContent=S.depthMode==='slice'?`Slice · ${S.sliceDepth.toFixed(0)} m`:'Volume'}
-function pick(e){const r=S.renderer.domElement.getBoundingClientRect(),m=new THREE.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),ray=new THREE.Raycaster();ray.setFromCamera(m,S.camera);const hits=ray.intersectObjects([S.water,S.seabed,S.field,S.layers].filter(Boolean),true);if(!hits.length)return;const p=hits[0].point,d=S.domain,z=size(),lon=p.x/z.w*(d.lon[1]-d.lon[0])+(d.lon[0]+d.lon[1])/2,lat=p.z/z.h*(d.lat[1]-d.lat[0])+(d.lat[0]+d.lat[1])/2;get(`/ocean/point?latitude=${lat}&longitude=${lon}&time=${encodeURIComponent(S.times[S.ti]||'')}`).then(v=>{$('coords').textContent=`${lat.toFixed(4)}° N · ${lon.toFixed(4)}° E`;$('readoutGrid').innerHTML=(v.values||[]).map(x=>`<div class="rval"><b>${x.label}</b><span>${x.id==='currents'?'u/v':finite(x.value)?Number(x.value).toFixed(4):'—'}</span><small>${x.units||''}</small></div>`).join('');$('readoutTime').textContent=`Dataset time: ${v.time||'—'}`;$('readout').classList.remove('hidden')}).catch(()=>{})}
-function view(v){const box=new THREE.Box3().setFromObject(S.root),c=box.getCenter(new THREE.Vector3()),sz=box.getSize(new THREE.Vector3()),r=Math.max(sz.x,sz.y,sz.z,10);let p;if(v==='top')p=new THREE.Vector3(c.x,r*1.9,c.z+.01);else if(v==='profile')p=new THREE.Vector3(c.x+r*1.7,c.y+r*.2,c.z);else if(v==='under')p=new THREE.Vector3(c.x,-r*1.25,c.z+r*.65);else p=new THREE.Vector3(c.x+r*1.2,c.y+r*.8,c.z+r*1.2);S.camera.position.copy(p);S.controls.target.copy(c);S.controls.update()}
-function resize(){const w=innerWidth,h=innerHeight;S.camera.aspect=w/h;S.camera.updateProjectionMatrix();S.renderer.setSize(w,h,false)}
-function init(){S.renderer=new THREE.WebGLRenderer({canvas:$('renderCanvas'),antialias:true,powerPreference:'high-performance'});S.renderer.setPixelRatio(Math.min(devicePixelRatio,2));S.renderer.outputColorSpace=THREE.SRGBColorSpace;S.renderer.toneMapping=THREE.ACESFilmicToneMapping;S.scene=new THREE.Scene();S.scene.background=new THREE.Color(0xdbeaf4);S.camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.1,5000);S.controls=new OrbitControls(S.camera,S.renderer.domElement);S.controls.enableDamping=true;S.controls.dampingFactor=.08;S.controls.minDistance=3;S.controls.maxDistance=220;S.root=new THREE.Group();S.scene.add(S.root);S.scene.add(new THREE.HemisphereLight(0xffffff,0x526675,2.4));const l=new THREE.DirectionalLight(0xffffff,2.5);l.position.set(20,60,20);S.scene.add(l);resize();addEventListener('resize',resize);$('renderCanvas').addEventListener('click',pick);requestAnimationFrame(loop)}
-function loop(){S.controls.update();if(S.playing&&S.times.length&&performance.now()-S.lastPlay>1600){S.lastPlay=performance.now();S.ti=(S.ti+1)%S.times.length;timeUI();loadField()}S.renderer.render(S.scene,S.camera);requestAnimationFrame(loop)}
-function vars(){const r=$('vars');r.innerHTML='';for(const x of S.catalog){const b=document.createElement('button');b.className=`var ${x.id===S.active?'active':''} ${x.available?'':'off'}`;b.disabled=!x.available;b.innerHTML=`<b>${x.label}</b><small>${x.units||'—'}</small><i></i>`;b.onclick=()=>{S.active=x.id;vars();loadField()};r.appendChild(b)}}
-function timeUI(){const t=S.times[S.ti];$('timeSlider').max=Math.max(0,S.times.length-1);$('timeSlider').value=S.ti;$('timeCount').textContent=`${S.ti+1}/${S.times.length}`;$('timeValue').textContent=t?new Date(t).toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'}):'—';$('timeRaw').textContent=t||'—'}
-function events(){document.querySelectorAll('.view[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.view[data-view]').forEach(x=>x.classList.remove('active'));b.classList.add('active');view(b.dataset.view)});$('reset').onclick=()=>view('3d');$('fullscreen').onclick=()=>document.documentElement.requestFullscreen?.();$('closeReadout').onclick=()=>$('readout').classList.add('hidden');$('exaggeration').oninput=e=>{S.depthEx=+e.target.value;if(S.descriptor?.depthDependent)drawLayers(S.descriptor);if(S.bathy)drawBathy(S.bathy);view('3d')};$('depthSlider').oninput=e=>{S.sliceDepth=(+e.target.value/100)*(S.descriptor?.levels.at(-1)||0);$('depthValue').textContent=`${S.sliceDepth.toFixed(0)} m`;updateDepth()};document.querySelectorAll('[data-depth-mode]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-depth-mode]').forEach(x=>x.classList.remove('active'));b.classList.add('active');S.depthMode=b.dataset.depthMode;updateDepth()});$('timeSlider').oninput=e=>{S.ti=+e.target.value;timeUI();loadField()};$('play').onclick=()=>{S.playing=!S.playing;$('play').textContent=S.playing?'PAUSE':'PLAY';S.lastPlay=performance.now()}}
-async function boot(){init();events();status('Discovering datasets…','busy');const [cat,t]=await Promise.all([get('/ocean/catalog'),get('/ocean/time')]);S.catalog=cat.variables||[];S.times=t.values||[];timeUI();vars();const first=S.catalog.find(x=>x.available);if(first)S.domain=domain(await meta(first.file));surfaceWater();await loadBathymetry();await loadField();$('loading').classList.add('hidden');view('3d')}
-boot().catch(fail);
+import { OceanScene } from './scene/oceanScene.js';
+import { buildLand } from './scene/land.js';
+import { buildCoastline } from './scene/coastline.js';
+import { buildSeabed } from './scene/seabed.js';
+import { buildVegetation } from './scene/vegetation.js';
+import { DynamicWater } from './scene/water.js';
+
+import { TemperatureVisualizer } from './visualization/temperature.js';
+import { SalinityVisualizer } from './visualization/salinity.js';
+import { buildCurrentVectors } from './visualization/currents.js';
+import { CurrentParticles } from './visualization/particles.js';
+
+import { VariableControl } from './controls/variableControl.js';
+import { DepthControl } from './controls/depthControl.js';
+import { TimelineControl } from './controls/timelineControl.js';
+import { OpacityControl } from './controls/opacityControl.js';
+
+class SolvXApp {
+    constructor() {
+        this.currentMode = '3d'; // 'globe' or '3d'
+        this.currentBBox = {
+            min_lon: 84.10,
+            max_lon: 93.00,
+            min_lat: 16.07,
+            max_lat: 23.52
+        };
+
+        this.globe = null;
+        this.regionSelector = null;
+        this.coordInput = null;
+
+        this.scene = null;
+        this.water = null;
+        this.tempViz = null;
+        this.salViz = null;
+        this.currentVectorsGroup = null;
+        this.currentParticles = null;
+        this.argoMarkersGroup = null;
+
+        this.varControl = null;
+        this.depthControl = null;
+        this.timelineControl = null;
+        this.opacityControl = null;
+
+        this.catalog = [];
+        this.times = [];
+        this.activeVar = 'temperature';
+        this.activeTime = null;
+        this.currentGrid = null;
+        this.currentGeo = null;
+        this.currentBathy = null;
+    }
+
+    async init() {
+        this.status('Initializing SolvX 3D Ocean Explorer…', 'busy');
+
+        // Setup UI Navigation Toggles
+        this.setupNavigation();
+
+        // 1. Initialize World Globe
+        const globeContainer = document.getElementById('globeContainer');
+        if (globeContainer) {
+            this.globe = new WorldGlobe(globeContainer, {
+                initialBBox: this.currentBBox,
+                onRegionSelect: (bbox) => this.onRegionSelected(bbox)
+            });
+
+            this.regionSelector = new RegionSelector({
+                initialBBox: this.currentBBox,
+                onSelect: (bbox) => {
+                    this.globe.updateSelectionBox(bbox);
+                    this.coordInput?.setValues(bbox);
+                    this.globe.flyTo((bbox.min_lat + bbox.max_lat) / 2, (bbox.min_lon + bbox.max_lon) / 2);
+                }
+            });
+
+            this.coordInput = new CoordinateInput({
+                onSubmit: (bbox) => {
+                    this.globe.updateSelectionBox(bbox);
+                    this.loadRegion(bbox);
+                },
+                onChange: (bbox) => {
+                    this.globe.updateSelectionBox(bbox);
+                }
+            });
+            this.coordInput.setValues(this.currentBBox);
+        }
+
+        // Fetch presets
+        try {
+            const presetsData = await ApiClient.getPresets();
+            if (presetsData?.presets) {
+                this.globe?.setPresets(presetsData.presets);
+                this.regionSelector?.setPresets(presetsData.presets);
+            }
+        } catch (e) {
+            console.warn('Presets failed to load:', e);
+        }
+
+        // 2. Initialize 3D Scene
+        const canvas = document.getElementById('renderCanvas');
+        this.scene = new OceanScene(canvas, {
+            onOceanClick: (cell) => this.inspectPoint(cell),
+            onFloatClick: (argo) => this.inspectObservation(argo)
+        });
+
+        // 3. Initialize Interactive Controls
+        this.varControl = new VariableControl('vars', {
+            initialVariable: this.activeVar,
+            onChange: (v) => this.setVariable(v)
+        });
+
+        this.depthControl = new DepthControl({
+            onDepthChange: (depthM) => this.onDepthChange(depthM),
+            onModeChange: (mode, depthM) => this.onDepthModeChange(mode, depthM)
+        });
+
+        this.timelineControl = new TimelineControl({
+            onTimeChange: (idx, timeIso) => this.onTimeChange(idx, timeIso)
+        });
+
+        this.opacityControl = new OpacityControl({
+            onExaggerationChange: (ex) => {
+                this.scene.setExaggeration(ex);
+                this.rebuildTerrain();
+            }
+        });
+
+        // Register animation updates
+        this.scene.onUpdate((timeMs) => {
+            this.water?.update(timeMs);
+            this.currentParticles?.update(0.016);
+        });
+
+        // 4. Load initial region (Bay of Bengal)
+        await this.loadRegion(this.currentBBox);
+
+        // Hide loading
+        document.getElementById('loading')?.classList.add('hidden');
+        this.status('Ready to explore');
+    }
+
+    setupNavigation() {
+        const switchBtn = document.getElementById('toggleGlobeBtn');
+        const globeView = document.getElementById('globeView');
+        const sceneView = document.getElementById('sceneView');
+
+        const setViewMode = (mode) => {
+            this.currentMode = mode;
+            if (mode === 'globe') {
+                globeView?.classList.remove('hidden');
+                sceneView?.classList.add('hidden');
+                if (switchBtn) switchBtn.textContent = '3D OCEAN SCENE';
+                this.globe?.onResize();
+            } else {
+                globeView?.classList.add('hidden');
+                sceneView?.classList.remove('hidden');
+                if (switchBtn) switchBtn.textContent = 'WORLD GLOBE';
+                this.scene?.onResize();
+            }
+        };
+
+        switchBtn?.addEventListener('click', () => {
+            setViewMode(this.currentMode === 'globe' ? '3d' : 'globe');
+        });
+
+        document.getElementById('exploreRegionBtn')?.addEventListener('click', () => {
+            const bbox = this.coordInput?.getValues() || this.currentBBox;
+            this.loadRegion(bbox);
+            setViewMode('3d');
+        });
+
+        // Camera Views
+        document.querySelectorAll('#views button[data-view]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#views button[data-view]').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.scene.setView(btn.dataset.view);
+            });
+        });
+
+        document.getElementById('reset')?.addEventListener('click', () => this.scene.fitCamera());
+        document.getElementById('fullscreen')?.addEventListener('click', () => {
+            if (document.fullscreenElement) document.exitFullscreen?.();
+            else document.documentElement.requestFullscreen?.();
+        });
+
+        document.getElementById('closeReadout')?.addEventListener('click', () => {
+            document.getElementById('readout')?.classList.add('hidden');
+        });
+
+        document.getElementById('closeObsModal')?.addEventListener('click', () => {
+            document.getElementById('obsModal')?.classList.add('hidden');
+        });
+    }
+
+    onRegionSelected(bbox) {
+        this.currentBBox = bbox;
+        this.coordInput?.setValues(bbox);
+    }
+
+    async loadRegion(bbox) {
+        this.currentBBox = bbox;
+        this.status('Loading geographic & ocean data…', 'busy');
+
+        try {
+            // Parallel fetch of catalog, timeline, geography, and bathymetry
+            const [catalogData, timeData, geoData, bathyData, argoData] = await Promise.all([
+                ApiClient.getCatalog().catch(() => ({ variables: [] })),
+                ApiClient.getTime().catch(() => ({ values: [] })),
+                ApiClient.getGeography(bbox),
+                ApiClient.getBathymetry(bbox),
+                ApiClient.getObservations(bbox).catch(() => ({ observations: [] }))
+            ]);
+
+            this.catalog = catalogData.variables || [];
+            this.times = timeData.values || [];
+            this.currentGeo = geoData;
+            this.currentBathy = bathyData;
+
+            this.varControl.setCatalog(this.catalog);
+            this.timelineControl.setTimes(this.times);
+            this.activeTime = this.times[0] || null;
+
+            const maxD = (bathyData.terrain?.maxDepthKm || 3.5) * 1000;
+            this.depthControl.setMaxDepth(maxD);
+
+            // Assemble 3D Scene
+            this.assemble3DScene(geoData, bathyData, argoData.observations || []);
+
+            // Load scientific layer
+            await this.loadActiveVariable();
+
+            this.status('3D ocean chunk ready');
+        } catch (e) {
+            console.error('Failed to load region:', e);
+            this.status(`Load failed · ${e.message}`, 'error');
+        }
+    }
+
+    assemble3DScene(geography, bathymetry, observations) {
+        this.scene.clearScene();
+
+        // 1. 3D Land
+        const landMesh = buildLand(geography, this.scene);
+        this.scene.root.add(landMesh);
+
+        // 2. Coastline & EEZ
+        const coastMesh = buildCoastline(geography);
+        this.scene.root.add(coastMesh);
+
+        // 3. Bathymetric Seabed
+        const seabedMesh = buildSeabed(bathymetry, this.scene);
+        if (seabedMesh) this.scene.root.add(seabedMesh);
+
+        // 4. Procedural Seabed Vegetation & Rocks
+        const vegMesh = buildVegetation(bathymetry, this.scene);
+        this.scene.root.add(vegMesh);
+
+        // 5. Dynamic Ocean Water & Volumetric Column
+        this.water = new DynamicWater(bathymetry, this.scene);
+        this.scene.root.add(this.water.group);
+
+        // 6. In-Situ Argo Float Markers
+        this.buildArgoMarkers(observations, bathymetry.bounds);
+
+        // Initialize visualizers
+        this.tempViz = new TemperatureVisualizer(this.water);
+        this.salViz = new SalinityVisualizer(this.water);
+
+        this.scene.fitCamera();
+    }
+
+    buildArgoMarkers(observations, bounds) {
+        if (this.argoMarkersGroup) {
+            this.scene.disposeObject(this.argoMarkersGroup);
+        }
+        this.argoMarkersGroup = new THREE.Group();
+
+        const midLat = (bounds[2] + bounds[3]) / 2;
+        const midLon = (bounds[0] + bounds[1]) / 2;
+        const klat = 111.32;
+        const klon = 111.32 * Math.cos((midLat * Math.PI) / 180);
+
+        observations.forEach(obs => {
+            const x = (obs.latitude - midLat) * klat;
+            const z = (obs.longitude - midLon) * klon;
+            const y = 1.2;
+
+            // Float beacon sphere
+            const geom = new THREE.SphereGeometry(2.0, 16, 16);
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0x38bdf8,
+                emissive: 0x0284c7,
+                emissiveIntensity: 0.6
+            });
+            const marker = new THREE.Mesh(geom, mat);
+            marker.position.set(x, y, z);
+            marker.userData = { isArgoFloat: true, float: obs };
+
+            // Vertical sounding wire down to 1000m
+            const lineGeom = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, this.scene.depthY(1000), 0)
+            ]);
+            const lineMat = new THREE.LineDashedMaterial({
+                color: 0x38bdf8,
+                dashSize: 2,
+                gapSize: 1.5,
+                opacity: 0.7,
+                transparent: true
+            });
+            const wire = new THREE.Line(lineGeom, lineMat);
+            wire.computeLineDistances();
+            marker.add(wire);
+
+            this.argoMarkersGroup.add(marker);
+        });
+
+        this.scene.root.add(this.argoMarkersGroup);
+    }
+
+    rebuildTerrain() {
+        if (this.currentGeo && this.currentBathy) {
+            this.assemble3DScene(this.currentGeo, this.currentBathy, []);
+            this.loadActiveVariable();
+        }
+    }
+
+    async setVariable(varId) {
+        this.activeVar = varId;
+        await this.loadActiveVariable();
+    }
+
+    async loadActiveVariable() {
+        if (this.currentVectorsGroup) {
+            this.scene.disposeObject(this.currentVectorsGroup);
+            this.currentVectorsGroup = null;
+        }
+        if (this.currentParticles) {
+            this.scene.disposeObject(this.currentParticles.group);
+            this.currentParticles = null;
+        }
+
+        if (this.activeVar === 'temperature') {
+            this.tempViz?.apply();
+        } else if (this.activeVar === 'salinity') {
+            this.salViz?.apply();
+        } else if (this.activeVar === 'currents') {
+            await this.loadCurrents();
+        } else {
+            this.tempViz?.apply();
+        }
+    }
+
+    async loadCurrents() {
+        try {
+            const data = await ApiClient.getCurrentGrid(this.activeTime, null, 3);
+            this.currentGrid = data;
+            const bounds = this.currentBathy?.bounds || [84.1, 93.0, 16.0, 23.5];
+
+            // Build 3D vector arrows
+            this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds);
+            this.scene.root.add(this.currentVectorsGroup);
+
+            // Build animated particles
+            this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
+            this.scene.root.add(this.currentParticles.group);
+        } catch (e) {
+            console.warn('Failed to load currents:', e);
+        }
+    }
+
+    onDepthChange(depthM) {
+        if (this.activeVar === 'temperature') {
+            this.tempViz?.sliceAtDepth(depthM);
+        } else if (this.activeVar === 'salinity') {
+            this.salViz?.sliceAtDepth(depthM);
+        }
+    }
+
+    onDepthModeChange(mode, depthM) {
+        if (mode === 'volume') {
+            this.loadActiveVariable();
+        } else {
+            this.onDepthChange(depthM);
+        }
+    }
+
+    async onTimeChange(idx, timeIso) {
+        this.activeTime = timeIso;
+        if (this.activeVar === 'currents') {
+            await this.loadCurrents();
+        }
+    }
+
+    async inspectPoint(cell) {
+        const readout = document.getElementById('readout');
+        const coords = document.getElementById('coords');
+        const grid = document.getElementById('readoutGrid');
+        const timeEl = document.getElementById('readoutTime');
+
+        if (coords) coords.textContent = `${cell.lat.toFixed(4)}° N · ${cell.lon.toFixed(4)}° E`;
+        this.status('Inspecting ocean point…', 'busy');
+
+        try {
+            const data = await ApiClient.getPoint(cell.lat, cell.lon, this.activeTime);
+            const map = {};
+            if (Array.isArray(data?.values)) {
+                for (const item of data.values) if (item?.id) map[item.id] = item;
+            }
+
+            const tempVal = map['temperature']?.value;
+            const salVal = map['salinity']?.value;
+            const curVal = map['currents']?.speed ?? (map['currents']?.value ? Math.hypot(map['currents'].value.uo || 0, map['currents'].value.vo || 0) : null);
+            const slVal = map['sea_level']?.value;
+            const anomVal = map['temperature_anomaly']?.value;
+            const chVal = map['chlorophyll']?.value;
+
+            const rows = [
+                ['Temperature', tempVal, '°C'],
+                ['Salinity', salVal, 'PSU'],
+                ['Current speed', curVal, 'm s⁻¹'],
+                ['Sea level', slVal, 'm'],
+                ['SST anomaly', anomVal, '°C'],
+                ['Chlorophyll', chVal, 'mg m⁻³']
+            ];
+
+            if (grid) {
+                grid.innerHTML = rows.map(r => `
+                    <div class="rval">
+                        <b>${r[0]}</b>
+                        <span>${r[1] != null && isFinite(r[1]) ? `${Number(r[1]).toFixed(Math.abs(Number(r[1])) < 1 ? 4 : 2)} ${r[2]}` : '—'}</span>
+                    </div>
+                `).join('');
+            }
+
+            if (timeEl) timeEl.textContent = data.time || this.activeTime || 'Timestep 1';
+            readout?.classList.remove('hidden');
+            this.status('Point inspected');
+        } catch (e) {
+            this.status(`Point inspection failed · ${e.message}`, 'error');
+        }
+    }
+
+    async inspectObservation(argo) {
+        const modal = document.getElementById('obsModal');
+        const title = document.getElementById('obsTitle');
+        const body = document.getElementById('obsBody');
+        const stats = document.getElementById('obsStats');
+
+        if (title) title.textContent = `Argo Float #${argo.wmo} (${argo.platform})`;
+        modal?.classList.remove('hidden');
+
+        try {
+            const comp = await ApiClient.compareObservation(argo.id);
+            if (stats) {
+                stats.innerHTML = `
+                    <div class="obs-stat"><b>Location</b><span>${argo.latitude}° N, ${argo.longitude}° E</span></div>
+                    <div class="obs-stat"><b>Cycles</b><span>${argo.cycles} soundings</span></div>
+                    <div class="obs-stat"><b>Model RMSE</b><span>${comp.rmse != null ? `${comp.rmse} °C` : '—'}</span></div>
+                    <div class="obs-stat"><b>Mean Bias</b><span>${comp.bias != null ? `${comp.bias} °C` : '—'}</span></div>
+                `;
+            }
+
+            if (body) {
+                const rows = (comp.comparison || []).map(r => `
+                    <tr>
+                        <td>${r.depth} m</td>
+                        <td>${r.observed} °C</td>
+                        <td>${r.model} °C</td>
+                        <td class="${r.diff > 0 ? 'diff-pos' : 'diff-neg'}">${r.diff > 0 ? '+' : ''}${r.diff} °C</td>
+                    </tr>
+                `).join('');
+
+                body.innerHTML = `
+                    <table class="obs-table">
+                        <thead>
+                            <tr>
+                                <th>Depth</th>
+                                <th>Observed (Argo)</th>
+                                <th>Model Sim</th>
+                                <th>Difference (Anomaly)</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
+            }
+        } catch (e) {
+            if (body) body.innerHTML = `<p class="error">Failed to load profile comparison: ${e.message}</p>`;
+        }
+    }
+
+    status(text, type = 'ok') {
+        const statusText = document.getElementById('status');
+        const statusDot = document.getElementById('statusDot');
+        if (statusText) statusText.textContent = text;
+        if (statusDot) {
+            statusDot.className = type === 'error' ? 'error' : type === 'busy' ? 'busy' : '';
+        }
+    }
+}
+
+// Start application
+window.addEventListener('DOMContentLoaded', () => {
+    const app = new SolvXApp();
+    app.init().catch(err => {
+        console.error('Fatal initialization error:', err);
+        document.getElementById('loading')?.classList.add('hidden');
+        const fatal = document.getElementById('fatal');
+        const fatalText = document.getElementById('fatalText');
+        if (fatalText) fatalText.textContent = err.message || String(err);
+        fatal?.classList.add('show');
+    });
+});

@@ -2,15 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SOLVX — 3D Ocean Explorer</title>
   
-  <!-- Modern Clean Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=20260911-ui2">
+  <link rel="stylesheet" href="styles.css?v=3.0.0">
   <script type="importmap">
   {
     "imports": {
@@ -22,14 +21,11 @@
 </head>
 <body>
 <div id="app">
-  <!-- 3D Ocean WebGL Canvas -->
-  <canvas id="renderCanvas"></canvas>
-
-  <!-- Loading & Error States -->
+  <!-- Loading & Fatal Error Overlays -->
   <div id="loading">
     <div>
       <b>SOLVX</b>
-      <span>BUILDING PHYSICAL 3D OCEAN CHUNK</span>
+      <span>LOADING 3D OCEAN EXPLORER</span>
     </div>
   </div>
   <div id="fatal">
@@ -37,94 +33,165 @@
     <span id="fatalText"></span>
   </div>
 
-  <!-- (TOP LEFT SOLVX HAS BEEN REMOVED) -->
-
-  <!-- Top Center Brand Pill -->
-  <div id="centerLogo" aria-label="SolvX logo">
+  <!-- Top Center Brand -->
+  <div id="centerLogo">
     <div class="logo-letters">
       <span>S</span><span>O</span><span>L</span><span>V</span><span>X</span>
     </div>
     <span class="logo-tag">3D OCEAN EXPLORER</span>
   </div>
 
-  <!-- Top Right Camera Presets -->
-  <nav id="views" class="panel">
-    <button class="view active" data-view="3d">3D</button>
-    <button class="view" data-view="top">TOP</button>
-    <button class="view" data-view="profile">PROFILE</button>
-    <button class="view" data-view="under">UNDER</button>
-    <button id="reset" class="view">RESET</button>
-    <button id="fullscreen" class="view">FULL</button>
-  </nav>
+  <!-- Top Left View Switcher (Globe vs 3D Scene) -->
+  <div id="modeSwitcher">
+    <button id="toggleGlobeBtn" class="mode-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+      <span>WORLD GLOBE</span>
+    </button>
+  </div>
 
-  <!-- Top Interaction Hint -->
-  <div id="hint">Drag to orbit · right-drag to pan · scroll to zoom · click ocean to inspect</div>
-
-  <!-- Left Sidebar (Layers & Ocean Controls) -->
-  <aside id="controls" class="panel">
-    <section>
-      <div class="eyebrow">DATA FIELD · INSPECTION ONLY</div>
-      <div id="vars" class="vars"></div>
-      <div class="note">Variables do not recolor the ocean. Select one, then click any ocean point to inspect the real backend values.</div>
-    </section>
-
-    <section>
-      <div class="eyebrow">OCEAN CHUNK</div>
-      <div id="depthValue">Sea level → seabed</div>
-      <div class="note">Green land · light soil seabed · translucent blue water</div>
-    </section>
-
-    <section>
-      <div class="eyebrow">VERTICAL EXAGGERATION</div>
-      <div class="inline">
-        <input id="exaggeration" type="range" min="10" max="70" value="70">
-        <b id="exagValue">70×</b>
+  <!-- =========================================================================
+       VIEW 1: Interactive World Globe & Region Selector
+       ========================================================================= -->
+  <div id="globeView" class="hidden">
+    <div id="globeContainer"></div>
+    
+    <div id="globeOverlay" class="panel">
+      <div class="globe-header">
+        <h2>Select Ocean Region</h2>
+        <p>Choose a major basin preset, enter geographic coordinates, or hold Shift and drag on the globe.</p>
       </div>
-    </section>
 
-    <section class="status">
-      <i id="statusDot"></i>
-      <span id="status">Building physical ocean chunk…</span>
-    </section>
-  </aside>
+      <div class="section-label">Major Ocean Basins</div>
+      <div id="presetList" class="preset-list"></div>
 
-  <!-- Right Sidebar (Point Inspector Readout) -->
-  <aside id="readout" class="panel hidden">
-    <div class="readoutHead">
-      <div>
-        <b>Ocean point</b>
-        <small id="coords">—</small>
+      <div class="section-label">Coordinate Bounds (Degrees)</div>
+      <div class="coord-grid">
+        <div class="coord-field">
+          <label>Min Lat (°N)</label>
+          <input id="coordMinLat" type="number" step="0.1" value="16.07">
+        </div>
+        <div class="coord-field">
+          <label>Max Lat (°N)</label>
+          <input id="coordMaxLat" type="number" step="0.1" value="23.52">
+        </div>
+        <div class="coord-field">
+          <label>Min Lon (°E)</label>
+          <input id="coordMinLon" type="number" step="0.1" value="84.10">
+        </div>
+        <div class="coord-field">
+          <label>Max Lon (°E)</label>
+          <input id="coordMaxLon" type="number" step="0.1" value="93.00">
+        </div>
       </div>
-      <button id="closeReadout">×</button>
-    </div>
-    <div id="readoutGrid" class="readoutGrid"></div>
-    <div id="readoutTime" class="note">—</div>
-  </aside>
 
-  <!-- Bottom Timeline Dock -->
-  <footer id="timeline" class="panel">
-    <div class="timelineTop">
-      <div>
-        <b id="timeValue">Loading ocean time…</b>
-        <small id="timeRaw">—</small>
+      <div id="coordError" class="coord-error hidden"></div>
+      <button id="exploreRegionBtn" class="primary-btn">EXPLORE 3D REGION</button>
+    </div>
+
+    <div class="globe-hint">Drag to rotate · Scroll to zoom · Shift-drag to draw bounding box</div>
+  </div>
+
+  <!-- =========================================================================
+       VIEW 2: 3D Ocean Scene Viewer
+       ========================================================================= -->
+  <div id="sceneView">
+    <canvas id="renderCanvas"></canvas>
+
+    <!-- Camera Presets -->
+    <nav id="views" class="panel">
+      <button class="view active" data-view="3d">3D</button>
+      <button class="view" data-view="top">TOP</button>
+      <button class="view" data-view="profile">PROFILE</button>
+      <button class="view" data-view="under">UNDER</button>
+      <button id="reset" class="view">RESET</button>
+      <button id="fullscreen" class="view">FULL</button>
+    </nav>
+
+    <!-- Left Sidebar (Scientific Controls) -->
+    <aside id="controls" class="panel">
+      <section>
+        <div class="eyebrow">OCEANOGRAPHIC VARIABLES</div>
+        <div id="vars" class="vars"></div>
+      </section>
+
+      <section>
+        <div class="eyebrow">VERTICAL DEPTH</div>
+        <div class="depth-header">
+          <span id="depthValue">Volume (0 → 3500 m)</span>
+          <div class="mode-toggle">
+            <button class="active" data-depth-mode="volume">VOLUME</button>
+            <button data-depth-mode="slice">SLICE</button>
+          </div>
+        </div>
+        <div class="slider-row">
+          <input id="depthSlider" type="range" min="0" max="3500" value="0">
+        </div>
+      </section>
+
+      <section>
+        <div class="eyebrow">VERTICAL EXAGGERATION</div>
+        <div class="slider-row">
+          <input id="exaggeration" type="range" min="10" max="70" value="70">
+          <b id="exagValue">70×</b>
+        </div>
+      </section>
+
+      <section class="legend-box">
+        <div class="eyebrow" id="legendTitle">SCIENTIFIC SCALE</div>
+        <div id="legendBar" class="legend-bar"></div>
+        <div class="legend-labels">
+          <span id="legendLo">—</span>
+          <span id="legendHi">—</span>
+        </div>
+      </section>
+
+      <section class="status">
+        <i id="statusDot"></i>
+        <span id="status">Ready</span>
+      </section>
+    </aside>
+
+    <!-- Point Inspector Readout -->
+    <aside id="readout" class="panel hidden">
+      <div class="readoutHead">
+        <div>
+          <b>Ocean Point</b>
+          <small id="coords">—</small>
+        </div>
+        <button id="closeReadout" class="close-btn">×</button>
       </div>
-      <button id="play">PLAY</button>
-    </div>
-    <div class="timelineRow">
-      <span>TIME</span>
-      <input id="timeSlider" type="range" min="0" max="0" value="0">
-      <span id="timeCount">0/0</span>
-    </div>
-  </footer>
+      <div id="readoutGrid" class="readoutGrid"></div>
+      <div id="readoutTime" class="note" style="margin-top: 10px; font-size: 10px; color: var(--muted);">—</div>
+    </aside>
 
-  <!-- Bottom Right Volume Toggle -->
-  <div id="depthBadge" class="panel">
-    <span class="depth-dot"></span>
-    Physical water volume
+    <!-- In-Situ Observation & Model Comparison Modal -->
+    <div id="obsModal" class="panel hidden">
+      <div class="obs-header">
+        <h3 id="obsTitle">In-Situ Observation Profile</h3>
+        <button id="closeObsModal" class="close-btn">×</button>
+      </div>
+      <div id="obsStats" class="obs-stats"></div>
+      <div id="obsBody"></div>
+    </div>
+
+    <!-- Bottom Timeline Dock -->
+    <footer id="timeline" class="panel">
+      <div class="timelineTop">
+        <div>
+          <b id="timeValue">Loading ocean time…</b>
+          <small id="timeRaw">—</small>
+        </div>
+        <button id="play" class="play-btn">PLAY</button>
+      </div>
+      <div class="timelineRow">
+        <span>TIME</span>
+        <input id="timeSlider" type="range" min="0" max="0" value="0">
+        <span id="timeCount">0/0</span>
+      </div>
+    </footer>
   </div>
 </div>
 
-<!-- Original 3D script connection -->
-<script type="module" src="app4fix.js?v=20260911-three11"></script>
+<script type="module" src="app.js?v=3.0.0"></script>
 </body>
 </html>

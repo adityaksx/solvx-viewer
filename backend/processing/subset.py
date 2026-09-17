@@ -17,16 +17,34 @@ def coord_slice(data: xr.DataArray, dim: str, lo, hi) -> xr.DataArray:
     c = data[dim].values
     if not c.size:
         return data
-    return data.sel({dim: slice(lo, hi) if c[0] <= c[-1] else slice(hi, lo)})
+    if lo == hi:
+        # Singleton selection (e.g. depth=0.0) -> select nearest point
+        try:
+            return data.sel({dim: lo}, method='nearest')
+        except Exception:
+            pass
+    sl = slice(lo, hi) if c[0] <= c[-1] else slice(hi, lo)
+    sliced = data.sel({dim: sl})
+    # If slice ended up empty (e.g. lo and hi fall in between grid points or out of range)
+    if sliced.sizes.get(dim, 0) == 0:
+        try:
+            return data.sel({dim: lo}, method='nearest')
+        except Exception:
+            return data
+    return sliced
 
 def select_surface(data: xr.DataArray) -> xr.DataArray:
     """Selects the surface layer along any standard depth dimension."""
     for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z'):
         if dim in data.dims:
+            c = data[dim].values
+            if not c.size:
+                continue
             try:
-                return data.sel({dim: 0}, method='nearest')
+                return data.sel({dim: 0.0}, method='nearest')
             except Exception:
-                return data.isel({dim: 0})
+                if c.size > 0:
+                    return data.isel({dim: 0})
     return data
 
 def subset_array(

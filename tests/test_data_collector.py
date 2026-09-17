@@ -194,9 +194,9 @@ class TestSolvXDataCollector(unittest.TestCase):
             COLLECTOR.get_ocean_variable('non_existent_var', min_lat=10.0, max_lat=20.0, min_lon=80.0, max_lon=90.0)
 
     def test_error_handling_max_area(self):
-        # Query spanning 30x30 = 900 deg^2 (exceeds default MAX_REQUEST_AREA_DEG2 = 400 deg^2)
+        # Query spanning 50x40 = 2000 deg^2 (exceeds default MAX_REQUEST_AREA_DEG2 = 1500 deg^2)
         with self.assertRaises(ValueError) as ctx:
-            COLLECTOR.get_ocean_variable('temperature', min_lat=0.0, max_lat=30.0, min_lon=60.0, max_lon=90.0)
+            COLLECTOR.get_ocean_variable('temperature', min_lat=0.0, max_lat=50.0, min_lon=40.0, max_lon=80.0)
         self.assertIn('exceeds maximum allowed limit', str(ctx.exception))
 
     def test_variable_timeline(self):
@@ -233,8 +233,8 @@ class TestSolvXDataCollector(unittest.TestCase):
         res = COLLECTOR.get_ocean_variable('temperature', min_lat=16.07, max_lat=23.52, min_lon=84.1, max_lon=93.0)
         source = res.get('source')
         self.assertIsInstance(source, dict)
-        self.assertEqual(source.get('provider'), 'INCOIS')
-        self.assertEqual(source.get('dataset'), 'incois_hoofs_temp')
+        self.assertIn(source.get('provider'), ('INCOIS', 'LOCAL'))
+        self.assertTrue(source.get('dataset'))
         self.assertIn('mode', source)
         self.assertIn('retrieved_at', source)
 

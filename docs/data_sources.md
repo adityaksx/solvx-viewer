@@ -1,116 +1,177 @@
-# SolvX Ocean Data Sources & Collector Architecture
+# SolvX Ocean Data Sources & Architecture Specification
 
-This document specifies the scientific data sources, access mechanisms, variables, spatial/temporal coverage, and normalization protocols integrated into the **SolvX Central Data Collector API**.
-
----
-
-## Executive Summary: Data Sources & Provenance Table
-
-| Data Category | Authoritative Source | Access Method | Real / API Status |
-|---|---|---|---|
-| **Ocean Temperature** | INCOIS (HOOFS Model) / MoES India | ERDDAP REST (`griddap`) / Local NetCDF Fallback | Real Scientific Data (Live ERDDAP + Verified Local NetCDF Archive) |
-| **Ocean Salinity** | INCOIS (HOOFS Model) / MoES India | ERDDAP REST (`griddap`) / Local NetCDF Fallback | Real Scientific Data (Live ERDDAP + Verified Local NetCDF Archive) |
-| **Ocean Currents ($u, v$)** | INCOIS (HOOFS Model) / MoES India | ERDDAP REST (`griddap`) / Local NetCDF Fallback | Real Scientific Data (Live ERDDAP + Verified Local NetCDF Archive) |
-| **Sea Surface Height / SLA** | INCOIS (HOOFS Model) / MoES India | ERDDAP REST (`griddap`) / Local NetCDF Fallback | Real Scientific Data (Live ERDDAP + Verified Local NetCDF Archive) |
-| **Seabed Bathymetry** | GEBCO 2023 Grid / NOAA NCEI DEM | NetCDF Grid Slicing ($0.083^\circ$) | Real Scientific Data (Verified Local GEBCO Grid) |
-| **Maritime EEZ Boundaries** | Marine Regions / Flanders Marine Institute (VLIZ) v12 | Shapefile Vector Query (`eez_v12_lowres.shp`) | Real Maritime Boundaries (World EEZ v12 GeoJSON & 3D Vectors) |
-| **Land & Minor Islands** | Natural Earth 1:10m Physical & Minor Islands | Shapefile Vector Slicing (`ne_10m_land`, `ne_10m_minor_islands`) | Real Geographic Geometry (Extruded 3D Land & Islands) |
-| **Coastline Shorelines** | Natural Earth 1:10m Coastline Vectors | Shapefile Vector Slicing (`ne_10m_coastline`) | Real Geographic Geometry (3D Shoreline Lines) |
-| **In-Situ Argo Profiles** | INCOIS Indian Ocean Argo Float Program | NetCDF / JSON In-Situ Sounding Catalog | Real In-Situ Observations (Depth Profiles & Collocation Comparison) |
+This document specifies the scientific ocean data providers, access protocols, variable mappings, bounding-box subsetting rules, elevation conventions, and error-handling policies integrated into the **SolvX Central Data Architecture**.
 
 ---
 
-## 1. INCOIS (Indian National Centre for Ocean Information Services)
+## 1. Provider Matrix & Coverage
 
-INCOIS is the **primary authoritative provider** for oceanographic and marine meteorological data in SolvX.
+SolvX unifies access across four international oceanographic data centers for dynamic physical variables, paired with **GEBCO** as the authoritative source for seabed topography:
 
-### Overview
-- **Institution**: INCOIS (Ministry of Earth Sciences, Govt. of India)
-- **Portal**: [https://incois.gov.in](https://incois.gov.in)
-- **Data Server (ERDDAP)**: `https://erddap.incois.gov.in/erddap`
-- **Catalog Server (THREDDS / LAS)**: `https://las.incois.gov.in/thredds/catalog/`
-- **Access Protocol**: ERDDAP `griddap` (gridded fields) & `tabledap` (tabular/in-situ), OPeNDAP
-
-### Supported Physical Variables & Mapping
-
-| SolvX Variable | INCOIS Dataset ID | Internal Variable Names | Units | Vertical Levels | Description |
+| Provider | Full Name / Institution | Primary Access Protocol | Spatial Coverage | Supported Variables | Auth Requirements |
 |---|---|---|---|---|---|
-| `temperature` | `incois_hoofs_temp` | `temperature`, `temp`, `sst` | °C | 0 to 5000m (40 levels) | Sea Water Potential Temperature |
-| `salinity` | `incois_hoofs_sal` | `salinity`, `salt`, `so` | PSU | 0 to 5000m (40 levels) | Practical Salinity Units |
-| `currents` | `incois_hoofs_curr` | `uo`, `vo` ($u, v$ vectors) | m/s | 0 to 5000m (40 levels) | Horizontal Ocean Velocity |
-| `sea_surface_height` | `incois_hoofs_ssh` | `zos`, `ssh`, `total_sea_level` | m | Surface only | Sea Surface Height above geoid |
-| `sea_level_anomaly` | `incois_hoofs_sla` | `sla` | m | Surface only | Sea Surface Height Anomaly |
-| `mixed_layer_depth` | `incois_hoofs_mld` | `mld` | m | Surface only | Ocean Mixed Layer Thickness |
-| `tropical_cyclone_heat_potential` | `incois_hoofs_tchp` | `tchp` | kJ/cm² | Surface only | Tropical Cyclone Heat Potential |
-| `chlorophyll` | `incois_ocm_chl` | `chlorophyll`, `chl` | mg/m³ | Surface only | Chlorophyll-a Concentration |
+| **`INCOIS`** | Indian National Centre for Ocean Information Services (MoES India) | ERDDAP REST (`griddap`), Local NetCDF fallback | Indian Ocean Basin ($30^\circ\text{S} - 30^\circ\text{N}$, $40^\circ\text{E} - 110^\circ\text{E}$) | `temperature`, `salinity`, `currents`, `sea_surface_height`, `sea_level_anomaly`, `mixed_layer_depth`, `tropical_cyclone_heat_potential`, `chlorophyll` | None for public endpoints; Optional API key |
+| **`COPERNICUS`** | Copernicus Marine Service (CMEMS / Mercator Ocean) | ERDDAP REST (`griddap`), OPeNDAP, WMS | Global Oceans ($1/12^\circ \approx 8\text{ km}$ resolution) | `temperature`, `salinity`, `currents`, `sea_surface_height` | Basic Auth credentials (`COPERNICUS_USERNAME`, `COPERNICUS_PASSWORD`) |
+| **`NOAA`** | National Oceanic and Atmospheric Administration (CoastWatch / NCEI) | ERDDAP REST (`griddap`) | Global Oceans (Blended satellite & in-situ analyses) | `temperature`, `salinity`, `currents`, `sea_surface_height` | None |
+| **`HYCOM`** | Hybrid Coordinate Ocean Model Consortium | THREDDS Data Server (NCSS NetCDF Subset Service) | Global Oceans ($1/12^\circ$ resolution) | `temperature`, `salinity`, `currents`, `sea_surface_height` | None; Concurrency rate-limited (`BoundedSemaphore(2)`) |
+| **`GEBCO`** | General Bathymetric Chart of the Oceans (IHO / IOC / Seabed 2030) | Local NetCDF Grid Slicing ($15\text{ arc-sec}$), WCS/DEM service fallback | Global Oceans & Coastal Seas | Seabed Elevation (`elevation`, `rawDepthKm`, `depth`) | None |
 
-### Query Construction
-- **ERDDAP Griddap Syntax**:
-  ```text
-  GET /griddap/{dataset_id}.json?{variable}[(time)][(depth)][(min_lat):(max_lat)][(min_lon):(max_lon)]
+---
+
+## 2. Logical Separation of Concerns
+
+To preserve scientific integrity:
+
+1. **Oceanographic Variables vs Bathymetry**:
+   - Ocean variables (`temperature`, `salinity`, `currents`, etc.) represent dynamic, time-varying fluid states.
+   - Bathymetry represents static numerical seabed elevation.
+   - **GEBCO is strictly a bathymetric elevation provider**, never an ocean variable provider. Ocean variables are never mixed with or substituted for bathymetry.
+2. **Dynamic Combined Endpoints**:
+   - When both ocean variables and seabed geometry are needed simultaneously (e.g. for the 3D WebGL basin viewer), clients call `/api/data/region` or `get_combined_region()`. This bundles the ocean variable payload and the bathymetric elevation payload under distinct keys (`ocean` and `bathymetry`) without conflating their metadata or schemas.
+
+---
+
+## 3. Provider Routing & Strict Error Transparency
+
+SolvX supports both **automatic orchestrator routing** and **explicit provider selection**:
+
+### Automatic Selection (`provider="auto"`)
+- Evaluates provider availability, bounding-box geographic coverage, and requested variable.
+- For regions inside the Indian Ocean basin with local archives present, `INCOIS` or `LOCAL` is preferred. For global regions, `NOAA`, `COPERNICUS`, or `HYCOM` is routed.
+- Normalized response metadata explicitly marks auto-routing:
+  ```json
+  {
+    "requested_provider": "auto",
+    "provider": "INCOIS",
+    "fallback": false
+  }
   ```
-- **Current Vector Normalization**:
-  $$ \text{speed} = \sqrt{u^2 + v^2} $$
-  $$ \text{direction} = \left( \text{atan2}(v, u) \times \frac{180}{\pi} \right) \pmod{360^\circ} $$
 
-### Limitations & Authentication
-- INCOIS public datasets do not require authentication for basic ERDDAP read queries. High-frequency or bulk downloads may require an API token or credentials via environment variables:
-  ```env
-  INCOIS_BASE_URL=https://erddap.incois.gov.in/erddap
-  INCOIS_API_KEY=
-  INCOIS_USERNAME=
-  INCOIS_PASSWORD=
+### Explicit Provider Selection (`provider="incois" | "copernicus" | "noaa" | "hycom"`)
+- When a user or client explicitly requests a provider, SolvX routes strictly to that provider.
+- **Strict Error Transparency**: If the explicitly requested provider is unreachable, offline, or returns an error, the request **MUST NOT silently switch to another provider**. Instead, the system raises an explicit `HTTP 502 Bad Gateway` (or `RuntimeError`) containing the upstream failure reason.
+- Silent fallback would deceive researchers and analysts regarding the true provenance of scientific measurements.
+
+### Local NetCDF Fallback Mode
+- When offline or running in isolated environments without network access, cached or bundled NetCDF files are used.
+- Responses served from local files are strictly identified:
+  ```json
+  {
+    "provider": "LOCAL",
+    "source_type": "local_netcdf"
+  }
   ```
-- When running in offline or sandbox environments without internet egress, SolvX automatically switches to `LOCAL_DATA_MODE=true` to serve calibrated local NetCDF archives seamlessly.
+  Local archives are **never** deceptively attributed to NOAA, INCOIS, HYCOM, or Copernicus.
 
 ---
 
-## 2. Bathymetry / Seabed Sources
+## 4. Authoritative Bathymetry: GEBCO 2026 Grid
 
-### Overview
-- **Source**: GEBCO (General Bathymetric Chart of the Oceans) / NOAA NCEI DEM Global Mosaic
-- **Resolution**: $0.083^\circ$ (~9 km) down to $15$ arc-second grids
-- **Units**: Elevation/Depth in meters
-- **3D Normalization**:
-  - `depth`: array in meters (negative below sea level, positive above)
-  - `rawDepthKm`: array in kilometers (positive underwater depth)
-  - `maxDepthKm`: maximum basin floor depth for vertical scaling
+### Spatial Subsetting
+All bathymetric requests are subsetted strictly to the requested bounding box (`min_lat`, `max_lat`, `min_lon`, `max_lon`).
 
----
+### Downsampling Modes
+To optimize bandwidth and WebGL buffer generation across devices, the GEBCO adapter provides 4 downsampling resolutions:
+- **`low`**: Downsampled to a target grid of approximately $40 \times 40$ points (~1,600 vertices), ideal for mobile or overview displays.
+- **`medium`** (Default): Downsampled to approximately $80 \times 80$ points (~6,400 vertices), balanced for interactive 3D rendering.
+- **`high`**: Downsampled to approximately $150 \times 150$ points (~22,500 vertices), providing high-fidelity canyon and trench detail.
+- **`native`**: Full native resolution grid slice (up to $15\text{ arc-second}$ resolution).
 
-## 3. Geographic Land & Coastline Geometry
-
-### Overview
-- **Source**: Natural Earth 1:10,000,000 Physical Vectors / OpenStreetMap
-- **Layers**:
-  - `land`: Extruded 3D land polygons with top, side skirts, and bedrock slab
-  - `coast`: High-precision shoreline line strings
-  - `eezBeads`: Maritime Exclusive Economic Zone (EEZ) boundary markers spaced at 18 km
-- **Format**: Three.js-ready JSON coordinates projected into regional Easting/Northing kilometers
-
----
-
-## 4. In-Situ Observations (Argo Floats)
-
-### Overview
-- **Source**: INCOIS Indian Ocean Argo Program / Coriolis / OceanOPS
-- **Parameters**: CTD (Conductivity, Temperature, Depth) vertical profiles down to 1000m–2000m
-- **Collocation & Comparison**:
-  - Vertically interpolates model temperature/salinity levels against exact Argo observation soundings.
-  - Computes statistical validation metrics:
-    $$ \text{RMSE} = \sqrt{\frac{1}{N} \sum_{i=1}^N (M_i - O_i)^2} $$
-    $$ \text{Bias} = \frac{1}{N} \sum_{i=1}^N (M_i - O_i) $$
+### Elevation Sign Conventions
+SolvX adheres strictly to international hydrographic conventions:
+- `elevation`: Signed elevation in meters.
+  - **Negative values (e.g. $-2500.0\text{ m}$)**: Sub-surface ocean depth below mean sea level.
+  - **Positive values (e.g. $+350.0\text{ m}$)**: Subaerial land elevation above mean sea level.
+  - **Zero ($0.0\text{ m}$)**: Mean coastline / sea level.
+- `rawDepthKm`: Underwater depth in positive kilometers ($-\text{elevation} / 1000.0$ for underwater points, $0.0$ for land), utilized directly by Three.js vertex shaders.
+- `maxDepthKm`: Maximum basin floor depth in kilometers used for vertical scene scaling.
+- `depth`: Alias of `elevation` provided for backward compatibility with legacy client scripts.
+- **Zero Synthetic Data**: SolvX uses real numerical grids extracted from GEBCO and NOAA DEM datasets. Synthetic parabolic bowls and procedural ocean floor fakes are strictly banned.
 
 ---
 
-## 5. Strict Separation: Scientific Data vs Visual Effects
+## 5. Vector Ocean Currents Processing
 
-| Layer | Type | Source | Description |
-|---|---|---|---|
-| **Temperature / Salinity / Currents / SSH** | **Real Scientific Data** | INCOIS / NetCDF Models | Exact physical quantities, units, and coordinates |
-| **Seabed Bathymetry** | **Real Scientific Data** | GEBCO / NOAA DEM | Measured seabed elevation |
-| **Coastlines & Land** | **Real Geographic Data** | Natural Earth 10m | Real world shoreline vectors |
-| **Argo Float Profiles** | **Real Observational Data**| INCOIS Argo Program | Calibrated in-situ CTD profiles |
-| **Water Wave Displacement** | *Procedural Visual* | Three.js Shader | Sinusoidal wave animation (visual-only) |
-| **Seabed Seagrass / Rocks** | *Procedural Visual* | Three.js Procedural | Depth-scattered seabed decoration (visual-only) |
-| **Atmospheric Glow** | *Procedural Visual* | Three.js Shader | Planet rim illumination effect (visual-only) |
+When querying `variable="currents"`, SolvX fetches eastward velocity ($u$) and northward velocity ($v$) components and computes physically accurate derived fields:
+
+$$ \text{speed} = \sqrt{u^2 + v^2} \quad (\text{m/s}) $$
+
+$$ \text{direction} = \left( \operatorname{atan2}(v, u) \times \frac{180}{\pi} \right) \pmod{360^\circ} \quad (\text{degrees clockwise from North}) $$
+
+Both scalar grids and vector fields are returned in normalized responses:
+- `u`: 2D array of zonal velocities ($\text{m/s}$)
+- `v`: 2D array of meridional velocities ($\text{m/s}$)
+- `speed`: 2D array of current magnitudes ($\text{m/s}$)
+- `direction`: 2D array of current heading angles ($^\circ$)
+
+---
+
+## 6. Upstream Rate-Limiting & Concurrency Control
+
+- **HYCOM TDS Rate Limiting**: The HYCOM THREDDS server enforces strict connection caps. The `HYCOMAdapter` wraps all HTTP and NCSS transactions in a Python `threading.BoundedSemaphore(2)` with a 15-second timeout, preventing connection flooding and IP blacklisting.
+- **Caching**: Clean BBOX query parameters are hashed (`make_cache_key`) into the memory cache service with configurable TTLs, avoiding redundant round-trips for identical requests.
+
+---
+
+## 7. Central REST API Reference
+
+### Provider Information
+- **`GET /api/data/providers`**: Lists all supported providers, coverage areas, capabilities, and variables.
+- **`GET /api/data/providers/status`**: Live diagnostic health probe of all external oceanographic and bathymetric data feeds.
+- **`GET /api/data/providers/{provider}/variables`**: Lists supported variables for a specific provider.
+- **`GET /api/data/providers/{provider}/datasets`**: Returns dataset IDs and configurations for a provider.
+- **`GET /api/data/providers/{provider}/metadata`**: Detailed institutional metadata and citation info.
+
+### Oceanographic Variables
+- **`GET /api/data/ocean`**:
+  Query parameters:
+  - `provider`: `auto` (default), `incois`, `copernicus`, `noaa`, `hycom`
+  - `variable`: `temperature`, `salinity`, `currents`, `sea_surface_height`, etc.
+  - `min_lat`, `max_lat`, `min_lon`, `max_lon`: Bounding box coordinates
+  - `depth`: Vertical depth level in meters (optional)
+  - `time`: ISO 8601 timestamp string (optional)
+  - `stride`: Subsampling step (default: `1`)
+- **`POST /api/data/ocean`**:
+  JSON request body matching `OceanVariableRequest`:
+  ```json
+  {
+    "provider": "noaa",
+    "variable": "temperature",
+    "bbox": {
+      "min_lat": 16.0,
+      "max_lat": 20.0,
+      "min_lon": 84.0,
+      "max_lon": 88.0
+    }
+  }
+  ```
+
+### Bathymetry & Seabed
+- **`GET /api/data/bathymetry`** / **`GET /api/bathymetry`**:
+  Query parameters:
+  - `min_lat`, `max_lat`, `min_lon`, `max_lon`: Bounding box coordinates
+  - `resolution`: `low`, `medium`, `high`, `native` (default: `medium`)
+- **`POST /api/data/bathymetry`** / **`POST /api/bathymetry`**:
+  JSON request body matching `BathymetryRequest`:
+  ```json
+  {
+    "bbox": {
+      "min_lat": 16.0,
+      "max_lat": 20.0,
+      "min_lon": 84.0,
+      "max_lon": 88.0
+    },
+    "resolution": "medium"
+  }
+  ```
+
+### Combined Region (Ocean + Bathymetry)
+- **`GET /api/data/region`**:
+  Query parameters:
+  - `provider`: `auto`, `incois`, `copernicus`, `noaa`, `hycom`
+  - `variable`: `temperature`, `salinity`, `currents`, etc.
+  - `min_lat`, `max_lat`, `min_lon`, `max_lon`: Bounding box
+  - `resolution`: Bathymetry resolution (`low`, `medium`, `high`, `native`)
+  - `include_bathymetry`: `true` or `false`
+- **`POST /api/data/region`**:
+  JSON request body matching `CombinedRegionRequest`.

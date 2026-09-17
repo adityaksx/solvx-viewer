@@ -63,21 +63,49 @@ export const ApiClient = {
         return request(`/api/data/eez?${q}`);
     },
 
-    async getOceanVariable({ variable, bbox, depth = null, time = null, stride = 1 }) {
+    async getProviders() {
+        return request('/api/data/providers');
+    },
+
+    async getProviderStatus() {
+        return request('/api/data/providers/status');
+    },
+
+    async getCombinedRegion({ provider = 'auto', variable = 'temperature', bbox, depth = null, time = null, resolution = 'medium', include_bathymetry = true }) {
         const q = new URLSearchParams({
+            provider,
+            variable,
             min_lon: String(bbox.min_lon),
             max_lon: String(bbox.max_lon),
             min_lat: String(bbox.min_lat),
             max_lat: String(bbox.max_lat),
-            stride: String(stride)
+            resolution,
+            include_bathymetry: String(include_bathymetry)
         });
         if (depth != null) q.set('depth', String(depth));
         if (time) q.set('time', time);
-        return request(`/api/data/ocean/${encodeURIComponent(variable)}?${q}`);
+        return request(`/api/data/region?${q}`);
     },
 
-    async getOceanVariables({ bbox, depth = null, time = null }) {
+    async getOceanVariable({ provider = 'auto', variable, bbox, depth = null, time = null, stride = 1, resolution = 'native' }) {
         const q = new URLSearchParams({
+            provider,
+            variable,
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat),
+            stride: String(stride),
+            resolution
+        });
+        if (depth != null) q.set('depth', String(depth));
+        if (time) q.set('time', time);
+        return request(`/api/data/ocean?${q}`);
+    },
+
+    async getOceanVariables({ provider = 'auto', bbox, depth = null, time = null }) {
+        const q = new URLSearchParams({
+            provider,
             min_lon: String(bbox.min_lon),
             max_lon: String(bbox.max_lon),
             min_lat: String(bbox.min_lat),
@@ -108,7 +136,7 @@ export const ApiClient = {
         return request(`/api/data/coastline?${q}`);
     },
 
-    async getDataBathymetry(bbox, resolution = '0.083deg') {
+    async getDataBathymetry(bbox, resolution = 'medium') {
         const q = new URLSearchParams({
             min_lon: String(bbox.min_lon),
             max_lon: String(bbox.max_lon),

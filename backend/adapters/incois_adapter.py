@@ -209,18 +209,35 @@ class INCOISAdapter:
                 stride=stride
             )
 
-        # 2. Live INCOIS API Request
-        return self._fetch_from_incois_api(
-            variable=variable,
-            var_config=var_config,
-            min_lat=min_lat,
-            max_lat=max_lat,
-            min_lon=min_lon,
-            max_lon=max_lon,
-            depth=depth,
-            time=time,
-            stride=stride
-        )
+        # 2. Live INCOIS API Request with local fallback
+        try:
+            return self._fetch_from_incois_api(
+                variable=variable,
+                var_config=var_config,
+                min_lat=min_lat,
+                max_lat=max_lat,
+                min_lon=min_lon,
+                max_lon=max_lon,
+                depth=depth,
+                time=time,
+                stride=stride
+            )
+        except Exception as api_err:
+            logger.warning("Live INCOIS API query failed (%s); falling back to local NetCDF archive", api_err)
+            try:
+                return self._fetch_from_local_netcdf(
+                    variable=variable,
+                    var_config=var_config,
+                    min_lat=min_lat,
+                    max_lat=max_lat,
+                    min_lon=min_lon,
+                    max_lon=max_lon,
+                    depth=depth,
+                    time=time,
+                    stride=stride
+                )
+            except Exception as local_err:
+                raise RuntimeError(f"INCOIS live query failed ({api_err}) and local fallback failed ({local_err})") from api_err
 
     def _fetch_from_incois_api(
         self,
@@ -259,19 +276,9 @@ class INCOISAdapter:
                 raise RuntimeError("INCOIS API rate limit reached. Please retry later.") from e
             raise RuntimeError(f"INCOIS API returned HTTP error {e.code}: {e.reason}") from e
         except urllib.error.URLError as e:
-            logger.warning("INCOIS network connection failed: %s. Falling back to local data if available.", e.reason)
-            # Graceful fallback to local data if network fails
-            return self._fetch_from_local_netcdf(
-                variable=variable,
-                var_config=var_config,
-                min_lat=min_lat,
-                max_lat=max_lat,
-                min_lon=min_lon,
-                max_lon=max_lon,
-                depth=depth,
-                time=time,
-                stride=stride
-            )
+            msg = f"INCOIS API Connection Error: {e.reason}"
+            logger.error(msg)
+            raise RuntimeError(msg) from e
         except Exception as e:
             logger.error("Failed to process INCOIS data: %s", e)
             raise
@@ -335,15 +342,11 @@ class INCOISAdapter:
             grid[i][j] = sanitize(val)
 
         return {
-            'source': {
-                'provider': 'INCOIS',
-                'service': 'ERDDAP / HOOFS',
-                'dataset': var_config['dataset_id'],
-                'variable': variable,
-                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                'mode': 'LIVE_API',
-                'status': 'VERIFIED_DATA'
-            },
+            'type': 'ocean_variable',
+            'requested_provider': 'incois',
+            'provider': 'INCOIS',
+            'fallback': False,
+            'dataset': var_config['dataset_id'],
             'variable': variable,
             'units': var_config['units'],
             'time': time,
@@ -353,9 +356,12 @@ class INCOISAdapter:
             'longitude': lons,
             'values': grid,
             'metadata': {
+                'provider': 'INCOIS',
+                'service': 'ERDDAP / HOOFS',
                 'dataset_id': var_config['dataset_id'],
                 'standard_name': var_config['standard_name'],
-                'description': var_config['description']
+                'description': var_config['description'],
+                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
         }
 
@@ -407,15 +413,11 @@ class INCOISAdapter:
                 dir_grid[i][j] = round(d, 2)
 
         return {
-            'source': {
-                'provider': 'INCOIS',
-                'service': 'ERDDAP / HOOFS',
-                'dataset': 'incois_hoofs_curr',
-                'variable': 'currents',
-                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                'mode': 'LIVE_API',
-                'status': 'VERIFIED_DATA'
-            },
+            'type': 'ocean_variable',
+            'requested_provider': 'incois',
+            'provider': 'INCOIS',
+            'fallback': False,
+            'dataset': 'incois_hoofs_curr',
             'variable': 'currents',
             'units': 'm/s',
             'time': time,
@@ -428,16 +430,19 @@ class INCOISAdapter:
             'speed': speed_grid,
             'direction': dir_grid,
             'metadata': {
+                'provider': 'INCOIS',
+                'service': 'ERDDAP / HOOFS',
                 'dataset_id': 'incois_hoofs_curr',
                 'standard_name': 'sea_water_velocity',
-                'description': 'Horizontal Ocean Current Velocity (m/s)'
+                'description': 'Horizontal Ocean Current Velocity (m/s)',
+                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
         }
 
     def _fetch_from_local_netcdf(
         self,
         variable: str,
-        var_config: Dict[str, Any],
+        var_config: Any,
         min_lat: float,
         max_lat: float,
         min_lon: float,
@@ -450,6 +455,15 @@ class INCOISAdapter:
         from ..services.ocean_data_service import get_ocean_current_grid, get_ocean_catalog, get_nc_files, find_file
         from ..services.cache_service import safe_open_dataset
         from ..processing.subset import subset_array, select_surface, select_time
+
+        if not isinstance(var_config, dict):
+            var_config = INCOIS_VARIABLE_MAP.get(variable, {
+                'dataset_id': f'local_{variable}',
+                'variable_name': variable,
+                'units': 'degC' if variable == 'temperature' else 'PSU' if variable == 'salinity' else 'm',
+                'description': variable.title(),
+                'standard_name': variable
+            })
 
         if variable == 'currents':
             cg = get_ocean_current_grid(time=time, depth=depth, stride=stride)
@@ -476,15 +490,12 @@ class INCOISAdapter:
                 dir_grid.append(row_dir)
 
             return {
-                'source': {
-                    'provider': 'INCOIS',
-                    'service': 'INCOIS Indian Ocean Model Archive (Local NetCDF)',
-                    'dataset': 'incois_hoofs_curr',
-                    'variable': 'currents',
-                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    'mode': 'LOCAL_ARCHIVE_FALLBACK',
-                    'status': 'VERIFIED_DATA'
-                },
+                'type': 'ocean_variable',
+                'requested_provider': 'incois',
+                'provider': 'LOCAL',
+                'source_type': 'local_netcdf',
+                'fallback': True,
+                'dataset': 'local_currents_nc',
                 'variable': 'currents',
                 'units': 'm/s',
                 'time': time or '2026-08-01T00:00:00Z',
@@ -497,9 +508,13 @@ class INCOISAdapter:
                 'speed': speed_grid,
                 'direction': dir_grid,
                 'metadata': {
+                    'provider': 'LOCAL',
+                    'source_type': 'local_netcdf',
+                    'service': 'Indian Ocean Model Archive (Local NetCDF)',
                     'dataset_id': 'local_currents_nc',
                     'standard_name': 'sea_water_velocity',
-                    'description': 'Horizontal Ocean Current Velocity (m/s)'
+                    'description': 'Horizontal Ocean Current Velocity (m/s)',
+                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
             }
 
@@ -553,15 +568,12 @@ class INCOISAdapter:
             values = sanitize(sub_2d.values.astype(np.float32).tolist())
 
             return {
-                'source': {
-                    'provider': 'INCOIS',
-                    'service': 'INCOIS Indian Ocean Model Archive (Local NetCDF)',
-                    'dataset': var_config['dataset_id'],
-                    'variable': variable,
-                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    'mode': 'LOCAL_ARCHIVE_FALLBACK',
-                    'status': 'VERIFIED_DATA'
-                },
+                'type': 'ocean_variable',
+                'requested_provider': 'incois',
+                'provider': 'LOCAL',
+                'source_type': 'local_netcdf',
+                'fallback': True,
+                'dataset': file_path.name,
                 'variable': variable,
                 'units': var_config['units'],
                 'time': time,
@@ -571,9 +583,13 @@ class INCOISAdapter:
                 'longitude': lons,
                 'values': values,
                 'metadata': {
+                    'provider': 'LOCAL',
+                    'source_type': 'local_netcdf',
+                    'service': 'Indian Ocean Model Archive (Local NetCDF)',
                     'dataset_id': file_path.name,
                     'standard_name': var_config['standard_name'],
-                    'description': var_config['description']
+                    'description': var_config['description'],
+                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
             }
 
@@ -649,8 +665,9 @@ class INCOISAdapter:
         return {
             'variable': variable,
             'source': {
-                'provider': 'INCOIS',
-                'service': 'ERDDAP / HOOFS' if not LOCAL_DATA_MODE else 'INCOIS Local NetCDF Archive',
+                'provider': 'INCOIS' if not LOCAL_DATA_MODE else 'LOCAL',
+                'source_type': 'live_api' if not LOCAL_DATA_MODE else 'local_netcdf',
+                'service': 'ERDDAP / HOOFS' if not LOCAL_DATA_MODE else 'Indian Ocean Model Archive (Local NetCDF)',
                 'dataset': dataset_id,
                 'mode': mode
             },
@@ -665,3 +682,28 @@ class INCOISAdapter:
             'depth_levels': depth_levels,
             'surface_only': var_config.get('surface_only', False)
         }
+
+    def test_connection(self) -> Dict[str, Any]:
+        """Diagnostic probe of INCOIS ERDDAP endpoint."""
+        import time as _time
+        test_url = f"{self.base_url}/index.html"
+        t0 = _time.time()
+        try:
+            req = urllib.request.Request(test_url, headers={'User-Agent': 'SolvX-Diagnostic/3.0'})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                latency = round((_time.time() - t0) * 1000, 2)
+                return {
+                    'provider': 'INCOIS',
+                    'status': 'available' if resp.status < 400 else 'unavailable',
+                    'status_code': resp.status,
+                    'latency_ms': latency,
+                    'endpoint': test_url
+                }
+        except Exception as e:
+            return {
+                'provider': 'INCOIS',
+                'status': 'unavailable',
+                'error': str(e),
+                'endpoint': test_url
+            }
+

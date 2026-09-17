@@ -201,6 +201,12 @@ export class TimelineControl {
         });
     }
 
+    pause() {
+        if (this.isPlaying) {
+            this.togglePlay();
+        }
+    }
+
     togglePlay() {
         this.isPlaying = !this.isPlaying;
         if (this.playBtn) {

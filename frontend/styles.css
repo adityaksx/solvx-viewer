@@ -1035,3 +1035,25 @@ section:first-child {
 #fatal.show {
   display: block;
 }
+
+.dropdown-select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+  margin-top: 4px;
+  margin-bottom: 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dropdown-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.15);
+}

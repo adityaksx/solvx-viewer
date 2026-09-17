@@ -188,8 +188,8 @@ export class RegionDrawer {
             return false;
         }
         const areaDeg2 = (bbox.max_lat - bbox.min_lat) * (bbox.max_lon - bbox.min_lon);
-        if (areaDeg2 > 400.0) {
-            this._showError(`Requested area (${areaDeg2.toFixed(1)} deg²) exceeds maximum allowed (400 deg²).`);
+        if (areaDeg2 > 1500.0) {
+            this._showError(`Requested area (${areaDeg2.toFixed(1)} deg²) exceeds maximum allowed (1500 deg²).`);
             return false;
         }
         this._hideError();

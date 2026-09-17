@@ -73,6 +73,15 @@
         </label>
       </div>
 
+      <div class="section-label">Ocean Data Provider</div>
+      <select id="mapProviderSelect" class="dropdown-select">
+        <option value="auto">Auto (Optimal Provider)</option>
+        <option value="incois">INCOIS (Indian Ocean)</option>
+        <option value="copernicus">Copernicus Marine (Global)</option>
+        <option value="noaa">NOAA CoastWatch (Global)</option>
+        <option value="hycom">HYCOM TDS (Global)</option>
+      </select>
+
       <div class="section-label">Major Ocean Basins</div>
       <div id="presetList" class="preset-list"></div>
 
@@ -123,6 +132,17 @@
 
     <!-- Left Sidebar (Scientific Controls & Layer Toggles) -->
     <aside id="controls" class="panel">
+      <section>
+        <div class="eyebrow">OCEAN DATA PROVIDER</div>
+        <select id="providerSelect" class="dropdown-select">
+          <option value="auto">Auto (Optimal Provider)</option>
+          <option value="incois">INCOIS (Indian Ocean)</option>
+          <option value="copernicus">Copernicus Marine (Global)</option>
+          <option value="noaa">NOAA CoastWatch (Global)</option>
+          <option value="hycom">HYCOM TDS (Global)</option>
+        </select>
+      </section>
+
       <section>
         <div class="eyebrow">OCEANOGRAPHIC VARIABLES</div>
         <div id="vars" class="vars"></div>
@@ -188,8 +208,9 @@
         <span>DATA PROVENANCE</span>
       </div>
       <div class="prov-grid">
-        <div class="prov-cell"><span class="prov-k">Provider</span><b id="provProvider" class="prov-v">INCOIS</b></div>
-        <div class="prov-cell"><span class="prov-k">Dataset</span><span id="provDataset" class="prov-v">HOOFS Model</span></div>
+        <div class="prov-cell"><span class="prov-k">Ocean Provider</span><b id="provProvider" class="prov-v">AUTO</b></div>
+        <div class="prov-cell"><span class="prov-k">Bathymetry</span><span id="provBathy" class="prov-v">GEBCO 2026 Grid</span></div>
+        <div class="prov-cell"><span class="prov-k">Dataset</span><span id="provDataset" class="prov-v">Analysis / Forecast</span></div>
         <div class="prov-cell"><span class="prov-k">Variable</span><span id="provVar" class="prov-v">Temperature</span></div>
         <div class="prov-cell"><span class="prov-k">Units</span><span id="provUnits" class="prov-v">°C</span></div>
         <div class="prov-cell"><span class="prov-k">Resolution</span><span id="provRes" class="prov-v">0.083° (~9 km)</span></div>

@@ -56,7 +56,7 @@ EEZ_BEAD_SPACING_KM = 18.0
 MAX_EEZ_BEADS = 650
 MAX_GRID_POINTS = 90000
 MAX_LAND_TRIANGLES = 30000
-MAX_REQUEST_AREA_DEG2 = float(os.getenv('MAX_REQUEST_AREA_DEG2', '400.0'))
+MAX_REQUEST_AREA_DEG2 = float(os.getenv('MAX_REQUEST_AREA_DEG2', '1500.0'))
 
 # Data Collector & Adapter Environment Configuration
 LOCAL_DATA_MODE = os.getenv('SOLVX_LOCAL_DATA_MODE', os.getenv('LOCAL_DATA_MODE', 'true')).lower() in ('1', 'true', 'yes')

@@ -1,5 +1,6 @@
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, field_validator, model_validator
+from backend.config import MAX_REQUEST_AREA_DEG2
 
 class BBox(BaseModel):
     min_lat: float
@@ -58,12 +59,93 @@ class PointQuery(BaseModel):
             raise ValueError('Longitude must be between -180 and 180')
         return self
 
+SUPPORTED_OCEAN_PROVIDERS = {'auto', 'incois', 'copernicus', 'noaa', 'hycom'}
+SUPPORTED_OCEAN_VARIABLES = {
+    'temperature', 'salinity', 'currents', 'sea_surface_height',
+    'sea_level_anomaly', 'mixed_layer_depth', 'tropical_cyclone_heat_potential', 'chlorophyll'
+}
+
+class OceanVariableRequest(BaseModel):
+    provider: str = 'auto'
+    variable: str = 'temperature'
+    bbox: BBox
+    time: Optional[str] = None
+    depth: Optional[float] = None
+    resolution: Optional[str] = 'native'
+    stride: int = 1
+
+    @model_validator(mode='after')
+    def validate_request(self):
+        prov_lower = self.provider.strip().lower()
+        if prov_lower not in SUPPORTED_OCEAN_PROVIDERS:
+            raise ValueError(f"Unsupported provider '{self.provider}'. Supported: {sorted(list(SUPPORTED_OCEAN_PROVIDERS))}")
+        self.provider = prov_lower
+
+        var_lower = self.variable.strip().lower()
+        if var_lower not in SUPPORTED_OCEAN_VARIABLES:
+            raise ValueError(f"Unsupported variable '{self.variable}'. Supported: {sorted(list(SUPPORTED_OCEAN_VARIABLES))}")
+        self.variable = var_lower
+
+        if self.depth is not None and not (0.0 <= self.depth <= 6000.0):
+            raise ValueError("depth must be between 0 and 6000 meters")
+
+        if self.bbox.area_deg2 > MAX_REQUEST_AREA_DEG2:
+            raise ValueError(f"Requested region area ({self.bbox.area_deg2:.1f} deg²) exceeds maximum allowed limit ({MAX_REQUEST_AREA_DEG2:.1f} deg²)")
+
+        return self
+
+SUPPORTED_BATHYMETRY_RESOLUTIONS = {'low', 'medium', 'high', 'native'}
+
+class BathymetryRequest(BaseModel):
+    bbox: BBox
+    resolution: Optional[str] = 'medium'
+
+    @model_validator(mode='after')
+    def validate_request(self):
+        if self.resolution is not None and self.resolution.lower() not in SUPPORTED_BATHYMETRY_RESOLUTIONS:
+            raise ValueError(f"Unsupported bathymetry resolution '{self.resolution}'. Supported: {sorted(list(SUPPORTED_BATHYMETRY_RESOLUTIONS))}")
+        if self.bbox.area_deg2 > MAX_REQUEST_AREA_DEG2:
+            raise ValueError(f"Requested region area ({self.bbox.area_deg2:.1f} deg²) exceeds maximum allowed limit ({MAX_REQUEST_AREA_DEG2:.1f} deg²)")
+        return self
+
+class CombinedRegionRequest(BaseModel):
+    provider: str = 'auto'
+    variable: str = 'temperature'
+    bbox: BBox
+    time: Optional[str] = None
+    depth: Optional[float] = None
+    resolution: Optional[str] = 'medium'
+    include_bathymetry: bool = True
+
+    @model_validator(mode='after')
+    def validate_request(self):
+        prov_lower = self.provider.strip().lower()
+        if prov_lower not in SUPPORTED_OCEAN_PROVIDERS:
+            raise ValueError(f"Unsupported provider '{self.provider}'. Supported: {sorted(list(SUPPORTED_OCEAN_PROVIDERS))}")
+        self.provider = prov_lower
+
+        var_lower = self.variable.strip().lower()
+        if var_lower not in SUPPORTED_OCEAN_VARIABLES:
+            raise ValueError(f"Unsupported variable '{self.variable}'. Supported: {sorted(list(SUPPORTED_OCEAN_VARIABLES))}")
+        self.variable = var_lower
+
+        if self.resolution is not None and self.resolution.lower() not in SUPPORTED_BATHYMETRY_RESOLUTIONS:
+            raise ValueError(f"Unsupported bathymetry resolution '{self.resolution}'. Supported: {sorted(list(SUPPORTED_BATHYMETRY_RESOLUTIONS))}")
+
+        if self.bbox.area_deg2 > MAX_REQUEST_AREA_DEG2:
+            raise ValueError(f"Requested region area ({self.bbox.area_deg2:.1f} deg²) exceeds maximum allowed limit ({MAX_REQUEST_AREA_DEG2:.1f} deg²)")
+        return self
+
 # ==============================================================================
 # Standard SolvX Response Models
 # ==============================================================================
 
-class SolvXOceanResponse(BaseModel):
-    source: Union[str, Dict[str, Any]]
+class OceanVariableResponse(BaseModel):
+    type: str = 'ocean_variable'
+    requested_provider: str
+    provider: str
+    fallback: bool = False
+    dataset: str
     variable: str
     units: str
     time: Optional[str] = None
@@ -74,8 +156,12 @@ class SolvXOceanResponse(BaseModel):
     values: Any
     metadata: Dict[str, Any] = {}
 
-class SolvXCurrentsResponse(BaseModel):
-    source: Union[str, Dict[str, Any]]
+class OceanCurrentsResponse(BaseModel):
+    type: str = 'ocean_variable'
+    requested_provider: str
+    provider: str
+    fallback: bool = False
+    dataset: str
     variable: str = 'currents'
     units: str = 'm/s'
     time: Optional[str] = None
@@ -89,19 +175,31 @@ class SolvXCurrentsResponse(BaseModel):
     direction: List[List[Optional[float]]]
     metadata: Dict[str, Any] = {}
 
-class SolvXBathymetryResponse(BaseModel):
-    source: Union[str, Dict[str, Any]]
+class BathymetryResponse(BaseModel):
+    type: str = 'bathymetry'
+    provider: str = 'GEBCO'
+    dataset: str = 'GEBCO 2026 Grid'
+    units: str = 'meters'
     bbox: Dict[str, float]
-    resolution: str = '0.083deg'
     latitude: List[float]
     longitude: List[float]
-    depth: List[List[Optional[float]]]
-    x: List[float]
-    y: List[float]
-    rawDepthKm: List[List[Optional[float]]]
-    maxDepthKm: float
-    units: str = 'meters'
+    elevation: List[List[Optional[float]]]
+    x: Optional[List[float]] = None
+    y: Optional[List[float]] = None
+    rawDepthKm: Optional[List[List[Optional[float]]]] = None
+    maxDepthKm: Optional[float] = None
     metadata: Dict[str, Any] = {}
+
+class CombinedRegionResponse(BaseModel):
+    region: Dict[str, Any]
+    ocean: Optional[Union[OceanVariableResponse, OceanCurrentsResponse, Dict[str, Any]]] = None
+    bathymetry: Optional[Union[BathymetryResponse, Dict[str, Any]]] = None
+    metadata: Dict[str, Any] = {}
+
+# Legacy aliases for backward compatibility
+SolvXOceanResponse = OceanVariableResponse
+SolvXCurrentsResponse = OceanCurrentsResponse
+SolvXBathymetryResponse = BathymetryResponse
 
 class SolvXGeographyResponse(BaseModel):
     source: Union[str, Dict[str, Any]]

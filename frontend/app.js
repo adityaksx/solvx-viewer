@@ -52,12 +52,15 @@ class SolvXApp {
         this.opacityControl = null;
 
         this.catalog = [];
+        this.activeProvider = 'auto';
         this.activeVar = 'temperature';
         this.activeDepth = 0;
         this.activeDepthMode = 'volume';
         this.activeTime = null;
         this.activeTimeMeta = null;
 
+        this.lastOceanData = null;
+        this.lastBathyData = null;
         this.currentGrid = null;
         this.currentGeo = null;
         this.currentBathy = null;
@@ -189,6 +192,38 @@ class SolvXApp {
             setViewMode('3d');
         });
 
+        // Provider Selector Controls
+        const provSelect = document.getElementById('providerSelect');
+        const mapProvSelect = document.getElementById('mapProviderSelect');
+
+        const onProviderSelect = async (val) => {
+            if (this.activeProvider === val) return;
+            this.activeProvider = val;
+            if (provSelect) provSelect.value = val;
+            if (mapProvSelect) mapProvSelect.value = val;
+            this.status(`Switching provider to ${val.toUpperCase()}…`, 'busy');
+            try {
+                // If selected provider does not support the currently active variable, switch to 'temperature'
+                if (['copernicus', 'noaa', 'hycom'].includes(val)) {
+                    const supported = ['temperature', 'salinity', 'currents', 'sea_surface_height'];
+                    if (!supported.includes(this.activeVar)) {
+                        this.activeVar = 'temperature';
+                        this.varControl?.setActive('temperature');
+                    }
+                }
+                await this.loadActiveVariable();
+                this.updateProvenanceUI();
+                this.status(`Active provider: ${this.lastOceanData?.provider || val.toUpperCase()}`);
+            } catch (err) {
+                console.error('Failed switching provider:', err);
+                this.timelineControl?.pause();
+                this.status(`Provider error: ${err.message}`, 'error');
+            }
+        };
+
+        provSelect?.addEventListener('change', (e) => onProviderSelect(e.target.value));
+        mapProvSelect?.addEventListener('change', (e) => onProviderSelect(e.target.value));
+
         // Camera Views
         document.querySelectorAll('#views button[data-view]').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -256,7 +291,10 @@ class SolvXApp {
             const [catalogData, geoData, bathyData, eezData, argoData] = await Promise.all([
                 ApiClient.getDataVariables().catch(() => ({ variables: [] })),
                 ApiClient.getDataGeometry(bbox),
-                ApiClient.getDataBathymetry(bbox),
+                ApiClient.getDataBathymetry(bbox, 'medium').catch(err => {
+                    console.warn('Bathymetry unavailable for region, using fallback:', err);
+                    return { bounds: [bbox.min_lon, bbox.max_lon, bbox.min_lat, bbox.max_lat], terrain: null, maxDepthKm: 3.5 };
+                }),
                 ApiClient.getDataEEZ(bbox).catch(() => ({ features: [], lines3d: [] })),
                 ApiClient.getDataObservations(bbox).catch(() => ({ observations: [] }))
             ]);
@@ -264,6 +302,7 @@ class SolvXApp {
             this.catalog = catalogData.variables || [];
             this.currentGeo = geoData;
             this.currentBathy = bathyData;
+            this.lastBathyData = bathyData;
             this.currentEEZ = eezData;
 
             this.varControl.setCatalog(this.catalog);
@@ -272,7 +311,7 @@ class SolvXApp {
             await this.timelineControl.loadTimelineForVariable(this.activeVar, bbox);
             this.activeTime = this.timelineControl.getCurrentTimestamp();
 
-            const maxD = (bathyData.maxDepthKm || (bathyData.terrain?.maxDepthKm) || 3.5) * 1000;
+            const maxD = ((bathyData?.maxDepthKm) || (bathyData?.terrain?.maxDepthKm) || 3.5) * 1000;
             this.depthControl.setMaxDepth(maxD);
 
             // Assemble 3D Scene
@@ -413,29 +452,50 @@ class SolvXApp {
             this.currentParticles = null;
         }
 
-        if (this.activeVar === 'temperature') {
-            this.tempViz?.apply();
-        } else if (this.activeVar === 'salinity') {
-            this.salViz?.apply();
-        } else if (this.activeVar === 'currents') {
-            await this.loadCurrents();
-        } else {
-            this.tempViz?.apply();
+        try {
+            if (this.activeVar === 'currents') {
+                await this.loadCurrents();
+            } else {
+                const data = await ApiClient.getOceanVariable({
+                    provider: this.activeProvider,
+                    variable: this.activeVar,
+                    bbox: this.currentBBox,
+                    time: this.activeTime,
+                    depth: this.activeDepth
+                });
+                this.lastOceanData = data;
+                if (this.activeVar === 'temperature') {
+                    this.tempViz?.apply(data);
+                } else if (this.activeVar === 'salinity') {
+                    this.salViz?.apply(data);
+                } else {
+                    this.tempViz?.apply(data);
+                }
+            }
+        } catch (e) {
+            console.warn(`[SolvXApp] Failed to load variable '${this.activeVar}' with provider '${this.activeProvider}':`, e);
+            this.timelineControl?.pause();
+            this.status(`Provider error (${this.activeProvider.toUpperCase()}): ${e.message}`, 'error');
+            if (this.activeVar === 'temperature') this.tempViz?.apply();
+            else if (this.activeVar === 'salinity') this.salViz?.apply();
         }
 
         this.applyLayerVisibility('scientific', this.layerState.scientific);
         this.applyLayerVisibility('currents', this.layerState.currents);
         this.applyLayerVisibility('particles', this.layerState.particles);
+        this.updateProvenanceUI();
     }
 
     async loadCurrents() {
         try {
             const data = await ApiClient.getOceanVariable({
+                provider: this.activeProvider,
                 variable: 'currents',
                 bbox: this.currentBBox,
                 time: this.activeTime,
                 stride: 3
             });
+            this.lastOceanData = data;
             this.currentGrid = data;
             const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
 
@@ -447,7 +507,8 @@ class SolvXApp {
             this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
             this.scene.setLayer('particles', this.currentParticles.group);
         } catch (e) {
-            console.warn('[SolvXApp] Failed to load currents:', e);
+            console.warn(`[SolvXApp] Failed to load currents with provider '${this.activeProvider}':`, e);
+            throw e;
         }
     }
 
@@ -483,6 +544,7 @@ class SolvXApp {
 
     updateProvenanceUI() {
         const provProvider = document.getElementById('provProvider');
+        const provBathy = document.getElementById('provBathy');
         const provDataset = document.getElementById('provDataset');
         const provVar = document.getElementById('provVar');
         const provUnits = document.getElementById('provUnits');
@@ -501,17 +563,21 @@ class SolvXApp {
             chlorophyll: 'mg/m³'
         };
 
-        const datasetMap = {
-            temperature: 'incois_hoofs_temp',
-            salinity: 'incois_hoofs_sal',
-            currents: 'incois_hoofs_curr',
-            sea_surface_height: 'incois_hoofs_ssh'
-        };
+        const activeOceanProv = this.lastOceanData?.provider || (this.activeProvider === 'auto' ? 'AUTO' : this.activeProvider.toUpperCase());
+        const activeBathyProv = this.lastBathyData?.provider || 'GEBCO';
 
-        if (provProvider) provProvider.textContent = 'INCOIS';
-        if (provDataset) provDataset.textContent = datasetMap[this.activeVar] || 'incois_hoofs_model';
+        if (provProvider) {
+            provProvider.textContent = activeOceanProv;
+            if (this.lastOceanData?.fallback) {
+                provProvider.textContent += ' (Fallback)';
+            }
+        }
+        if (provBathy) provBathy.textContent = `${activeBathyProv} 2026 Grid`;
+        if (provDataset) {
+            provDataset.textContent = this.lastOceanData?.dataset || this.lastOceanData?.metadata?.dataset_id || 'Operational Feed';
+        }
         if (provVar) provVar.textContent = this.activeVar.replace(/_/g, ' ');
-        if (provUnits) provUnits.textContent = varUnitsMap[this.activeVar] || '—';
+        if (provUnits) provUnits.textContent = this.lastOceanData?.units || varUnitsMap[this.activeVar] || '—';
         if (provRes) provRes.textContent = '0.083° (~9 km)';
 
         if (provDepth) {
@@ -522,7 +588,10 @@ class SolvXApp {
 
         if (provMode) {
             const isForecast = this.activeTimeMeta?.isForecast;
-            provMode.textContent = isForecast ? 'VERIFIED_FORECAST' : 'VERIFIED_HISTORICAL';
+            const modeText = this.lastOceanData?.source_type === 'local_netcdf'
+                ? 'LOCAL_ARCHIVE'
+                : (isForecast ? 'VERIFIED_FORECAST' : 'VERIFIED_HISTORICAL');
+            provMode.textContent = modeText;
             provMode.className = `prov-v prov-status ${isForecast ? 'forecast' : 'historical'}`;
         }
 

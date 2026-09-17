@@ -5,7 +5,7 @@ const API_BASE = (
     window.location.hostname === '127.0.0.1' ||
     window.location.hostname === 'localhost'
 )
-    ? `http://${window.location.hostname || '127.0.0.1'}:8000`
+    ? `http://${window.location.hostname || '127.0.0.1'}:8080`
     : window.location.origin;
 
 async function request(endpoint, options = {}) {

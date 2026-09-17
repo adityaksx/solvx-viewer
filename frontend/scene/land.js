@@ -34,18 +34,25 @@ function createExtrudedMeshes(parts, sceneManager, topColor = 0x35b94d) {
         color: topColor,
         roughness: 0.85,
         metalness: 0.05,
-        side: THREE.DoubleSide
+        side: THREE.FrontSide,
+        depthWrite: true,
+        // Polygon offset to prevent z-fighting with ocean surface at Y=0
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
     });
 
     const soilMat = new THREE.MeshStandardMaterial({
         color: 0xc8a477,
         roughness: 0.95,
         metalness: 0.02,
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        depthWrite: true
     });
 
     // 1. Top surface
     const topMesh = new THREE.Mesh(polyGeometry(parts, topY), topMat);
+    topMesh.renderOrder = 1;
     group.add(topMesh);
 
     // 2. Extruded sides (soil)
@@ -76,13 +83,16 @@ function createExtrudedMeshes(parts, sceneManager, topColor = 0x35b94d) {
         sideGeom.setIndex(sideIdx);
         sideGeom.computeVertexNormals();
         const sideMesh = new THREE.Mesh(sideGeom, soilMat);
+        sideMesh.renderOrder = 1;
         group.add(sideMesh);
     }
 
     // 3. Bottom bedrock slab
     const bottomMesh = new THREE.Mesh(polyGeometry(parts, bottomY), soilMat);
+    bottomMesh.renderOrder = 1;
     group.add(bottomMesh);
 
+    group.renderOrder = 1;
     return group;
 }
 

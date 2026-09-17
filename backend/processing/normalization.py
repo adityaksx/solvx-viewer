@@ -14,10 +14,8 @@ def sanitize(v: Any) -> Any:
             return str(v)
     if isinstance(v, np.ndarray):
         if np.issubdtype(v.dtype, np.floating):
-            if v.ndim == 1:
-                return [None if not np.isfinite(x) else round(float(x), 5) for x in v.tolist()]
-            if v.ndim == 2:
-                return [[None if not np.isfinite(x) else round(float(x), 5) for x in row] for row in v.tolist()]
+            # Replace NaNs and infs with None for JSON compliance
+            return np.where(np.isfinite(v), np.round(v, 5), None).tolist()
         return v.tolist()
     if isinstance(v, np.generic):
         val = v.item()

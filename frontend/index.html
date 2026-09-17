@@ -154,7 +154,8 @@
           <span id="depthValue">Volume (0 → 3500 m)</span>
           <div class="mode-toggle">
             <button class="active" data-depth-mode="volume">VOLUME</button>
-            <button data-depth-mode="slice">SLICE</button>
+            <button data-depth-mode="slice">HORIZ SLICE</button>
+            <button data-depth-mode="vertical">VERT SLICE</button>
           </div>
         </div>
         <div class="slider-row">
@@ -274,8 +275,15 @@
       </div>
 
       <div class="timelineRow">
-        <input id="timeSlider" type="range" min="0" max="0" value="0">
-        <span id="timeCount">0 / 0</span>
+        <div class="time-inputs" style="display: flex; gap: 10px; margin-bottom: 5px; font-size: 11px; align-items: center;">
+            <label>From: <input type="date" id="timeStart" style="font-size: 11px;"></label>
+            <label>To: <input type="date" id="timeEnd" style="font-size: 11px;"></label>
+            <button id="btnSetPeriod" style="padding: 2px 6px; font-size: 11px; cursor: pointer; background: #1da5d8; color: white; border: none; border-radius: 3px;">Fetch Period</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+            <input id="timeSlider" type="range" min="0" max="0" value="0" style="flex: 1;">
+            <span id="timeCount">0 / 0</span>
+        </div>
       </div>
     </footer>
   </div>

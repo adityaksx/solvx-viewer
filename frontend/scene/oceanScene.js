@@ -49,7 +49,8 @@ export class OceanScene {
         this.renderer = new THREE.WebGLRenderer({
             canvas: this.canvas,
             antialias: true,
-            powerPreference: 'high-performance'
+            powerPreference: 'high-performance',
+            logarithmicDepthBuffer: true
         });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.setSize(width, height);

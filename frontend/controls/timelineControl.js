@@ -15,6 +15,10 @@ export class TimelineControl {
         this.countDisplay = document.getElementById(options.countDisplayId || 'timeCount');
         this.badgeDisplay = document.getElementById('timeBadge');
         this.speedSelect = document.getElementById('playSpeed');
+        
+        this.timeStart = document.getElementById('timeStart');
+        this.timeEnd = document.getElementById('timeEnd');
+        this.btnSetPeriod = document.getElementById('btnSetPeriod');
 
         this.resHourlyBtn = document.getElementById('resHourly');
         this.resDailyBtn = document.getElementById('resDaily');
@@ -38,6 +42,12 @@ export class TimelineControl {
             this.timelineData = data;
             this.allTimestamps = data.available_timestamps || [];
             this.currentResolution = data.default_resolution || 'daily';
+            
+            // Set default date range to match loaded data
+            if (this.allTimestamps.length > 0) {
+                if (this.timeStart) this.timeStart.value = this.allTimestamps[0].substring(0, 10);
+                if (this.timeEnd) this.timeEnd.value = this.allTimestamps[this.allTimestamps.length - 1].substring(0, 10);
+            }
 
             this._updateResolutionButtons(data.resolutions || ['daily']);
             this._applyResolutionFilter();
@@ -70,7 +80,6 @@ export class TimelineControl {
         }
 
         if (this.currentResolution === 'monthly') {
-            // Pick first timestamp of each unique month
             const seen = new Set();
             this.filteredTimestamps = this.allTimestamps.filter(ts => {
                 const ym = ts.slice(0, 7);
@@ -79,7 +88,6 @@ export class TimelineControl {
                 return true;
             });
         } else if (this.currentResolution === 'daily') {
-            // Pick first timestamp of each unique day
             const seen = new Set();
             this.filteredTimestamps = this.allTimestamps.filter(ts => {
                 const ymd = ts.slice(0, 10);
@@ -88,7 +96,6 @@ export class TimelineControl {
                 return true;
             });
         } else {
-            // Hourly or raw full resolution
             this.filteredTimestamps = [...this.allTimestamps];
         }
 
@@ -172,6 +179,28 @@ export class TimelineControl {
             this.updateDisplay();
             this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
         });
+
+        if (this.btnSetPeriod) {
+            this.btnSetPeriod.addEventListener('click', () => {
+                const startVal = this.timeStart?.value;
+                const endVal = this.timeEnd?.value;
+                if (!startVal || !endVal) return;
+                
+                const dStart = new Date(startVal);
+                const dEnd = new Date(endVal);
+                if (dStart > dEnd) return;
+                
+                const customTimestamps = [];
+                let curr = new Date(dStart);
+                while (curr <= dEnd) {
+                    customTimestamps.push(curr.toISOString());
+                    curr.setUTCDate(curr.getUTCDate() + 1); // step by day
+                }
+                
+                this.allTimestamps = customTimestamps;
+                this._applyResolutionFilter(); // Re-filters and sets the slider
+            });
+        }
 
         // Resolution buttons
         const handleResClick = (res) => {

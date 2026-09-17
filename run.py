@@ -11,8 +11,7 @@ FRONTEND=ROOT/'frontend'
 
 def start_api():
     import uvicorn
-    from backend.main import app
-    uvicorn.run(app,host='127.0.0.1',port=8000,log_level='info')
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8080, log_level="info")
 
 def main():
     data_dir=ROOT/'data'
@@ -29,9 +28,11 @@ def main():
     server=ThreadingHTTPServer(('127.0.0.1',5500),Handler)
     url='http://127.0.0.1:5500/'
     print(f'SolvX: {url}')
-    print('API: http://127.0.0.1:8000/docs')
+    print('API: http://127.0.0.1:8080/docs')
     def safe_open():
-        try:webbrowser.open(url)
+        try:
+            # webbrowser.open(url)
+            pass
         except Exception:pass
     threading.Timer(1.2,safe_open).start()
     try:server.serve_forever()

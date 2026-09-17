@@ -559,13 +559,32 @@ class INCOISAdapter:
                 time_end=time,
                 stride=stride
             )
-            sub_2d = select_surface(select_time(sub, time))
-            lat_coord = 'latitude' if 'latitude' in sub_2d.coords else 'lat'
-            lon_coord = 'longitude' if 'longitude' in sub_2d.coords else 'lon'
+            # select_time handles time=None by returning all times, we want the first time if time is None
+            if time is None and 'time' in sub.dims:
+                sub = sub.isel(time=0)
+            elif time is not None:
+                sub = select_time(sub, time)
 
-            lats = sanitize(sub_2d[lat_coord].values.tolist())
-            lons = sanitize(sub_2d[lon_coord].values.tolist())
-            values = sanitize(sub_2d.values.astype(np.float32).tolist())
+            # If depth was not requested (depth is None), do not slice surface, return 3D
+            # If depth is requested, subset_array already sliced it.
+            if depth is None:
+                sub_final = sub
+            else:
+                # Ensure depth dimension is squeezed if it exists and has size 1
+                sub_final = sub.squeeze(dim=[d for d in ('depth', 'deptht', 'lev', 'z') if d in sub.dims and sub.sizes[d] == 1], drop=True)
+                
+            lat_coord = 'latitude' if 'latitude' in sub_final.coords else 'lat'
+            lon_coord = 'longitude' if 'longitude' in sub_final.coords else 'lon'
+
+            lats = sanitize(sub_final[lat_coord].values.tolist())
+            lons = sanitize(sub_final[lon_coord].values.tolist())
+            values = sanitize(sub_final.values.astype(np.float32).tolist())
+
+            depth_coord = next((d for d in ('depth', 'deptht', 'lev', 'z') if d in sub_final.coords), None)
+            raw_depth = sub_final[depth_coord].values.tolist() if depth_coord else []
+            if not isinstance(raw_depth, list):
+                raw_depth = [raw_depth]
+            depth_levels = sanitize(raw_depth)
 
             return {
                 'type': 'ocean_variable',
@@ -586,9 +605,10 @@ class INCOISAdapter:
                     'provider': 'LOCAL',
                     'source_type': 'local_netcdf',
                     'service': 'Indian Ocean Model Archive (Local NetCDF)',
-                    'dataset_id': file_path.name,
-                    'standard_name': var_config['standard_name'],
-                    'description': var_config['description'],
+                    'dataset_id': var_config.get('dataset_id', 'local_nc'),
+                    'standard_name': var_config.get('standard_name', variable),
+                    'description': var_config.get('description', variable),
+                    'depth_levels': depth_levels,
                     'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
             }

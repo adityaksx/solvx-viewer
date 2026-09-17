@@ -1,0 +1,24 @@
+{
+  "name": "solvx-viewer",
+  "version": "1.0.0",
+  "description": "SolvX is a scientific 3D oceanographic visualization and data exploration platform. It couples a global 3D Earth selector with a regional Three.js/WebGL ocean basin scene powered by a high-performance, thread-safe FastAPI backend that dynamically extracts and subsets NetCDF ocean models, bathymetry grids, coastline geometry, and in-situ Argo float profiles.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adityaksx/solvx-viewer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/adityaksx/solvx-viewer/issues"
+  },
+  "homepage": "https://github.com/adityaksx/solvx-viewer#readme"
+}

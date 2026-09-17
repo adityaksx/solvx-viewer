@@ -456,28 +456,31 @@ class SolvXApp {
             if (this.activeVar === 'currents') {
                 await this.loadCurrents();
             } else {
-                const data = await ApiClient.getOceanVariable({
+                const requestParams = {
                     provider: this.activeProvider,
                     variable: this.activeVar,
                     bbox: this.currentBBox,
-                    time: this.activeTime,
-                    depth: this.activeDepth
-                });
+                    time: this.activeTime
+                };
+                if (this.activeDepthMode === 'slice') {
+                    requestParams.depth = this.activeDepth;
+                }
+                const data = await ApiClient.getOceanVariable(requestParams);
                 this.lastOceanData = data;
                 if (this.activeVar === 'temperature') {
-                    this.tempViz?.apply(data);
+                    this.tempViz?.apply(data, this.activeDepth, this.activeDepthMode);
                 } else if (this.activeVar === 'salinity') {
-                    this.salViz?.apply(data);
+                    this.salViz?.apply(data, this.activeDepth, this.activeDepthMode);
                 } else {
-                    this.tempViz?.apply(data);
+                    this.tempViz?.apply(data, this.activeDepth, this.activeDepthMode);
                 }
             }
         } catch (e) {
             console.warn(`[SolvXApp] Failed to load variable '${this.activeVar}' with provider '${this.activeProvider}':`, e);
             this.timelineControl?.pause();
             this.status(`Provider error (${this.activeProvider.toUpperCase()}): ${e.message}`, 'error');
-            if (this.activeVar === 'temperature') this.tempViz?.apply();
-            else if (this.activeVar === 'salinity') this.salViz?.apply();
+            if (this.activeVar === 'temperature') this.tempViz?.apply(null, this.activeDepth, this.activeDepthMode);
+            else if (this.activeVar === 'salinity') this.salViz?.apply(null, this.activeDepth, this.activeDepthMode);
         }
 
         this.applyLayerVisibility('scientific', this.layerState.scientific);
@@ -515,9 +518,9 @@ class SolvXApp {
     onDepthChange(depthM) {
         this.activeDepth = depthM;
         if (this.activeVar === 'temperature') {
-            this.tempViz?.sliceAtDepth(depthM);
+            this.tempViz?.sliceAtDepth(depthM, this.activeDepthMode);
         } else if (this.activeVar === 'salinity') {
-            this.salViz?.sliceAtDepth(depthM);
+            this.salViz?.sliceAtDepth(depthM, this.activeDepthMode);
         }
         this.updateProvenanceUI();
     }
@@ -525,7 +528,7 @@ class SolvXApp {
     onDepthModeChange(mode, depthM) {
         this.activeDepthMode = mode;
         this.activeDepth = depthM;
-        if (mode === 'volume') {
+        if (mode === 'volume' || mode === 'vertical') {
             this.loadActiveVariable();
         } else {
             this.onDepthChange(depthM);
@@ -536,9 +539,8 @@ class SolvXApp {
     async onTimeChange(idx, timeIso, meta) {
         this.activeTime = timeIso;
         this.activeTimeMeta = meta;
-        if (this.activeVar === 'currents') {
-            await this.loadCurrents();
-        }
+        // Reload data for ALL variables when timeline changes
+        await this.loadActiveVariable();
         this.updateProvenanceUI();
     }
 

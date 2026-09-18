@@ -52,6 +52,25 @@ def ocean_point(
         ocean_data = ca.fetch_ocean_point(latitude, longitude, start_time, end_time)
     except Exception as e:
         ocean_data = {}
+
+    # Supplement with local model data if live values are missing
+    try:
+        local_point = get_ocean_point(latitude, longitude, time)
+        for item in local_point.get('variables', []):
+            vid = item.get('id')
+            val = item.get('value')
+            if val is not None:
+                if vid == 'temperature' and ocean_data.get('ocean_temperature') is None:
+                    ocean_data['ocean_temperature'] = val
+                elif vid == 'salinity' and ocean_data.get('salinity') is None:
+                    ocean_data['salinity'] = val
+                elif vid in ('sea_level', 'sea_surface_height') and ocean_data.get('sea_surface_height') is None:
+                    ocean_data['sea_surface_height'] = val
+                elif vid == 'currents' and (ocean_data.get('current_u') is None or ocean_data.get('current_v') is None):
+                    ocean_data['current_u'] = item.get('u', 0.0)
+                    ocean_data['current_v'] = item.get('v', 0.0)
+    except Exception as e:
+        pass
         
     try:
         atmos_data = oma.fetch_atmospheric_point(latitude, longitude, start_time, end_time)

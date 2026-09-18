@@ -68,6 +68,7 @@ class DataCollector:
         self.noaa = NOAAAdapter()
         self.copernicus = CopernicusAdapter()
         self.hycom = HYCOMAdapter()
+        self.open_meteo = OpenMeteoAdapter()
         self.bathymetry = GEBCOAdapter()
         self.geography = GeographyAdapter()
         self.observation = ObservationAdapter()
@@ -77,7 +78,8 @@ class DataCollector:
             'incois': self.incois,
             'noaa': self.noaa,
             'copernicus': self.copernicus,
-            'hycom': self.hycom
+            'hycom': self.hycom,
+            'open_meteo': self.open_meteo
         }
 
     def _validate_bbox(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> BBox:
@@ -180,29 +182,107 @@ class DataCollector:
     # Backward Compatibility & Ancillary Layer Delegations
     # =========================================================================
 
-    def get_ocean_variable(
+    def get_ocean_data(
         self,
-        variable: str,
+        provider: str = 'auto',
+        variable: str = 'ocean_temperature',
         min_lat: Optional[float] = None,
         max_lat: Optional[float] = None,
         min_lon: Optional[float] = None,
         max_lon: Optional[float] = None,
         depth: Optional[float] = None,
-        time_str: Optional[str] = None,
-        stride: int = 1
+        time: Optional[str] = None,
+        stride: int = 1,
+        resolution: Optional[str] = 'native',
+        **kwargs
     ) -> Dict[str, Any]:
-        """Legacy entry point defaulting to AUTO provider selection."""
-        return self.get_ocean_data(
-            provider='auto',
-            variable=variable,
-            min_lat=min_lat,
-            max_lat=max_lat,
-            min_lon=min_lon,
-            max_lon=max_lon,
-            depth=depth,
-            time=time_str,
-            stride=stride
-        )
+        """Fetches and normalizes any ocean, biogeochemical, wave, or atmospheric variable."""
+        if min_lat is None: min_lat = DEFAULT_BBOX['min_lat']
+        if max_lat is None: max_lat = DEFAULT_BBOX['max_lat']
+        if min_lon is None: min_lon = DEFAULT_BBOX['min_lon']
+        if max_lon is None: max_lon = DEFAULT_BBOX['max_lon']
+
+        bbox = self._validate_bbox(min_lat, max_lat, min_lon, max_lon)
+        prov_key = str(provider).strip().lower() if provider else 'auto'
+        var_norm = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
+
+        # 1. Atmospheric & Marine Wave Variables (Served live via Open-Meteo)
+        if var_norm in self.open_meteo.get_supported_variables():
+            try:
+                return self.open_meteo.fetch_ocean_variable(
+                    variable=var_norm,
+                    min_lat=bbox.min_lat,
+                    max_lat=bbox.max_lat,
+                    min_lon=bbox.min_lon,
+                    max_lon=bbox.max_lon,
+                    depth=depth,
+                    time=time,
+                    stride=stride
+                )
+            except Exception as e:
+                logger.warning("Open-Meteo fetch failed for '%s': %s", var_norm, e)
+
+        # 2. Oceanographic & Biogeochemical Variables
+        # Primary live provider: Copernicus Marine Service
+        if prov_key in ('copernicus', 'auto'):
+            try:
+                res = self.copernicus.fetch_ocean_variable(
+                    variable=var_norm,
+                    min_lat=bbox.min_lat,
+                    max_lat=bbox.max_lat,
+                    min_lon=bbox.min_lon,
+                    max_lon=bbox.max_lon,
+                    depth=depth,
+                    time=time,
+                    stride=stride
+                )
+                res['requested_provider'] = prov_key
+                res['fallback'] = False
+                return res
+            except Exception as cop_err:
+                logger.info("Live Copernicus fetch failed for '%s' (%s); falling back to local archive / INCOIS", var_norm, cop_err)
+
+        # 3. Fallback to Local NetCDF Archive / INCOIS Model
+        try:
+            from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
+            incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
+            var_cfg = INCOIS_VARIABLE_MAP.get(incois_var) or INCOIS_VARIABLE_MAP.get('temperature', {})
+            res = self.incois._fetch_from_local_netcdf(
+                variable=incois_var,
+                var_config=var_cfg,
+                min_lat=bbox.min_lat,
+                max_lat=bbox.max_lat,
+                min_lon=bbox.min_lon,
+                max_lon=bbox.max_lon,
+                depth=depth,
+                time=time,
+                stride=stride
+            )
+            res['variable'] = var_norm
+            res['requested_provider'] = prov_key
+            res['provider'] = 'LOCAL_ARCHIVE'
+            res['source_type'] = 'local_netcdf'
+            res['fallback'] = True
+            return res
+        except Exception as local_err:
+            logger.error("Local NetCDF fallback failed for '%s': %s", var_norm, local_err)
+
+        raise RuntimeError(f"Could not retrieve ocean data for variable '{variable}'.")
+
+    def get_ocean_variable(self, *args, **kwargs) -> Dict[str, Any]:
+        """Universal entry point for variable retrieval; accepts provider and all keyword arguments."""
+        if args:
+            if len(args) == 1 and 'variable' not in kwargs:
+                kwargs['variable'] = args[0]
+            elif len(args) > 1:
+                keys = ['variable', 'min_lat', 'max_lat', 'min_lon', 'max_lon', 'depth', 'time', 'stride']
+                for k, v in zip(keys, args):
+                    if k not in kwargs:
+                        kwargs[k] = v
+        if 'time_str' in kwargs and 'time' not in kwargs:
+            kwargs['time'] = kwargs.pop('time_str')
+
+        return self.get_ocean_data(**kwargs)
 
     def get_ocean_variables(
         self,

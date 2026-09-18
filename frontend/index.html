@@ -13,7 +13,7 @@
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
-  <link rel="stylesheet" href="styles.css?v=4.0.0">
+  <link rel="stylesheet" href="styles.css?v=4.1.0">
   <script type="importmap">
   {
     "imports": {
@@ -27,9 +27,10 @@
 <div id="app">
   <!-- Loading & Error Overlays -->
   <div id="loading">
-    <div>
-      <b>SOLVX</b>
-      <span>LOADING SCIENTIFIC OCEAN EXPLORER</span>
+    <div class="loading-box">
+      <div class="loading-brand">SOLVX</div>
+      <div class="loading-sub">SCIENTIFIC OCEAN EXPLORER</div>
+      <div class="loading-bar"><div class="loading-progress"></div></div>
     </div>
   </div>
   <div id="fatal">
@@ -37,21 +38,32 @@
     <span id="fatalText"></span>
   </div>
 
-  <!-- Top Center Brand -->
-  <div id="centerLogo">
-    <div class="logo-letters">
-      <span>S</span><span>O</span><span>L</span><span>V</span><span>X</span>
+  <!-- Top Scientific Navigation Toolbar -->
+  <header id="topBar" class="top-bar">
+    <div class="top-left">
+      <div class="brand">
+        <span class="brand-title">SOLVX</span>
+        <span class="brand-tag">3D OCEAN EXPLORER</span>
+      </div>
+      <button id="toggleMapBtn" class="top-btn" title="Toggle 2D World Map Region Selector">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+        <span>2D WORLD MAP</span>
+      </button>
     </div>
-    <span class="logo-tag">3D OCEAN EXPLORER</span>
-  </div>
 
-  <!-- Top Left View Switcher (2D Map vs 3D Scene) -->
-  <div id="modeSwitcher">
-    <button id="toggleMapBtn" class="mode-btn">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
-      <span>2D WORLD MAP</span>
-    </button>
-  </div>
+    <div class="top-right">
+      <!-- Camera Presets Segmented Toolbar -->
+      <nav id="views" class="segmented-toolbar">
+        <button class="view active" data-view="3d">3D</button>
+        <button class="view" data-view="top">TOP</button>
+        <button class="view" data-view="profile">PROFILE</button>
+        <button class="view" data-view="under">UNDER</button>
+        <span class="toolbar-sep"></span>
+        <button id="reset" class="view action" title="Reset Camera View">RESET</button>
+        <button id="fullscreen" class="view action" title="Toggle Fullscreen">⛶</button>
+      </nav>
+    </div>
+  </header>
 
   <!-- =========================================================================
        VIEW 1: Interactive 2D World Map (MapLibre GL JS) & Region Selector
@@ -120,123 +132,197 @@
   <div id="sceneView">
     <canvas id="renderCanvas"></canvas>
 
-    <!-- Camera Presets -->
-    <nav id="views" class="panel">
-      <button class="view active" data-view="3d">3D</button>
-      <button class="view" data-view="top">TOP</button>
-      <button class="view" data-view="profile">PROFILE</button>
-      <button class="view" data-view="under">UNDER</button>
-      <button id="reset" class="view">RESET</button>
-      <button id="fullscreen" class="view">FULL</button>
-    </nav>
+    <!-- Floating Drawer Toggle Rail Handle -->
+    <button id="drawerToggle" class="drawer-toggle-btn" title="Toggle Scientific Controls">
+      <span class="drawer-arrow">◀</span>
+      <span class="drawer-label">CONTROLS</span>
+    </button>
 
-    <!-- Left Sidebar (Scientific Controls & Layer Toggles) -->
-    <aside id="controls" class="panel">
-      <section>
-        <div class="eyebrow">ML HAZARD EARLY WARNING</div>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <button id="mlStateBtn" class="action-btn" style="background:#0a192f; color:#00ffcc; border:1px solid #00ffcc;">[ Mode: Ocean State ]</button>
-          <button id="mlDemoBtn" class="action-btn" style="background:#4a0000; color:#ffaaaa; border:1px solid red;">Simulate Cyclone Hazard</button>
+    <!-- Left Collapsible Scientific Control Drawer -->
+    <aside id="controls" class="panel drawer-panel">
+      <!-- Oceanographic Variables Section -->
+      <section class="drawer-section">
+        <div class="section-title">
+          <span class="section-badge">01</span>
+          <span>OCEANOGRAPHIC VARIABLES</span>
         </div>
-      </section>
-
-      <section>
-
-      <section>
-        <div class="eyebrow">OCEANOGRAPHIC VARIABLES</div>
         <div id="vars" class="vars"></div>
       </section>
 
-      <section>
-        <div class="eyebrow">OCEAN SLICING</div>
+      <!-- Ocean Slicing Section -->
+      <section class="drawer-section">
+        <div class="section-title">
+          <span class="section-badge">02</span>
+          <span>OCEAN SLICING</span>
+        </div>
         <div class="depth-header">
-          <div class="mode-toggle" style="width: 100%; display: flex; gap: 5px;">
-            <button class="active" data-depth-mode="volume" style="flex: 1;">VOLUME</button>
-            <button data-depth-mode="horizontal" style="flex: 1;">HORIZONTAL SLICE</button>
-            <button data-depth-mode="vertical" style="flex: 1;">VERTICAL SLICE</button>
+          <div class="segmented-control mode-toggle">
+            <button class="segmented-btn active" data-depth-mode="volume">Volume</button>
+            <button class="segmented-btn" data-depth-mode="horizontal">Horizontal</button>
+            <button class="segmented-btn" data-depth-mode="vertical">Vertical</button>
           </div>
         </div>
-        <div id="horizontalSliceControls" style="display: none; margin-top: 10px; font-size: 11px;">
-            <label style="display: flex; align-items: center; gap: 5px; margin-bottom: 5px;">
-                Depth (m): <input type="number" id="horizDepthInput" value="100" style="width: 60px; font-size: 11px; padding: 2px;">
-            </label>
-            <button id="applyHorizSliceBtn" style="width: 100%; padding: 4px; background: #1da5d8; color: white; border: none; cursor: pointer;">APPLY SLICE</button>
-            <div id="horizSliceInfo" style="margin-top: 5px; color: #888; font-size: 10px;"></div>
+
+        <!-- Progressive Disclosure: Horizontal Slice -->
+        <div id="horizontalSliceControls" class="slice-disclosure-box hidden">
+          <div class="slice-input-group">
+            <label for="horizDepthInput">Slice Depth</label>
+            <div class="input-with-unit">
+              <input type="number" id="horizDepthInput" value="100" min="0" max="5500" step="10">
+              <span class="unit">meters</span>
+            </div>
+          </div>
+          <button id="applyHorizSliceBtn" class="slice-apply-btn">APPLY HORIZONTAL SLICE</button>
+          <div id="horizSliceInfo" class="slice-info"></div>
         </div>
-        <div id="verticalSliceControls" style="display: none; margin-top: 10px; font-size: 11px;">
-            <div style="margin-bottom: 5px;">Start: <input type="number" id="vertStartLat" placeholder="Lat" style="width: 45px;"> <input type="number" id="vertStartLon" placeholder="Lon" style="width: 45px;"></div>
-            <div style="margin-bottom: 5px;">End: &nbsp;&nbsp;<input type="number" id="vertEndLat" placeholder="Lat" style="width: 45px;"> <input type="number" id="vertEndLon" placeholder="Lon" style="width: 45px;"></div>
-            <button id="applyVertSliceBtn" style="width: 100%; padding: 4px; background: #1da5d8; color: white; border: none; cursor: pointer; margin-bottom: 5px;">APPLY VERTICAL SLICE</button>
-            <button id="clearVertSliceBtn" style="width: 100%; padding: 4px; background: #444; color: white; border: none; cursor: pointer;">CLEAR SLICE</button>
+
+        <!-- Progressive Disclosure: Vertical Slice -->
+        <div id="verticalSliceControls" class="slice-disclosure-box hidden">
+          <div class="slice-coord-grid">
+            <div class="coord-pair">
+              <span class="coord-tag">Start</span>
+              <input type="number" id="vertStartLat" placeholder="Lat °N" step="0.1">
+              <input type="number" id="vertStartLon" placeholder="Lon °E" step="0.1">
+            </div>
+            <div class="coord-pair">
+              <span class="coord-tag">End</span>
+              <input type="number" id="vertEndLat" placeholder="Lat °N" step="0.1">
+              <input type="number" id="vertEndLon" placeholder="Lon °E" step="0.1">
+            </div>
+          </div>
+          <div class="slice-btn-row">
+            <button id="applyVertSliceBtn" class="slice-apply-btn">APPLY VERTICAL SLICE</button>
+            <button id="clearVertSliceBtn" class="slice-clear-btn">CLEAR</button>
+          </div>
         </div>
       </section>
 
-      <section>
-        <div class="eyebrow">VERTICAL EXAGGERATION</div>
-        <div class="slider-row">
-          <input id="exaggeration" type="range" min="10" max="70" value="70">
-          <b id="exagValue">70×</b>
+      <!-- Vertical Exaggeration Section -->
+      <section class="drawer-section">
+        <div class="section-title">
+          <span class="section-badge">03</span>
+          <span>VERTICAL EXAGGERATION</span>
+        </div>
+        <div class="slider-box">
+          <div class="slider-row">
+            <input id="exaggeration" type="range" min="10" max="70" value="70" class="sci-slider">
+            <b id="exagValue" class="exag-readout mono">70×</b>
+          </div>
+          <div class="slider-ticks">
+            <span>10×</span>
+            <span>40×</span>
+            <span>70×</span>
+          </div>
         </div>
       </section>
 
-      <!-- 3D Scene Layer Visibility Toggles -->
-      <section class="layers-section">
-        <div class="eyebrow">3D SCENE LAYERS</div>
-        <div class="layer-grid">
-          <label class="layer-check"><input type="checkbox" id="layerLand" checked><span>Land</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerCoastline" checked><span>Coastline</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerIslands" checked><span>Islands</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerEEZ" checked><span>EEZ Boundary</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerSeabed" checked><span>Seabed</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerWater" checked><span>Water Body</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerScientific" checked><span>Sci Variable</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerCurrents" checked><span>Current Vectors</span></label>
-          <label class="layer-check"><input type="checkbox" id="layerParticles" checked><span>Flow Particles</span></label>
+      <!-- 3D Scene Layers Section -->
+      <section class="drawer-section layers-section">
+        <div class="section-title">
+          <span class="section-badge">04</span>
+          <span>3D SCENE LAYERS</span>
+        </div>
+        <div class="layer-list">
+          <label class="layer-row">
+            <span class="layer-name">Land Geography</span>
+            <input type="checkbox" id="layerLand" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Coastline Vectors</span>
+            <input type="checkbox" id="layerCoastline" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Islands & Atolls</span>
+            <input type="checkbox" id="layerIslands" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Maritime EEZ</span>
+            <input type="checkbox" id="layerEEZ" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">GEBCO Seabed</span>
+            <input type="checkbox" id="layerSeabed" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Water Body</span>
+            <input type="checkbox" id="layerWater" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Scientific Variable Field</span>
+            <input type="checkbox" id="layerScientific" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Ocean Current Vectors</span>
+            <input type="checkbox" id="layerCurrents" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
+          <label class="layer-row">
+            <span class="layer-name">Current Flow Particles</span>
+            <input type="checkbox" id="layerParticles" checked class="switch-input">
+            <span class="switch-toggle"></span>
+          </label>
         </div>
       </section>
 
-      <section class="legend-box">
-        <div class="eyebrow" id="legendTitle">VARIABLE COLOR SCALE</div>
-        <div id="legendScaleType" style="font-size: 10px; color: #888; margin-bottom: 5px; text-align: center;">Sequential</div>
-        <div id="legendBar" class="legend-bar"></div>
-        <div class="legend-labels">
-          <span id="legendLo">—</span>
-          <span id="legendHi">—</span>
-        </div>
-      </section>
-
-      <section class="status">
-        <i id="statusDot"></i>
-        <span id="status">Ready</span>
+      <!-- System Status Footer -->
+      <section class="drawer-footer status">
+        <i id="statusDot" class="status-indicator"></i>
+        <span id="status">System Ready</span>
       </section>
     </aside>
 
-    <!-- Top Right: Data Provenance Panel -->
-    <aside id="hazardPanel" class="panel" style="width: 280px;">
-      <div class="prov-header" style="border-bottom: 1px solid rgba(0,50,100,0.1); padding-bottom: 10px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; font-weight: bold; color: #1da5d8;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-        <span>OCEAN HAZARD / EARLY WARNING</span>
+    <!-- Top Right: Ocean Hazard / Early Warning Panel -->
+    <aside id="hazardPanel" class="panel hazard-panel">
+      <div class="hazard-header">
+        <div class="hazard-title-wrap">
+          <svg class="hazard-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          <span class="hazard-label">OCEAN HAZARD</span>
+        </div>
+        <span id="hazardBadge" class="hazard-badge normal">NORMAL</span>
       </div>
-      <div id="hazardStatus" style="font-weight: bold; font-size: 14px; margin-bottom: 15px; color: #1da5d8;">
-        STATUS<br>
-        <span style="font-size: 16px;">Conditions Normal</span>
+      <div id="hazardStatus" class="hazard-status normal">
+        <span class="hazard-dot"></span>
+        <span id="hazardStatusText" class="hazard-status-text">Conditions Normal</span>
       </div>
-      <div id="hazardEventsList" style="display: flex; flex-direction: column; gap: 10px;">
-        <div style="color: #557799; font-size: 12px;">Data:<br>No active warnings detected</div>
+      <div id="hazardEventsList" class="hazard-events-list">
+        <div class="hazard-subtext">No active warnings detected</div>
+      </div>
+    </aside>
+
+    <!-- Floating Dynamic Color Scale Legend (Bottom Right, above timeline) -->
+    <aside id="legendBox" class="panel legend-box">
+      <div class="legend-header">
+        <div>
+          <div class="legend-eyebrow">ACTIVE VARIABLE</div>
+          <b id="legendTitle" class="legend-title">OCEAN TEMPERATURE</b>
+        </div>
+        <span id="legendScaleType" class="legend-scale-type">Sequential</span>
+      </div>
+      <div id="legendBar" class="legend-bar"></div>
+      <div class="legend-labels mono">
+        <span id="legendLo">—</span>
+        <span id="legendHi">—</span>
       </div>
     </aside>
 
     <!-- Point Inspector Readout -->
-    <aside id="readout" class="panel hidden">
+    <aside id="readout" class="panel readout-panel hidden">
       <div class="readoutHead">
         <div>
-          <b>Ocean Point</b>
-          <small id="coords">—</small>
+          <div class="readout-tag">INSPECTED POINT</div>
+          <b id="coords" class="readout-coords mono">—</b>
         </div>
-        <button id="closeReadout" class="close-btn">×</button>
+        <button id="closeReadout" class="close-btn" title="Close">×</button>
       </div>
       <div id="readoutGrid" class="readoutGrid"></div>
-      <div id="readoutTime" class="note" style="margin-top: 10px; font-size: 10px; color: var(--muted);">—</div>
+      <div id="readoutTime" class="readout-time note mono">—</div>
     </aside>
 
     <!-- In-Situ Observation & Model Comparison Modal -->
@@ -250,12 +336,12 @@
     </div>
 
     <!-- Bottom Multi-Resolution Timeline Dock -->
-    <footer id="timeline" class="panel">
+    <footer id="timeline" class="panel timeline-dock">
       <div class="timelineTop">
         <div class="time-meta">
           <span id="timeBadge" class="time-badge historical">HISTORICAL</span>
           <b id="timeValue">Loading ocean time…</b>
-          <small id="timeRaw">—</small>
+          <small id="timeRaw" class="mono">—</small>
         </div>
 
         <div class="timeline-controls">
@@ -266,7 +352,7 @@
           </div>
 
           <div class="speed-control">
-            <label for="playSpeed">SPEED:</label>
+            <label for="playSpeed">SPEED</label>
             <select id="playSpeed" class="speed-select">
               <option value="0.5">0.5×</option>
               <option value="1.0" selected>1×</option>
@@ -275,19 +361,20 @@
             </select>
           </div>
 
-          <button id="play" class="play-btn">PLAY</button>
+          <button id="play" class="play-btn" title="Play / Pause Timeline">PLAY</button>
         </div>
       </div>
 
       <div class="timelineRow">
-        <div class="time-inputs" style="display: flex; gap: 10px; margin-bottom: 5px; font-size: 11px; align-items: center; flex-wrap: wrap;">
-            <label>Start: <input type="datetime-local" id="timeStart" style="font-size: 11px;"></label>
-            <label>End: <input type="datetime-local" id="timeEnd" style="font-size: 11px;"></label>
-            <button id="btnSetPeriod" style="padding: 2px 6px; font-size: 11px; cursor: pointer; background: #1da5d8; color: white; border: none; border-radius: 3px;">FETCH DATA</button>
-        </div>
-        <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-            <input id="timeSlider" type="range" min="0" max="0" value="0" style="flex: 1;">
-            <span id="timeCount">0 / 0</span>
+        <input id="timeSlider" type="range" min="0" max="0" value="0" class="time-slider">
+        <span id="timeCount" class="time-count mono">0 / 0</span>
+      </div>
+
+      <div class="timelineDateRow">
+        <div class="time-inputs">
+          <label>Start: <input type="datetime-local" id="timeStart"></label>
+          <label>End: <input type="datetime-local" id="timeEnd"></label>
+          <button id="btnSetPeriod" class="fetch-btn">FETCH DATA</button>
         </div>
       </div>
     </footer>
@@ -299,6 +386,6 @@ window.onerror = function(message, source, lineno, colno, error) {
     console.log("ONERROR: " + message + " at " + source + ":" + lineno + ":" + colno);
 };
 </script>
-<script type="module" src="app.js?v=4.0.0"></script>
+<script type="module" src="app.js?v=4.1.0"></script>
 </body>
 </html>

@@ -29,6 +29,23 @@ export const ApiClient = {
         return API_BASE;
     },
 
+    async get(endpoint, params = {}) {
+        const q = new URLSearchParams();
+        for (const [k, v] of Object.entries(params)) {
+            if (v != null) q.set(k, String(v));
+        }
+        const qs = q.toString();
+        return request(qs ? `${endpoint}?${qs}` : endpoint);
+    },
+
+    async post(endpoint, data = {}) {
+        return request(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
     // =========================================================================
     // Central SolvX Data Collector Endpoints (/api/data/*)
     // =========================================================================
@@ -254,5 +271,31 @@ export const ApiClient = {
 
     async compareObservation(obsId) {
         return request(`/api/observations/compare/${encodeURIComponent(obsId)}`);
+    },
+
+    // =========================================================================
+    // ML Hazard & Anomaly Endpoints
+    // =========================================================================
+
+    async getMLAnomalies(bbox, time = null, depth = null) {
+        const q = new URLSearchParams({
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat)
+        });
+        if (time) q.set('time', time);
+        if (depth != null) q.set('depth', String(depth));
+        return request(`/api/ml/anomalies?${q}`);
+    },
+
+    async getMLPoint(lat, lon, time = null, depth = null) {
+        const q = new URLSearchParams({
+            latitude: String(lat),
+            longitude: String(lon)
+        });
+        if (time) q.set('time', time);
+        if (depth != null) q.set('depth', String(depth));
+        return request(`/api/ml/point?${q}`);
     }
 };

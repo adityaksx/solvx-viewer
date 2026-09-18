@@ -27,13 +27,21 @@ export class DepthControl {
     }
 
     updateDisplay() {
-        if (this.horizControls) this.horizControls.style.display = 'none';
-        if (this.vertControls) this.vertControls.style.display = 'none';
-
-        if (this.currentMode === 'horizontal') {
-            if (this.horizControls) this.horizControls.style.display = 'block';
-        } else if (this.currentMode === 'vertical') {
-            if (this.vertControls) this.vertControls.style.display = 'block';
+        if (this.horizControls) {
+            this.horizControls.style.display = '';
+            if (this.currentMode === 'horizontal') {
+                this.horizControls.classList.remove('hidden');
+            } else {
+                this.horizControls.classList.add('hidden');
+            }
+        }
+        if (this.vertControls) {
+            this.vertControls.style.display = '';
+            if (this.currentMode === 'vertical') {
+                this.vertControls.classList.remove('hidden');
+            } else {
+                this.vertControls.classList.add('hidden');
+            }
         }
     }
 

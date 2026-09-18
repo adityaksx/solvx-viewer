@@ -141,7 +141,7 @@ def get_ml_point(
     return MLPointResponse(
         location=Location(latitude=lat, longitude=lon),
         time=time_str or "latest",
-        values=point_res.get('surface_values', {}),
+        values=point_res.get('variables', {}),
         depth_profiles=point_res.get('depth_profiles', {}),
         anomaly={
             'location': Location(latitude=lat, longitude=lon),

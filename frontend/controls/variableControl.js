@@ -1,4 +1,5 @@
 // SolvX Viewer — Variable Layer Control
+// Manages oceanographic variable selection and smooth UI transitions
 
 export class VariableControl {
     constructor(containerId = 'vars', options = {}) {
@@ -46,11 +47,7 @@ export class VariableControl {
 
         for (const [groupName, items] of Object.entries(groups)) {
             const groupHeader = document.createElement('div');
-            groupHeader.style.fontSize = '10px';
-            groupHeader.style.fontWeight = 'bold';
-            groupHeader.style.color = '#1da5d8';
-            groupHeader.style.marginTop = '10px';
-            groupHeader.style.marginBottom = '4px';
+            groupHeader.className = 'var-group-label';
             groupHeader.textContent = groupName;
             this.container.appendChild(groupHeader);
             
@@ -61,7 +58,6 @@ export class VariableControl {
 
                 btn.className = `var ${isActive ? 'active' : ''} ${!isAvail ? 'off' : ''}`;
                 btn.disabled = !isAvail;
-                // add data-var so setActive can find it
                 btn.setAttribute('data-var', item.id);
                 btn.innerHTML = `
                     <span class="vicon">${icons[item.id] || '•'}</span>
@@ -83,11 +79,21 @@ export class VariableControl {
     }
 
     setActive(varId) {
+        if (this.activeVariable === varId) return;
         this.activeVariable = varId;
-        this.container?.querySelectorAll('.var').forEach(b => b.classList.remove('active'));
-        const activeBtn = this.container?.querySelector(`[data-var="${varId}"]`);
-        activeBtn?.classList.add('active');
-        this.render();
+
+        // Smoothly toggle active state on existing DOM elements without re-rendering
+        if (this.container) {
+            const buttons = this.container.querySelectorAll('.var');
+            buttons.forEach(btn => {
+                if (btn.getAttribute('data-var') === varId) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
         this.onChange(varId);
     }
 }

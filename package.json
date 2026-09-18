@@ -20,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/adityaksx/solvx-viewer/issues"
   },
-  "homepage": "https://github.com/adityaksx/solvx-viewer#readme"
+  "homepage": "https://github.com/adityaksx/solvx-viewer#readme",
+  "dependencies": {
+    "puppeteer": "^25.11.0"
+  }
 }

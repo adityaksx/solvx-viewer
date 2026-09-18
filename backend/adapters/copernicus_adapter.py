@@ -1,393 +1,137 @@
-"""
-Copernicus Marine Service (CMEMS) Adapter for SolvX
-===================================================
-Fetches and normalizes physical oceanographic data from Copernicus Marine Service
-(Mercator Ocean / European Union).
-
-Authoritative source: Copernicus Marine Service (CMEMS)
-Primary dataset: GLOBAL_ANALYSISFORECAST_PHY_001_024 (Global Ocean Physics Analysis and Forecast)
-Variables:
-- temperature (thetao in degC)
-- salinity (so in PSU)
-- currents (uo, vo vectors in m/s)
-- sea_surface_height (zos in m)
-"""
-
-import os
-import math
-import time
-import json
-import base64
 import logging
-import urllib.request
-import urllib.error
-import urllib.parse
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+import os
+import copernicusmarine
+import xarray as xr
+from typing import Dict, Any, Optional
 
-from ..config import REQUEST_TIMEOUT
-
-logger = logging.getLogger('solvx.copernicus')
-
-COPERNICUS_BASE_URL = os.getenv('COPERNICUS_BASE_URL', 'https://my.cmems-du.eu/erddap/griddap').rstrip('/')
-COPERNICUS_USERNAME = os.getenv('COPERNICUS_USERNAME', '')
-COPERNICUS_PASSWORD = os.getenv('COPERNICUS_PASSWORD', '')
-
-COPERNICUS_VARIABLE_MAP = {
-    'temperature': {
-        'dataset_id': 'cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m',
-        'var_name': 'thetao',
-        'standard_name': 'sea_water_potential_temperature',
-        'units': 'degC',
-        'has_depth': True,
-        'surface_only': False,
-        'description': 'Copernicus Global Ocean Physics Sea Water Potential Temperature'
-    },
-    'salinity': {
-        'dataset_id': 'cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m',
-        'var_name': 'so',
-        'standard_name': 'sea_water_salinity',
-        'units': 'PSU',
-        'has_depth': True,
-        'surface_only': False,
-        'description': 'Copernicus Global Ocean Physics Sea Water Salinity'
-    },
-    'currents': {
-        'dataset_id': 'cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m',
-        'u_var': 'uo',
-        'v_var': 'vo',
-        'standard_name': 'sea_water_velocity',
-        'units': 'm/s',
-        'has_depth': True,
-        'surface_only': False,
-        'description': 'Copernicus Global Ocean Physics 3D Velocity (uo, vo)'
-    },
-    'sea_surface_height': {
-        'dataset_id': 'cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m',
-        'var_name': 'zos',
-        'standard_name': 'sea_surface_height_above_geoid',
-        'units': 'm',
-        'has_depth': False,
-        'surface_only': True,
-        'description': 'Copernicus Sea Surface Height Above Geoid'
-    }
-}
-
+logger = logging.getLogger('solvx.copernicus_adapter')
 
 class CopernicusAdapter:
-    """Adapter for querying and normalizing Copernicus Marine Service datasets."""
-
-    def __init__(
-        self,
-        base_url: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        timeout: int = REQUEST_TIMEOUT
-    ):
-        self.base_url = (base_url or COPERNICUS_BASE_URL).rstrip('/')
-        self.username = username or COPERNICUS_USERNAME
-        self.password = password or COPERNICUS_PASSWORD
-        self.timeout = timeout
-
-    def get_supported_variables(self) -> List[str]:
-        return list(COPERNICUS_VARIABLE_MAP.keys())
-
-    def get_datasets(self) -> Dict[str, Any]:
-        return {var: cfg['dataset_id'] for var, cfg in COPERNICUS_VARIABLE_MAP.items()}
-
-    def build_griddap_url(
-        self,
-        dataset_id: str,
-        variable_name: str,
-        min_lat: float,
-        max_lat: float,
-        min_lon: float,
-        max_lon: float,
-        depth: Optional[float] = None,
-        time: Optional[str] = None,
-        stride: int = 1
-    ) -> str:
-        """Constructs an ERDDAP griddap query URL for Copernicus."""
-        url = f"{self.base_url}/{dataset_id}.json?{variable_name}"
-        if time:
-            url += f"[({time})]"
-        else:
-            url += "[(last)]"
-        if depth is not None:
-            url += f"[({depth})]"
-        elif not COPERNICUS_VARIABLE_MAP.get(variable_name, {}).get('surface_only', False):
-            url += "[(0.5)]"
-
-        s = f":{stride}:" if stride > 1 else ":"
-        url += f"[({min_lat}){s}({max_lat})]"
-        url += f"[({min_lon}){s}({max_lon})]"
-        return url
-
-    def fetch_ocean_variable(
-        self,
-        variable: str,
-        min_lat: float,
-        max_lat: float,
-        min_lon: float,
-        max_lon: float,
-        depth: Optional[float] = None,
-        time: Optional[str] = None,
-        stride: int = 1
-    ) -> Dict[str, Any]:
-        """Fetches and normalizes an ocean variable from Copernicus Marine."""
-        if variable not in COPERNICUS_VARIABLE_MAP:
-            raise ValueError(f"Unsupported Copernicus variable '{variable}'. Supported: {list(COPERNICUS_VARIABLE_MAP.keys())}")
-
-        var_cfg = COPERNICUS_VARIABLE_MAP[variable]
-        dataset_id = var_cfg['dataset_id']
-
-        if variable == 'currents':
-            return self._fetch_currents(var_cfg, min_lat, max_lat, min_lon, max_lon, depth, time, stride)
-
-        target_var = var_cfg['var_name']
-        req_url = self.build_griddap_url(
-            dataset_id=dataset_id,
-            variable_name=target_var,
-            min_lat=min_lat,
-            max_lat=max_lat,
-            min_lon=min_lon,
-            max_lon=max_lon,
-            depth=depth if var_cfg.get('has_depth') else None,
-            time=time,
-            stride=stride
-        )
-
-        raw_json = self._execute_http_query(req_url)
-        return self._parse_erddap_scalar(raw_json, variable, var_cfg, min_lat, max_lat, min_lon, max_lon, depth, time, req_url)
-
-    def _fetch_currents(
-        self,
-        var_cfg: Dict[str, Any],
-        min_lat: float,
-        max_lat: float,
-        min_lon: float,
-        max_lon: float,
-        depth: Optional[float],
-        time: Optional[str],
-        stride: int
-    ) -> Dict[str, Any]:
-        dataset_id = var_cfg['dataset_id']
-        u_url = self.build_griddap_url(dataset_id, var_cfg['u_var'], min_lat, max_lat, min_lon, max_lon, depth, time, stride)
-        v_url = self.build_griddap_url(dataset_id, var_cfg['v_var'], min_lat, max_lat, min_lon, max_lon, depth, time, stride)
-
-        u_json = self._execute_http_query(u_url)
-        v_json = self._execute_http_query(v_url)
-
-        return self._parse_erddap_currents(u_json, v_json, min_lat, max_lat, min_lon, max_lon, depth, time, u_url)
-
-    def _execute_http_query(self, url: str) -> Dict[str, Any]:
-        """Executes an HTTP GET to Copernicus Marine with Basic Auth if configured."""
-        headers = {'User-Agent': 'SolvX-Ocean-Explorer/3.0 (Copernicus Client)'}
-        if self.username and self.password:
-            auth_str = f"{self.username}:{self.password}"
-            b64_auth = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
-            headers['Authorization'] = f"Basic {b64_auth}"
-
-        req = urllib.request.Request(url, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                if resp.getcode() != 200:
-                    raise RuntimeError(f"Copernicus query returned HTTP {resp.getcode()}")
-                return json.loads(resp.read().decode('utf-8'))
-        except urllib.error.HTTPError as e:
-            msg = f"Copernicus Marine HTTP {e.code}: {e.reason}"
-            logger.error(msg)
-            raise RuntimeError(msg) from e
-        except urllib.error.URLError as e:
-            msg = f"Copernicus Marine Connection Error: {e.reason}"
-            logger.error(msg)
-            raise RuntimeError(msg) from e
-        except Exception as e:
-            msg = f"Copernicus Marine Query Error: {str(e)}"
-            logger.error(msg)
-            raise RuntimeError(msg) from e
-
-    def _parse_erddap_scalar(
-        self,
-        raw_json: Dict[str, Any],
-        variable: str,
-        var_config: Dict[str, Any],
-        min_lat: float,
-        max_lat: float,
-        min_lon: float,
-        max_lon: float,
-        depth: Optional[float],
-        time_str: Optional[str],
-        source_url: str
-    ) -> Dict[str, Any]:
-        table = raw_json.get('table', {})
-        column_names = table.get('columnNames', [])
-        rows = table.get('rows', [])
-
-        if not rows or not column_names:
-            raise RuntimeError(f"Empty table returned from Copernicus for variable '{variable}'")
-
-        val_col_idx = len(column_names) - 1
-        lat_col_idx = column_names.index('latitude') if 'latitude' in column_names else -2
-        lon_col_idx = column_names.index('longitude') if 'longitude' in column_names else -1
-
-        lat_set = sorted(list({r[lat_col_idx] for r in rows if r[lat_col_idx] is not None}))
-        lon_set = sorted(list({r[lon_col_idx] for r in rows if r[lon_col_idx] is not None}))
-
-        val_dict = {(r[lat_col_idx], r[lon_col_idx]): r[val_col_idx] for r in rows}
-        grid = []
-        for lat in lat_set:
-            row = []
-            for lon in lon_set:
-                v = val_dict.get((lat, lon))
-                row.append(round(float(v), 3) if v is not None and math.isfinite(v) else None)
-            grid.append(row)
-
-        res_time = rows[0][0] if len(rows) > 0 and 'time' in column_names[0] else time_str
-
-        return {
-            'type': 'ocean_variable',
-            'requested_provider': 'copernicus',
-            'provider': 'Copernicus Marine',
-            'fallback': False,
-            'dataset': var_config['dataset_id'],
-            'variable': variable,
-            'units': var_config['units'],
-            'time': str(res_time),
-            'depth': depth,
-            'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
-            'latitude': [round(float(x), 4) for x in lat_set],
-            'longitude': [round(float(x), 4) for x in lon_set],
-            'values': grid,
-            'metadata': {
-                'source_url': source_url,
-                'provider': 'Copernicus Marine Service',
-                'dataset': var_config['dataset_id'],
-                'description': var_config['description'],
-                'retrieved_at': datetime.now(timezone.utc).isoformat(),
-                'data_type': 'model_analysis_forecast'
-            }
+    def __init__(self):
+        self.username = os.getenv('COPERNICUSMARINE_SERVICE_USERNAME')
+        self.password = os.getenv('COPERNICUSMARINE_SERVICE_PASSWORD')
+        self.dataset_id = "cmems_mod_glo_phy_anfc_0.083deg_P1D-m"
+        self.cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/external/ocean'))
+        os.makedirs(self.cache_dir, exist_ok=True)
+        
+    def _map_variable(self, solx_var: str) -> str:
+        mapping = {
+            "ocean_temperature": "thetao",
+            "salinity": "so",
+            "current_u": "uo",
+            "current_v": "vo",
+            "sea_surface_height": "zos"
         }
+        return mapping.get(solx_var, solx_var)
 
-    def _parse_erddap_currents(
-        self,
-        u_json: Dict[str, Any],
-        v_json: Dict[str, Any],
-        min_lat: float,
-        max_lat: float,
-        min_lon: float,
-        max_lon: float,
-        depth: Optional[float],
-        time_str: Optional[str],
-        source_url: str
-    ) -> Dict[str, Any]:
-        u_rows = u_json.get('table', {}).get('rows', [])
-        v_rows = v_json.get('table', {}).get('rows', [])
-        u_cols = u_json.get('table', {}).get('columnNames', [])
-
-        lat_idx = u_cols.index('latitude') if 'latitude' in u_cols else -2
-        lon_idx = u_cols.index('longitude') if 'longitude' in u_cols else -1
-
-        lat_set = sorted(list({r[lat_idx] for r in u_rows if r[lat_idx] is not None}))
-        lon_set = sorted(list({r[lon_idx] for r in u_rows if r[lon_idx] is not None}))
-
-        u_dict = {(r[lat_idx], r[lon_idx]): r[-1] for r in u_rows}
-        v_dict = {(r[lat_idx], r[lon_idx]): r[-1] for r in v_rows}
-
-        u_grid, v_grid, speed_grid, dir_grid = [], [], [], []
-        for lat in lat_set:
-            u_row, v_row, s_row, d_row = [], [], [], []
-            for lon in lon_set:
-                u_val = u_dict.get((lat, lon))
-                v_val = v_dict.get((lat, lon))
-                if u_val is not None and v_val is not None and math.isfinite(u_val) and math.isfinite(v_val):
-                    u_row.append(round(float(u_val), 3))
-                    v_row.append(round(float(v_val), 3))
-                    spd = math.hypot(u_val, v_val)
-                    direc = (math.degrees(math.atan2(v_val, u_val))) % 360.0
-                    s_row.append(round(float(spd), 3))
-                    d_row.append(round(float(direc), 1))
-                else:
-                    u_row.append(None)
-                    v_row.append(None)
-                    s_row.append(None)
-                    d_row.append(None)
-            u_grid.append(u_row)
-            v_grid.append(v_row)
-            speed_grid.append(s_row)
-            dir_grid.append(d_row)
-
-        res_time = u_rows[0][0] if len(u_rows) > 0 and 'time' in u_cols[0] else time_str
-
-        return {
-            'type': 'ocean_variable',
-            'requested_provider': 'copernicus',
-            'provider': 'Copernicus Marine',
-            'fallback': False,
-            'dataset': COPERNICUS_VARIABLE_MAP['currents']['dataset_id'],
-            'variable': 'currents',
-            'units': 'm/s',
-            'time': str(res_time),
-            'depth': depth,
-            'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
-            'latitude': [round(float(x), 4) for x in lat_set],
-            'longitude': [round(float(x), 4) for x in lon_set],
-            'u': u_grid,
-            'v': v_grid,
-            'speed': speed_grid,
-            'direction': dir_grid,
-            'metadata': {
-                'source_url': source_url,
-                'provider': 'Copernicus Marine Service',
-                'dataset': COPERNICUS_VARIABLE_MAP['currents']['dataset_id'],
-                'description': COPERNICUS_VARIABLE_MAP['currents']['description'],
-                'retrieved_at': datetime.now(timezone.utc).isoformat(),
-                'data_type': 'model_analysis_forecast'
-            }
-        }
-
-    def get_variable_timeline(
-        self,
-        variable: str,
-        min_lat: float,
-        max_lat: float,
-        min_lon: float,
-        max_lon: float,
-        depth: Optional[float] = None
-    ) -> Dict[str, Any]:
-        """Discovers temporal coverage for Copernicus Marine."""
-        return {
-            'provider': 'Copernicus Marine',
-            'variable': variable,
-            'dataset': COPERNICUS_VARIABLE_MAP.get(variable, {}).get('dataset_id', 'GLOBAL_PHY'),
-            'available_from': '2026-08-01T00:00:00Z',
-            'available_to': '2026-09-15T00:00:00Z',
-            'default_resolution': 'daily',
-            'resolutions': ['hourly', 'daily', 'monthly'],
-            'historical': {'from': '2026-08-01T00:00:00Z', 'to': '2026-09-05T00:00:00Z'},
-            'forecast': {'from': '2026-09-06T00:00:00Z', 'to': '2026-09-15T00:00:00Z'},
-            'available_timestamps': ['2026-08-01T00:00:00Z', '2026-09-05T00:00:00Z', '2026-09-15T00:00:00Z'],
-            'depth_levels': [0.5, 5.0, 15.0, 30.0, 50.0, 100.0, 250.0, 500.0, 1000.0]
-        }
-
-    def test_connection(self) -> Dict[str, Any]:
-        """Probes Copernicus Marine endpoint."""
-        t0 = time.time()
-        try:
-            req = urllib.request.Request(self.base_url, headers={'User-Agent': 'SolvX-Diagnostic/3.0'})
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                latency = round((time.time() - t0) * 1000, 2)
-                return {
-                    'provider': 'Copernicus Marine',
-                    'status': 'available' if resp.status < 400 else 'unavailable',
-                    'status_code': resp.status,
-                    'latency_ms': latency,
-                    'endpoint': self.base_url
-                }
-        except Exception as e:
+    def fetch_ocean_grid(self, variable: str, min_lat: float, max_lat: float, min_lon: float, max_lon: float, start_time: str, end_time: str) -> Dict[str, Any]:
+        if not self.username or not self.password:
+            raise ValueError("Copernicus Marine credentials not configured.")
+            
+        cmems_var = self._map_variable(variable)
+        
+        # Simple cache key
+        import hashlib
+        key_str = f"{self.dataset_id}_{cmems_var}_{min_lat}_{max_lat}_{min_lon}_{max_lon}_{start_time}_{end_time}"
+        cache_key = hashlib.md5(key_str.encode()).hexdigest()
+        out_file = os.path.join(self.cache_dir, f"{cache_key}.nc")
+        
+        if not os.path.exists(out_file):
+            logger.info(f"Downloading Copernicus subset to {out_file}")
+            copernicusmarine.subset(
+                dataset_id=self.dataset_id,
+                variables=[cmems_var],
+                minimum_longitude=min_lon,
+                maximum_longitude=max_lon,
+                minimum_latitude=min_lat,
+                maximum_latitude=max_lat,
+                start_datetime=start_time,
+                end_datetime=end_time,
+                minimum_depth=0.493,
+                maximum_depth=0.495,
+                output_filename=out_file,
+                force_download=True,
+                username=self.username,
+                password=self.password
+            )
+            
+        with xr.open_dataset(out_file) as ds:
+            # We want to return the first time slice if multiple exist, or just the whole thing
+            # The UI usually renders one time slice
+            if 'time' in ds.dims:
+                ds_t = ds.isel(time=0)
+            else:
+                ds_t = ds
+            if 'depth' in ds_t.coords:
+                ds_t = ds_t.isel(depth=0)
+                
+            lats = ds_t.latitude.values.tolist()
+            lons = ds_t.longitude.values.tolist()
+            # Convert NaN to None
+            import numpy as np
+            vals = np.where(np.isnan(ds_t[cmems_var].values), None, ds_t[cmems_var].values).tolist()
+            
             return {
-                'provider': 'Copernicus Marine',
-                'status': 'unavailable',
-                'error': str(e),
-                'endpoint': self.base_url
+                "latitude": lats,
+                "longitude": lons,
+                "values": vals,
+                "units": ds[cmems_var].attrs.get("units", "")
             }
+
+    def fetch_ocean_point(self, lat: float, lon: float, start_time: str, end_time: str) -> Dict[str, Any]:
+        """
+        Fetches ocean variables from Copernicus Marine using the Python toolbox for a single point.
+        """
+        if not self.username or not self.password:
+            raise ValueError("Copernicus Marine credentials not configured.")
+            
+        delta = 0.1
+        min_lon, max_lon = lon - delta, lon + delta
+        min_lat, max_lat = lat - delta, lat + delta
+        
+        try:
+            ds = copernicusmarine.open_dataset(
+                dataset_id=self.dataset_id,
+                username=self.username,
+                password=self.password,
+            )
+            
+            point_ds = ds.sel(latitude=lat, longitude=lon, method="nearest")
+            if start_time and end_time:
+                point_ds = point_ds.sel(time=slice(start_time, end_time))
+            elif start_time:
+                point_ds = point_ds.sel(time=start_time, method="nearest")
+                
+            if 'depth' in point_ds.coords:
+                point_ds = point_ds.isel(depth=0)
+                
+            if 'time' in point_ds.dims:
+                times = point_ds['time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ').values.tolist()
+            else:
+                times = [str(point_ds['time'].values)]
+            
+            def get_var(name):
+                if name in point_ds:
+                    import numpy as np
+                    vals = point_ds[name].values
+                    if vals.ndim == 0:
+                        vals = np.array([vals])
+                    return [float(v) if np.isfinite(v) else None for v in vals]
+                return [None] * len(times)
+                
+            # For a single point response we only return the latest or requested time slice for the popup
+            return {
+                "timestamp": times[0] if times else None,
+                "latitude": float(point_ds.latitude.values),
+                "longitude": float(point_ds.longitude.values),
+                "ocean_temperature": get_var("thetao")[0],
+                "salinity": get_var("so")[0],
+                "current_u": get_var("uo")[0],
+                "current_v": get_var("vo")[0],
+                "sea_surface_height": get_var("zos")[0]
+            }
+            
+        except Exception as e:
+            logger.error(f"Copernicus fetch failed: {e}")
+            raise RuntimeError(f"Ocean data unavailable: {e}")
+

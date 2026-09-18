@@ -31,12 +31,14 @@ app.add_middleware(
     allow_headers=['*']
 )
 
+from .api import ml
 # Register modular API routers
 app.include_router(data.router)
 app.include_router(region.router)
 app.include_router(geography.router)
 app.include_router(bathymetry.router)
 app.include_router(ocean.router)
+app.include_router(ml.router)
 app.include_router(observations.router)
 
 @app.get('/')

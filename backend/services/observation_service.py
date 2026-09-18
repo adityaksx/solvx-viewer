@@ -105,9 +105,13 @@ def get_observation_comparison(obs_id: str) -> Dict[str, Any]:
     # Model depths and simulated/extracted profile at this coordinate
     lat = obs['latitude']
     lon = obs['longitude']
-    model_point = get_ocean_point(latitude=lat, longitude=lon)
-    temp_item = next((v for v in model_point['values'] if v['id'] == 'temperature'), None)
-    surf_temp = temp_item['value'] if temp_item and temp_item.get('value') is not None else 28.8
+    from ..adapters.copernicus_adapter import CopernicusAdapter
+    ca = CopernicusAdapter()
+    try:
+        model_point = ca.fetch_ocean_point(lat, lon, None, None)
+        surf_temp = model_point.get('ocean_temperature') or 28.8
+    except Exception:
+        surf_temp = 28.8
 
     # Realistic model temperature profile down to 1000m based on surface temperature
     model_depths = [0, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000]

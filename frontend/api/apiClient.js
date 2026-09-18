@@ -41,7 +41,7 @@ export const ApiClient = {
         return request('/api/data/variables');
     },
 
-    async getDataTimeline({ variable, bbox = null, depth = null }) {
+    async getDataTimeline({ variable, bbox = null, depth = null, start = null, end = null }) {
         const q = new URLSearchParams({ variable });
         if (bbox) {
             q.set('min_lon', String(bbox.min_lon));
@@ -50,6 +50,8 @@ export const ApiClient = {
             q.set('max_lat', String(bbox.max_lat));
         }
         if (depth != null) q.set('depth', String(depth));
+        if (start) q.set('start', String(start));
+        if (end) q.set('end', String(end));
         return request(`/api/data/timeline?${q}`);
     },
 

@@ -342,43 +342,46 @@ class NOAAAdapter:
             raise ValueError(f"Unsupported NOAA variable '{variable}'")
 
         var_cfg = NOAA_VARIABLE_MAP[variable]
-        # Query dataset info endpoint from ERDDAP
-        info_url = f"{self.base_url.rsplit('/griddap', 1)[0]}/info/{var_cfg['dataset_id']}/index.json"
+        dataset_id = var_cfg['dataset_id']
+        
+        timestamps = []
+        depth_levels = []
+        
         try:
-            raw = self._execute_http_query(info_url)
-            rows = raw.get('table', {}).get('rows', [])
-            time_rows = [r for r in rows if r[1] == 'time']
-            time_start = next((r[4] for r in time_rows if r[2] == 'actual_range' and len(r) > 4), '2026-08-01T00:00:00Z')
-            time_end = next((r[4].split(',')[-1].strip() for r in time_rows if r[2] == 'actual_range' and len(r) > 4), '2026-09-15T00:00:00Z')
-            return {
-                'provider': 'NOAA',
-                'variable': variable,
-                'dataset': var_cfg['dataset_id'],
-                'available_from': time_start,
-                'available_to': time_end,
-                'default_resolution': 'daily',
-                'resolutions': ['daily', 'monthly'],
-                'historical': {'from': time_start, 'to': time_end},
-                'forecast': None,
-                'available_timestamps': [time_start, time_end],
-                'depth_levels': [0.0]
-            }
+            time_url = f"{self.base_url}/{dataset_id}.json?time"
+            time_data = self._execute_http_query(time_url)
+            for row in time_data.get('table', {}).get('rows', []):
+                timestamps.append(row[0])
         except Exception as e:
-            logger.warning("Failed querying NOAA timeline: %s", e)
-            # Default to calibrated range
-            return {
-                'provider': 'NOAA',
-                'variable': variable,
-                'dataset': var_cfg['dataset_id'],
-                'available_from': '2026-08-01T00:00:00Z',
-                'available_to': '2026-09-10T00:00:00Z',
-                'default_resolution': 'daily',
-                'resolutions': ['daily', 'monthly'],
-                'historical': {'from': '2026-08-01T00:00:00Z', 'to': '2026-09-10T00:00:00Z'},
-                'forecast': None,
-                'available_timestamps': ['2026-08-01T00:00:00Z', '2026-09-10T00:00:00Z'],
-                'depth_levels': [0.0]
-            }
+            logger.warning(f"Failed to fetch time from ERDDAP API: {e}")
+
+        if var_cfg.get('has_depth', False):
+            try:
+                depth_url = f"{self.base_url}/{dataset_id}.json?depth"
+                depth_data = self._execute_http_query(depth_url)
+                for row in depth_data.get('table', {}).get('rows', []):
+                    depth_levels.append(round(float(row[0]), 1))
+            except Exception as e:
+                logger.warning(f"Failed to fetch depth from ERDDAP API: {e}")
+                
+        if not timestamps:
+            timestamps = ['2026-08-01T00:00:00Z', '2026-09-15T00:00:00Z']
+        if not depth_levels:
+            depth_levels = [0.0]
+
+        return {
+            'provider': 'NOAA',
+            'variable': variable,
+            'dataset': dataset_id,
+            'available_from': timestamps[0],
+            'available_to': timestamps[-1],
+            'default_resolution': 'daily',
+            'resolutions': ['daily', 'monthly'],
+            'historical': {'from': timestamps[0], 'to': timestamps[-1]},
+            'forecast': None,
+            'available_timestamps': timestamps,
+            'depth_levels': depth_levels
+        }
 
     def test_connection(self) -> Dict[str, Any]:
         """Diagnostic probe of NOAA CoastWatch ERDDAP."""

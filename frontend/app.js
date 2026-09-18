@@ -15,13 +15,11 @@ import { buildSeabed } from './scene/seabed.js';
 import { buildVegetation } from './scene/vegetation.js';
 import { DynamicWater } from './scene/water.js';
 
-import { TemperatureVisualizer } from './visualization/temperature.js';
-import { SalinityVisualizer } from './visualization/salinity.js';
+import { ScalarVisualizer } from './visualization/scalar.js';
 import { buildCurrentVectors } from './visualization/currents.js';
 import { CurrentParticles } from './visualization/particles.js';
-
-import { VariableControl } from './controls/variableControl.js';
 import { DepthControl } from './controls/depthControl.js';
+import { VariableControl } from './controls/variableControl.js';
 import { TimelineControl } from './controls/timelineControl.js';
 import { OpacityControl } from './controls/opacityControl.js';
 
@@ -41,6 +39,8 @@ class SolvXApp {
         this.scene = null;
         this.water = null;
         this.tempViz = null;
+        this.anomalyViz = null;
+        this.hazardUI = null;
         this.salViz = null;
         this.currentVectorsGroup = null;
         this.currentParticles = null;
@@ -53,7 +53,7 @@ class SolvXApp {
 
         this.catalog = [];
         this.activeProvider = 'auto';
-        this.activeVar = 'temperature';
+        this.activeVar = 'ocean_temperature';
         this.activeDepth = 0;
         this.activeDepthMode = 'volume';
         this.activeTime = null;
@@ -122,7 +122,9 @@ class SolvXApp {
 
         this.depthControl = new DepthControl({
             onDepthChange: (depthM) => this.onDepthChange(depthM),
-            onModeChange: (mode, depthM) => this.onDepthModeChange(mode, depthM)
+            onModeChange: (mode, depthM) => this.onDepthModeChange(mode, depthM),
+            onVerticalSlice: (slat, slon, elat, elon) => this.applyVerticalSlice(slat, slon, elat, elon),
+            onClearVerticalSlice: () => this.clearVerticalSlice()
         });
 
         this.timelineControl = new TimelineControl({
@@ -193,8 +195,8 @@ class SolvXApp {
         });
 
         // Provider Selector Controls
-        const provSelect = document.getElementById('providerSelect');
-        const mapProvSelect = document.getElementById('mapProviderSelect');
+        const provSelect = document.getElementById('providerSelect_REMOVED');
+        const mapProvSelect = document.getElementById('mapProviderSelect_REMOVED');
 
         const onProviderSelect = async (val) => {
             if (this.activeProvider === val) return;
@@ -203,12 +205,12 @@ class SolvXApp {
             if (mapProvSelect) mapProvSelect.value = val;
             this.status(`Switching provider to ${val.toUpperCase()}…`, 'busy');
             try {
-                // If selected provider does not support the currently active variable, switch to 'temperature'
+                // If selected provider does not support the currently active variable, switch to 'ocean_temperature'
                 if (['copernicus', 'noaa', 'hycom'].includes(val)) {
-                    const supported = ['temperature', 'salinity', 'currents', 'sea_surface_height'];
+                    const supported = ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height'];
                     if (!supported.includes(this.activeVar)) {
-                        this.activeVar = 'temperature';
-                        this.varControl?.setActive('temperature');
+                        this.activeVar = 'ocean_temperature';
+                        this.varControl?.setActive('ocean_temperature');
                     }
                 }
                 await this.loadActiveVariable();
@@ -365,8 +367,8 @@ class SolvXApp {
         this.buildArgoMarkers(observations, bathymetry.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat]);
 
         // Initialize visualizers
-        this.tempViz = new TemperatureVisualizer(this.water);
-        this.salViz = new SalinityVisualizer(this.water);
+        this.scalarViz = new ScalarVisualizer(this.water);
+        this.initMLControls();
 
         // Apply layer toggles according to user checkbox settings
         for (const [layer, visible] of Object.entries(this.layerState)) {
@@ -467,20 +469,13 @@ class SolvXApp {
                 }
                 const data = await ApiClient.getOceanVariable(requestParams);
                 this.lastOceanData = data;
-                if (this.activeVar === 'temperature') {
-                    this.tempViz?.apply(data, this.activeDepth, this.activeDepthMode);
-                } else if (this.activeVar === 'salinity') {
-                    this.salViz?.apply(data, this.activeDepth, this.activeDepthMode);
-                } else {
-                    this.tempViz?.apply(data, this.activeDepth, this.activeDepthMode);
-                }
+                this.scalarViz?.apply(this.activeVar, data, this.activeDepth, this.activeDepthMode);
             }
         } catch (e) {
             console.warn(`[SolvXApp] Failed to load variable '${this.activeVar}' with provider '${this.activeProvider}':`, e);
             this.timelineControl?.pause();
             this.status(`Provider error (${this.activeProvider.toUpperCase()}): ${e.message}`, 'error');
-            if (this.activeVar === 'temperature') this.tempViz?.apply(null, this.activeDepth, this.activeDepthMode);
-            else if (this.activeVar === 'salinity') this.salViz?.apply(null, this.activeDepth, this.activeDepthMode);
+            this.scalarViz?.apply(this.activeVar, null, this.activeDepth, this.activeDepthMode);
         }
 
         this.applyLayerVisibility('scientific', this.layerState.scientific);
@@ -509,18 +504,36 @@ class SolvXApp {
             // Build animated particles
             this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
             this.scene.setLayer('particles', this.currentParticles.group);
+            
+            // Update legend for currents
+            import('./visualization/colorScale.js').then(module => {
+                module.updateLegendUI('currents', 0.0, 1.5, 'm/s');
+            });
         } catch (e) {
             console.warn(`[SolvXApp] Failed to load currents with provider '${this.activeProvider}':`, e);
             throw e;
         }
     }
 
+
+    applyVerticalSlice(sLat, sLon, eLat, eLon) {
+        this.activeDepthMode = 'vertical_custom';
+        this.verticalSliceCoords = {sLat, sLon, eLat, eLon};
+        if (this.scalarViz) {
+            this.scalarViz.applyVerticalSlicePlane(sLat, sLon, eLat, eLon);
+        }
+    }
+
+    clearVerticalSlice() {
+        this.activeDepthMode = 'volume';
+        // restore depth control UI mode if we want, but simple enough to just call mode change
+        this.onDepthModeChange('volume', this.activeDepth);
+    }
+
     onDepthChange(depthM) {
         this.activeDepth = depthM;
-        if (this.activeVar === 'temperature') {
-            this.tempViz?.sliceAtDepth(depthM, this.activeDepthMode);
-        } else if (this.activeVar === 'salinity') {
-            this.salViz?.sliceAtDepth(depthM, this.activeDepthMode);
+        if (this.activeVar !== 'currents') {
+            this.scalarViz?.sliceAtDepth(depthM, this.activeDepthMode);
         }
         this.updateProvenanceUI();
     }
@@ -537,6 +550,7 @@ class SolvXApp {
     }
 
     async onTimeChange(idx, timeIso, meta) {
+        
         this.activeTime = timeIso;
         this.activeTimeMeta = meta;
         // Reload data for ALL variables when timeline changes
@@ -545,109 +559,124 @@ class SolvXApp {
     }
 
     updateProvenanceUI() {
-        const provProvider = document.getElementById('provProvider');
-        const provBathy = document.getElementById('provBathy');
-        const provDataset = document.getElementById('provDataset');
-        const provVar = document.getElementById('provVar');
-        const provUnits = document.getElementById('provUnits');
-        const provRes = document.getElementById('provRes');
-        const provDepth = document.getElementById('provDepth');
-        const provMode = document.getElementById('provMode');
-        const provBounds = document.getElementById('provBounds');
-
-        const varUnitsMap = {
-            temperature: '°C',
-            salinity: 'PSU',
-            currents: 'm/s',
-            sea_surface_height: 'm',
-            mixed_layer_depth: 'm',
-            tropical_cyclone_heat_potential: 'kJ/cm²',
-            chlorophyll: 'mg/m³'
-        };
-
-        const activeOceanProv = this.lastOceanData?.provider || (this.activeProvider === 'auto' ? 'AUTO' : this.activeProvider.toUpperCase());
-        const activeBathyProv = this.lastBathyData?.provider || 'GEBCO';
-
-        if (provProvider) {
-            provProvider.textContent = activeOceanProv;
-            if (this.lastOceanData?.fallback) {
-                provProvider.textContent += ' (Fallback)';
-            }
-        }
-        if (provBathy) provBathy.textContent = `${activeBathyProv} 2026 Grid`;
-        if (provDataset) {
-            provDataset.textContent = this.lastOceanData?.dataset || this.lastOceanData?.metadata?.dataset_id || 'Operational Feed';
-        }
-        if (provVar) provVar.textContent = this.activeVar.replace(/_/g, ' ');
-        if (provUnits) provUnits.textContent = this.lastOceanData?.units || varUnitsMap[this.activeVar] || '—';
-        if (provRes) provRes.textContent = '0.083° (~9 km)';
-
-        if (provDepth) {
-            provDepth.textContent = this.activeDepthMode === 'volume'
-                ? 'Volume (0 → 3500 m)'
-                : `${Math.round(this.activeDepth)} m (Slice)`;
-        }
-
-        if (provMode) {
-            const isForecast = this.activeTimeMeta?.isForecast;
-            const modeText = this.lastOceanData?.source_type === 'local_netcdf'
-                ? 'LOCAL_ARCHIVE'
-                : (isForecast ? 'VERIFIED_FORECAST' : 'VERIFIED_HISTORICAL');
-            provMode.textContent = modeText;
-            provMode.className = `prov-v prov-status ${isForecast ? 'forecast' : 'historical'}`;
-        }
-
-        if (provBounds) {
-            provBounds.textContent = `[${this.currentBBox.min_lon.toFixed(1)}°, ${this.currentBBox.max_lon.toFixed(1)}°, ${this.currentBBox.min_lat.toFixed(1)}°, ${this.currentBBox.max_lat.toFixed(1)}°]`;
-        }
+        // No-op, provenance panel removed.
     }
+    
+    updateHazardUI(hazardData) {
+        const statusEl = document.getElementById('hazardStatus');
+        const listEl = document.getElementById('hazardEventsList');
+        if (!statusEl || !listEl) return;
+        
+        if (!hazardData || !hazardData.hazards || hazardData.hazards.length === 0) {
+            statusEl.innerHTML = `STATUS<br><span style="font-size: 16px; color: #00aa55;">Conditions Normal</span>`;
+            listEl.innerHTML = `<div style="color: #557799; font-size: 12px;">Data:<br>No active warnings detected</div>`;
+            return;
+        }
+        
+        statusEl.innerHTML = `STATUS<br><span style="font-size: 16px; color: #cc0000;">Hazard Detected</span>`;
+        let html = '';
+        for (const h of hazardData.hazards) {
+            html += `
+            <div style="background: rgba(200, 0, 0, 0.05); border-left: 3px solid #cc0000; padding: 10px; font-size: 11px; color: #003366; border-radius: 0 4px 4px 0;">
+                <b style="color: #cc0000;">${h.type ? h.type.replace(/_/g, ' ').toUpperCase() : 'UNKNOWN HAZARD'}</b><br>
+                <div style="margin-top: 4px; line-height: 1.4;">
+                    Location: ${h.location || 'N/A'}<br>
+                    Severity: <span style="font-weight:bold;">${h.severity || 'N/A'}</span><br>
+                    Time: ${h.time || 'N/A'}<br>
+                    Value: ${h.value || 'N/A'}<br>
+                </div>
+            </div>`;
+        }
+        listEl.innerHTML = html;
+    }
+async inspectPoint(cell) {
+        if (!this.markerMesh) {
+            const geom = new THREE.TorusGeometry(0.5, 0.1, 16, 32);
+            geom.rotateX(Math.PI / 2);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8 });
+            this.markerMesh = new THREE.Mesh(geom, mat);
+            const pinGeom = new THREE.CylinderGeometry(0, 0.2, 1, 16);
+            pinGeom.translate(0, 0.5, 0);
+            const pinMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const pin = new THREE.Mesh(pinGeom, pinMat);
+            this.markerMesh.add(pin);
+            this.scene.root.add(this.markerMesh);
+        }
+        
+        const midLat = (this.currentBBox.min_lat + this.currentBBox.max_lat) / 2;
+        const midLon = (this.currentBBox.min_lon + this.currentBBox.max_lon) / 2;
+        const posX = (cell.lat - midLat) * 111.32;
+        const posZ = (cell.lon - midLon) * 111.32 * Math.cos(midLat * Math.PI / 180);
+        
+        this.markerMesh.position.set(posX, 1.0, posZ); // slightly above water
 
-    async inspectPoint(cell) {
-        const readout = document.getElementById('readout');
-        const coords = document.getElementById('coords');
-        const grid = document.getElementById('readoutGrid');
-        const timeEl = document.getElementById('readoutTime');
-
-        if (coords) coords.textContent = `${cell.lat.toFixed(4)}° N · ${cell.lon.toFixed(4)}° E`;
-        this.status('Inspecting ocean point…', 'busy');
+        this.status('Inspecting ocean point...', 'busy');
 
         try {
             const data = await ApiClient.getPoint(cell.lat, cell.lon, this.activeTime);
-            const map = {};
-            if (Array.isArray(data?.values)) {
-                for (const item of data.values) if (item?.id) map[item.id] = item;
+            
+            let popup = document.getElementById('pointPopup');
+            if (!popup) {
+                popup = document.createElement('div');
+                popup.id = 'pointPopup';
+                popup.style.position = 'absolute';
+                popup.style.right = '20px';
+                popup.style.bottom = '20px';
+                popup.style.width = '300px';
+                popup.style.background = 'rgba(15, 20, 25, 0.9)';
+                popup.style.border = '1px solid #1da5d8';
+                popup.style.borderRadius = '8px';
+                popup.style.padding = '15px';
+                popup.style.color = 'white';
+                popup.style.fontFamily = 'monospace';
+                popup.style.fontSize = '12px';
+                popup.style.zIndex = '1000';
+                popup.style.boxShadow = '0 4px 10px rgba(0,0,0,0.5)';
+                document.body.appendChild(popup);
             }
+            
+            const vars = data.variables || {};
+            const units = data.units || {};
+            
+            const formatVal = (v, u) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)} ${u || ''}` : 'N/A';
+            
+            popup.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,50,100,0.1); padding-bottom: 5px; margin-bottom: 10px;">
+                    <b style="color: #1da5d8;">OCEAN POINT</b>
+                    <button onclick="document.getElementById('pointPopup').style.display='none'; if(window.solvx.markerMesh) window.solvx.markerMesh.visible=false;" style="background: none; border: none; color: #003366; cursor: pointer; font-size: 16px;">×</button>
+                </div>
+                <div style="margin-bottom: 10px;">${cell.lat.toFixed(4)}° N, ${cell.lon.toFixed(4)}° E</div>
+                <div style="color: #557799; font-size: 10px; margin-bottom: 15px;">DEPTH<br><span style="color:white; font-size: 12px;">Surface / selected depth</span></div>
+                
+                <div style="color: #557799; font-size: 10px; margin-bottom: 5px;">OCEAN</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 15px;">
+                    <span>Temperature</span><span>${formatVal(vars.ocean_temperature, units.ocean_temperature)}</span>
+                    <span>Salinity</span><span>${formatVal(vars.salinity, units.salinity)}</span>
+                    <span>Sea level</span><span>${formatVal(vars.sea_surface_height || vars.sea_level_anomaly, units.sea_surface_height || units.sea_level_anomaly)}</span>
+                    <span>Current speed</span><span>${formatVal(vars.current_speed || Math.sqrt(vars.current_u**2 + vars.current_v**2), 'm/s')}</span>
+                    <span>Direction</span><span>${formatVal(vars.current_direction, '°')}</span>
+                </div>
+                
+                <div style="color: #557799; font-size: 10px; margin-bottom: 5px;">ATMOSPHERE</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 15px;">
+                    <span>Air temp</span><span>${formatVal(vars.air_temperature, units.air_temperature)}</span>
+                    <span>Humidity</span><span>${formatVal(vars.relative_humidity, units.relative_humidity)}</span>
+                    <span>Wind speed</span><span>${formatVal(vars.wind_speed, units.wind_speed)}</span>
+                    <span>Wind dir</span><span>${formatVal(vars.wind_direction, units.wind_direction)}</span>
+                    <span>Pressure</span><span>${formatVal(vars.sea_level_pressure, units.sea_level_pressure)}</span>
+                </div>
+                
+                <div style="color: #557799; font-size: 10px; margin-bottom: 5px;">TIME</div>
+                <div>${new Date(this.activeTime || data.timestamp).toUTCString()}</div>
+            `;
+            popup.style.display = 'block';
+            this.markerMesh.visible = true;
 
-            const tempVal = map['temperature']?.value;
-            const salVal = map['salinity']?.value;
-            const curVal = map['currents']?.speed ?? (map['currents']?.value ? Math.hypot(map['currents'].value.uo || 0, map['currents'].value.vo || 0) : null);
-            const slVal = map['sea_level']?.value;
-            const anomVal = map['temperature_anomaly']?.value;
-            const chVal = map['chlorophyll']?.value;
-
-            const rows = [
-                ['Temperature', tempVal, '°C'],
-                ['Salinity', salVal, 'PSU'],
-                ['Current speed', curVal, 'm s⁻¹'],
-                ['Sea level', slVal, 'm'],
-                ['SST anomaly', anomVal, '°C'],
-                ['Chlorophyll', chVal, 'mg m⁻³']
-            ];
-
-            if (grid) {
-                grid.innerHTML = rows.map(r => `
-                    <div class="rval">
-                        <b>${r[0]}</b>
-                        <span>${r[1] != null && isFinite(r[1]) ? `${Number(r[1]).toFixed(Math.abs(Number(r[1])) < 1 ? 4 : 2)} ${r[2]}` : '—'}</span>
-                    </div>
-                `).join('');
-            }
-
-            if (timeEl) timeEl.textContent = data.time || this.activeTime || 'Timestep 1';
-            readout?.classList.remove('hidden');
-            this.status('Point inspected');
+            popup.style.display = 'block';
+            this.status('Point data loaded.');
         } catch (e) {
-            this.status(`Point inspection failed · ${e.message}`, 'error');
+            console.error('Point inspection failed:', e);
+            this.status('Point inspection failed', 'error');
         }
     }
 
@@ -733,3 +762,82 @@ window.addEventListener('DOMContentLoaded', () => {
         fatal?.classList.add('show');
     });
 });
+
+// --- ML Hazard Early Warning Extension ---
+SolvXApp.prototype.initMLControls = function() {
+    this.mlMode = 'state'; // 'state' or 'anomalies'
+    
+    const mlBtn = document.getElementById('mlStateBtn');
+    if (mlBtn) {
+        mlBtn.addEventListener('click', async () => {
+            if (this.mlMode === 'state') {
+                this.mlMode = 'anomalies';
+                mlBtn.innerHTML = '[ Mode: Anomalies & Hazard Risk ]';
+                mlBtn.style.background = '#4a2f00';
+                await this.refreshMLAnomalies();
+            } else {
+                this.mlMode = 'state';
+                mlBtn.innerHTML = '[ Mode: Ocean State ]';
+                mlBtn.style.background = '#0a192f';
+                this.updateHazardUI({});
+                // Restore standard visualization
+                this.onVariableChange(this.varControl?.activeVar || 'ocean_temperature');
+            }
+        });
+    }
+
+    const demoBtn = document.getElementById('mlDemoBtn');
+    if (demoBtn) {
+        demoBtn.addEventListener('click', async () => {
+            const api = new ApiClient();
+            await api.post('/api/ml/demo');
+            if (this.mlMode === 'state' && mlBtn) mlBtn.click();
+            else await this.refreshMLAnomalies();
+        });
+    }
+};
+
+SolvXApp.prototype.refreshMLAnomalies = async function() {
+    if (this.mlMode !== 'anomalies') return;
+    const time = this.timelineControl?.currentTimeStr;
+    const api = new ApiClient();
+    try {
+        const bbox = this.currentBBox;
+        const data = await api.get('/api/ml/region', {
+            min_lon: bbox.min_lon,
+            max_lon: bbox.max_lon,
+            min_lat: bbox.min_lat,
+            max_lat: bbox.max_lat,
+            time: time
+        });
+        this.updateHazardUI(data);
+    } catch (e) {
+        console.error('Failed to load anomalies:', e);
+    }
+};
+
+SolvXApp.prototype.focusHazard = function(lat, lon) {
+    // Basic camera fly implementation
+    if (!this.scene?.camera || !this.scene?.controls) return;
+    const x = lon - ((this.currentBBox.min_lon + this.currentBBox.max_lon) / 2);
+    const z = lat - ((this.currentBBox.min_lat + this.currentBBox.max_lat) / 2);
+    
+    // Animate camera manually or just jump for prototype
+    this.scene.camera.position.set(x, 15, z + 20);
+    this.scene.controls.target.set(x, 0, z);
+    this.scene.controls.update();
+};
+
+// Override inspectPoint to use ML Panel
+const originalInspectPoint = SolvXApp.prototype.inspectPoint;
+SolvXApp.prototype.inspectPoint = async function(cell) {
+    // We still update the old readout if needed, or we just rely on ML panel
+    if (this.mlMode === 'anomalies') {
+        if (this.hazardUI) {
+            this.hazardUI.inspectPoint(cell.lat, cell.lon, this.timelineControl?.currentTimeStr);
+        }
+    } else {
+        // Run original
+        await originalInspectPoint.call(this, cell);
+    }
+};

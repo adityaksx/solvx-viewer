@@ -36,17 +36,20 @@ export class TimelineControl {
         this.setupEvents();
     }
 
-    async loadTimelineForVariable(variable, bbox = null, depth = null) {
+    async loadTimelineForVariable(variable, bbox = null, depth = null, start = null, end = null) {
         try {
-            const data = await ApiClient.getDataTimeline({ variable, bbox, depth });
+            const params = { variable, bbox, depth };
+            if (start) params.start = start;
+            if (end) params.end = end;
+            const data = await ApiClient.getDataTimeline(params);
             this.timelineData = data;
             this.allTimestamps = data.available_timestamps || [];
             this.currentResolution = data.default_resolution || 'daily';
             
             // Set default date range to match loaded data
             if (this.allTimestamps.length > 0) {
-                if (this.timeStart) this.timeStart.value = this.allTimestamps[0].substring(0, 10);
-                if (this.timeEnd) this.timeEnd.value = this.allTimestamps[this.allTimestamps.length - 1].substring(0, 10);
+                if (this.timeStart) this.timeStart.value = this.allTimestamps[0].substring(0, 16);
+                if (this.timeEnd) this.timeEnd.value = this.allTimestamps[this.allTimestamps.length - 1].substring(0, 16);
             }
 
             this._updateResolutionButtons(data.resolutions || ['daily']);
@@ -190,15 +193,7 @@ export class TimelineControl {
                 const dEnd = new Date(endVal);
                 if (dStart > dEnd) return;
                 
-                const customTimestamps = [];
-                let curr = new Date(dStart);
-                while (curr <= dEnd) {
-                    customTimestamps.push(curr.toISOString());
-                    curr.setUTCDate(curr.getUTCDate() + 1); // step by day
-                }
-                
-                this.allTimestamps = customTimestamps;
-                this._applyResolutionFilter(); // Re-filters and sets the slider
+                this.loadTimelineForVariable(this.activeVariable, this.bbox, this.depth, dStart.toISOString(), dEnd.toISOString());
             });
         }
 

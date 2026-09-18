@@ -656,6 +656,25 @@ class INCOISAdapter:
             pass
 
         if not timestamps:
+            # Try to fetch timeline from ERDDAP API
+            try:
+                time_url = f"{self.base_url}/griddap/{dataset_id}.json?time"
+                time_data = self._http_get_json(time_url)
+                for row in time_data.get('table', {}).get('rows', []):
+                    timestamps.append(row[0])
+            except Exception as e:
+                logger.warning(f"Failed to fetch time from ERDDAP API: {e}")
+
+        if not depth_levels and var_config.get('has_depth', False):
+            try:
+                depth_url = f"{self.base_url}/griddap/{dataset_id}.json?depth"
+                depth_data = self._http_get_json(depth_url)
+                for row in depth_data.get('table', {}).get('rows', []):
+                    depth_levels.append(round(float(row[0]), 1))
+            except Exception as e:
+                logger.warning(f"Failed to fetch depth from ERDDAP API: {e}")
+
+        if not timestamps:
             timestamps = ['2026-08-01T00:00:00Z', '2026-08-15T00:00:00Z', '2026-09-01T00:00:00Z']
 
         available_from = timestamps[0]

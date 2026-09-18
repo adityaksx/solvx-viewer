@@ -1,7 +1,13 @@
+# Web API
 fastapi
 uvicorn
+
+# Scientific / array processing
 numpy
+pandas
 xarray
+netCDF4
+
+# Geospatial processing
 geopandas
 shapely
-netcdf4

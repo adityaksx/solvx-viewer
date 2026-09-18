@@ -97,7 +97,7 @@ def get_ocean_data(
 ):
     """Retrieves oceanographic variable from specified provider (or auto-select)."""
     try:
-        return COLLECTOR.get_ocean_data(
+        return COLLECTOR.get_ocean_variable(
             provider=provider,
             variable=variable,
             min_lat=min_lat,
@@ -121,7 +121,7 @@ def get_ocean_data(
 def post_ocean_data(request: OceanVariableRequest):
     """Retrieves oceanographic variable using validated JSON request body."""
     try:
-        return COLLECTOR.get_ocean_data(
+        return COLLECTOR.get_ocean_variable(
             provider=request.provider,
             variable=request.variable,
             min_lat=request.bbox.min_lat,
@@ -155,7 +155,7 @@ def get_ocean_variable_by_path(
 ):
     """Legacy path parameter endpoint with provider selection support."""
     try:
-        return COLLECTOR.get_ocean_data(
+        return COLLECTOR.get_ocean_variable(
             provider=provider,
             variable=variable,
             min_lat=min_lat,
@@ -331,17 +331,20 @@ def get_variable_timeline(
     max_lat: Optional[float] = Query(None, ge=-90.0, le=90.0),
     min_lon: Optional[float] = Query(None, ge=-180.0, le=180.0),
     max_lon: Optional[float] = Query(None, ge=-180.0, le=180.0),
-    depth: Optional[float] = Query(None, ge=0.0, le=6000.0)
+    depth: Optional[float] = Query(None, ge=0.0, le=6000.0),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None)
 ):
     try:
         return COLLECTOR.get_timeline(
             variable=variable,
-            provider=provider,
             min_lat=min_lat,
             max_lat=max_lat,
             min_lon=min_lon,
             max_lon=max_lon,
-            depth=depth
+            depth=depth,
+            start=start,
+            end=end
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

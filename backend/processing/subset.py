@@ -25,8 +25,9 @@ def coord_slice(data: xr.DataArray, dim: str, lo, hi) -> xr.DataArray:
             pass
     sl = slice(lo, hi) if c[0] <= c[-1] else slice(hi, lo)
     sliced = data.sel({dim: sl})
-    # If slice ended up empty (e.g. lo and hi fall in between grid points or out of range)
-    if sliced.sizes.get(dim, 0) == 0:
+    # For bounding boxes (where lo != hi), do NOT fallback to nearest if empty!
+    # Returning a nearest scalar destroys the dimension and breaks 2D/3D rendering.
+    if sliced.sizes.get(dim, 0) == 0 and lo == hi:
         try:
             return data.sel({dim: lo}, method='nearest')
         except Exception:

@@ -14,7 +14,8 @@ router = APIRouter(prefix='/api/ocean', tags=['Ocean Data'])
 @router.get('/catalog')
 def ocean_catalog():
     """Returns available scientific variables and their physical attributes."""
-    return get_ocean_catalog()
+    from ..services.data_collector import COLLECTOR
+    return COLLECTOR.get_variables_catalog()
 
 @router.get('/time')
 def ocean_time():
@@ -37,7 +38,57 @@ def ocean_point(
     time: Optional[str] = None
 ):
     """Inspects all physical ocean variables at a specific geographic point."""
-    return get_ocean_point(latitude=latitude, longitude=longitude, time=time)
+    from ..adapters.copernicus_adapter import CopernicusAdapter
+    from ..adapters.open_meteo_adapter import OpenMeteoAdapter
+    
+    ca = CopernicusAdapter()
+    oma = OpenMeteoAdapter()
+    
+    # We use time for both start and end to get nearest
+    start_time = time
+    end_time = time
+    
+    try:
+        ocean_data = ca.fetch_ocean_point(latitude, longitude, start_time, end_time)
+    except Exception as e:
+        ocean_data = {}
+        
+    try:
+        atmos_data = oma.fetch_atmospheric_point(latitude, longitude, start_time, end_time)
+    except Exception as e:
+        atmos_data = {}
+        
+    return {
+        "location": {
+            "latitude": latitude,
+            "longitude": longitude
+        },
+        "time": ocean_data.get("timestamp") or atmos_data.get("timestamp") or time,
+        "variables": {
+            "ocean_temperature": ocean_data.get("ocean_temperature"),
+            "salinity": ocean_data.get("salinity"),
+            "current_u": ocean_data.get("current_u"),
+            "current_v": ocean_data.get("current_v"),
+            "sea_surface_height": ocean_data.get("sea_surface_height"),
+            "air_temperature": atmos_data.get("air_temperature"),
+            "relative_humidity": atmos_data.get("relative_humidity"),
+            "wind_speed": atmos_data.get("wind_speed"),
+            "wind_direction": atmos_data.get("wind_direction"),
+            "sea_level_pressure": atmos_data.get("sea_level_pressure")
+        },
+        "units": {
+            "ocean_temperature": "°C",
+            "salinity": "PSU",
+            "current_u": "m/s",
+            "current_v": "m/s",
+            "sea_surface_height": "m",
+            "air_temperature": "°C",
+            "relative_humidity": "%",
+            "wind_speed": "m/s",
+            "wind_direction": "°",
+            "sea_level_pressure": "hPa"
+        }
+    }
 
 @router.get('/region-array')
 def ocean_region_array(

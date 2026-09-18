@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { sampleColor } from './colorScale.js';
 
-export function createVerticalSliceTexture(dataArray, varName, minVal, maxVal) {
+export function createVerticalSliceTexture(dataArray, varName, minVal, maxVal, customCoords = null, bounds = null) {
     const values = dataArray.values;
     if (!values || !values.length) return null;
     
@@ -12,23 +12,42 @@ export function createVerticalSliceTexture(dataArray, varName, minVal, maxVal) {
     const lats = values[0].length;
     const lons = values[0][0].length;
     
-    // Diagonal slice: from bottom-left to top-right of the lat/lon grid
     const steps = Math.max(lats, lons);
-    
     const data = new Uint8Array(4 * steps * depths);
+    
+    // If no customCoords, default to diagonal
+    let startLonIdx = 0, startLatIdx = 0;
+    let endLonIdx = lons - 1, endLatIdx = lats - 1;
+
+    if (customCoords && bounds) {
+        // Map geographic coords to grid indices
+        const dLon = bounds[1] - bounds[0];
+        const dLat = bounds[3] - bounds[2];
+        
+        startLonIdx = ((customCoords.sLon - bounds[0]) / dLon) * (lons - 1);
+        startLatIdx = ((customCoords.sLat - bounds[2]) / dLat) * (lats - 1);
+        endLonIdx = ((customCoords.eLon - bounds[0]) / dLon) * (lons - 1);
+        endLatIdx = ((customCoords.eLat - bounds[2]) / dLat) * (lats - 1);
+    }
     
     for (let d = 0; d < depths; d++) {
         for (let s = 0; s < steps; s++) {
-            const latIdx = Math.floor((s / steps) * lats);
-            const lonIdx = Math.floor((s / steps) * lons);
+            const t = s / (steps - 1 || 1);
             
-            const val = values[d][latIdx][lonIdx];
+            const lonIdx = Math.round(startLonIdx + t * (endLonIdx - startLonIdx));
+            const latIdx = Math.round(startLatIdx + t * (endLatIdx - startLatIdx));
+            
             const idx = ((depths - 1 - d) * steps + s) * 4; // Y is depth
             
+            if (latIdx < 0 || latIdx >= lats || lonIdx < 0 || lonIdx >= lons) {
+                // Out of bounds
+                data[idx+3] = 0;
+                continue;
+            }
+            
+            const val = values[d][latIdx][lonIdx];
+            
             if (val === null || val === undefined || isNaN(val)) {
-                data[idx] = 0;
-                data[idx+1] = 0;
-                data[idx+2] = 0;
                 data[idx+3] = 0;
             } else {
                 const color = sampleColor(varName, val, minVal, maxVal);

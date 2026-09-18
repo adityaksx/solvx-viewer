@@ -1,50 +1,81 @@
-// SolvX Viewer — Depth Range & Slice Controller
+// SolvX Viewer — Ocean Slicing Controller
 
 export class DepthControl {
     constructor(options = {}) {
         this.onDepthChange = options.onDepthChange || (() => {});
         this.onModeChange = options.onModeChange || (() => {});
+        this.onVerticalSlice = options.onVerticalSlice || (() => {});
+        this.onClearVerticalSlice = options.onClearVerticalSlice || (() => {});
 
-        this.slider = document.getElementById(options.sliderId || 'depthSlider');
-        this.valueDisplay = document.getElementById(options.valueDisplayId || 'depthValue');
-        this.modeButtons = document.querySelectorAll(options.modeSelector || '[data-depth-mode]');
-        this.currentDepth = 0;
+        this.modeButtons = document.querySelectorAll('[data-depth-mode]');
+        this.currentDepth = 100;
         this.currentMode = 'volume';
+
+        this.horizControls = document.getElementById('horizontalSliceControls');
+        this.vertControls = document.getElementById('verticalSliceControls');
+        this.horizDepthInput = document.getElementById('horizDepthInput');
+        this.applyHorizBtn = document.getElementById('applyHorizSliceBtn');
+        this.applyVertBtn = document.getElementById('applyVertSliceBtn');
+        this.clearVertBtn = document.getElementById('clearVertSliceBtn');
+        this.horizInfo = document.getElementById('horizSliceInfo');
 
         this.setupEvents();
     }
 
     setMaxDepth(maxM) {
-        if (this.slider) {
-            this.slider.max = String(Math.round(maxM));
-            this.slider.value = '0';
-        }
-        this.updateDisplay(0);
+        // No-op for now
     }
 
-    updateDisplay(depthM) {
-        if (this.valueDisplay) {
-            this.valueDisplay.textContent = this.currentMode === 'volume'
-                ? `Volume (0 → ${Math.round(this.slider?.max || 3500)} m)`
-                : `Slice at ${Math.round(depthM)} m`;
+    updateDisplay() {
+        if (this.horizControls) this.horizControls.style.display = 'none';
+        if (this.vertControls) this.vertControls.style.display = 'none';
+
+        if (this.currentMode === 'horizontal') {
+            if (this.horizControls) this.horizControls.style.display = 'block';
+        } else if (this.currentMode === 'vertical') {
+            if (this.vertControls) this.vertControls.style.display = 'block';
         }
     }
 
     setupEvents() {
-        this.slider?.addEventListener('input', (e) => {
-            this.currentDepth = Number(e.target.value);
-            this.updateDisplay(this.currentDepth);
-            this.onDepthChange(this.currentDepth);
-        });
-
         this.modeButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 this.modeButtons.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 this.currentMode = btn.dataset.depthMode || 'volume';
-                this.updateDisplay(this.currentDepth);
+                this.updateDisplay();
                 this.onModeChange(this.currentMode, this.currentDepth);
             });
         });
+
+        if (this.applyHorizBtn) {
+            this.applyHorizBtn.addEventListener('click', () => {
+                this.currentDepth = Number(this.horizDepthInput.value || 0);
+                this.onDepthChange(this.currentDepth);
+                if (this.horizInfo) {
+                    this.horizInfo.textContent = `Requested: ${this.currentDepth} m`;
+                }
+            });
+        }
+        
+        if (this.applyVertBtn) {
+            this.applyVertBtn.addEventListener('click', () => {
+                const sLat = Number(document.getElementById('vertStartLat').value);
+                const sLon = Number(document.getElementById('vertStartLon').value);
+                const eLat = Number(document.getElementById('vertEndLat').value);
+                const eLon = Number(document.getElementById('vertEndLon').value);
+                if (isNaN(sLat) || isNaN(sLon) || isNaN(eLat) || isNaN(eLon)) {
+                    alert('Please enter valid start and end coordinates.');
+                    return;
+                }
+                this.onVerticalSlice(sLat, sLon, eLat, eLon);
+            });
+        }
+        
+        if (this.clearVertBtn) {
+            this.clearVertBtn.addEventListener('click', () => {
+                this.onClearVerticalSlice();
+            });
+        }
     }
 }

@@ -37,6 +37,9 @@ export class TimelineControl {
     }
 
     async loadTimelineForVariable(variable, bbox = null, depth = null, start = null, end = null) {
+        this.activeVariable = variable;
+        this.bbox = bbox;
+        this.depth = depth;
         try {
             const params = { variable, bbox, depth };
             if (start) params.start = start;
@@ -105,7 +108,7 @@ export class TimelineControl {
         this.setTimes(this.filteredTimestamps);
     }
 
-    setTimes(times = []) {
+    setTimes(times = [], notify = false) {
         this.filteredTimestamps = times;
         if (this.slider) {
             this.slider.max = String(Math.max(0, times.length - 1));
@@ -113,7 +116,7 @@ export class TimelineControl {
         }
         this.currentIndex = 0;
         this.updateDisplay();
-        if (times.length > 0) {
+        if (notify && times.length > 0) {
             this.onTimeChange(0, times[0], this.getCurrentMeta());
         }
     }
@@ -177,14 +180,18 @@ export class TimelineControl {
     }
 
     setupEvents() {
+        let sliderDebounce = null;
         this.slider?.addEventListener('input', (e) => {
             this.currentIndex = Number(e.target.value);
             this.updateDisplay();
-            this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
+            clearTimeout(sliderDebounce);
+            sliderDebounce = setTimeout(() => {
+                this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
+            }, 200);
         });
 
         if (this.btnSetPeriod) {
-            this.btnSetPeriod.addEventListener('click', () => {
+            this.btnSetPeriod.addEventListener('click', async () => {
                 const startVal = this.timeStart?.value;
                 const endVal = this.timeEnd?.value;
                 if (!startVal || !endVal) return;
@@ -193,7 +200,10 @@ export class TimelineControl {
                 const dEnd = new Date(endVal);
                 if (dStart > dEnd) return;
                 
-                this.loadTimelineForVariable(this.activeVariable, this.bbox, this.depth, dStart.toISOString(), dEnd.toISOString());
+                await this.loadTimelineForVariable(this.activeVariable, this.bbox, this.depth, dStart.toISOString(), dEnd.toISOString());
+                if (this.filteredTimestamps.length > 0) {
+                    this.onTimeChange(0, this.getCurrentTimestamp(), this.getCurrentMeta());
+                }
             });
         }
 
@@ -248,12 +258,20 @@ export class TimelineControl {
     _restartPlayback() {
         if (this.playInterval) clearInterval(this.playInterval);
         const intervalMs = Math.max(150, Math.round(1000 / this.speedMultiplier));
-        this.playInterval = setInterval(() => {
-            if (!this.filteredTimestamps.length) return;
-            this.currentIndex = (this.currentIndex + 1) % this.filteredTimestamps.length;
-            if (this.slider) this.slider.value = String(this.currentIndex);
-            this.updateDisplay();
-            this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
+        let isBusy = false;
+        this.playInterval = setInterval(async () => {
+            if (!this.filteredTimestamps.length || isBusy) return;
+            isBusy = true;
+            try {
+                this.currentIndex = (this.currentIndex + 1) % this.filteredTimestamps.length;
+                if (this.slider) this.slider.value = String(this.currentIndex);
+                this.updateDisplay();
+                await this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
+            } catch (err) {
+                console.debug('[TimelineControl] Playback frame error:', err);
+            } finally {
+                isBusy = false;
+            }
         }, intervalMs);
     }
 

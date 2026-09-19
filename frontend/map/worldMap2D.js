@@ -1,6 +1,6 @@
 // SolvX — Interactive 2D World Map (MapLibre GL JS)
-// Provides pan/zoom, basemap fallback (MapTiler -> OpenStreetMap),
-// real Marine Regions EEZ vector layer, and selection rectangle display.
+// 100% Open-Source Maps: OpenStreetMap (OSM), OpenTopoMap, and OpenStreetMap Dark
+// Provides pan/zoom, bounding box drawing, EEZ boundaries, and real-time area calculation.
 
 import { ApiClient } from '../api/apiClient.js';
 
@@ -17,34 +17,76 @@ export class WorldMap2D {
             min_lat: 16.07,
             max_lat: 23.52
         };
-        this.maptilerKey = options.maptilerKey || '';
+        this.currentBasemap = options.basemap || 'osm';
         this.showEEZ = true;
     }
 
-    async init() {
-        if (!window.maplibregl) {
-            throw new Error('MapLibre GL JS is not loaded. Ensure maplibre-gl.js script is included.');
+    _getBasemapStyle(key) {
+        if (key === 'opentopo') {
+            return {
+                version: 8,
+                sources: {
+                    'opentopo-source': {
+                        type: 'raster',
+                        tiles: [
+                            'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+                            'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
+                            'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                        ],
+                        tileSize: 256,
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors, <a href="https://opentopomap.org" target="_blank">OpenTopoMap</a>'
+                    }
+                },
+                layers: [
+                    {
+                        id: 'opentopo-layer',
+                        type: 'raster',
+                        source: 'opentopo-source',
+                        minzoom: 0,
+                        maxzoom: 17
+                    }
+                ]
+            };
         }
 
-        // Fetch server client config if maptiler key not passed
-        if (!this.maptilerKey) {
-            try {
-                const cfg = await ApiClient.getConfig();
-                if (cfg && cfg.maptiler_api_key) {
-                    this.maptilerKey = cfg.maptiler_api_key;
-                }
-            } catch (e) {
-                console.warn('[WorldMap2D] Could not fetch /api/config, proceeding with default OSM tiles:', e);
-            }
+        if (key === 'osm-dark') {
+            return {
+                version: 8,
+                sources: {
+                    'carto-dark': {
+                        type: 'raster',
+                        tiles: [
+                            'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                            'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                            'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                            'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+                        ],
+                        tileSize: 256,
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>'
+                    }
+                },
+                layers: [
+                    {
+                        id: 'carto-dark-layer',
+                        type: 'raster',
+                        source: 'carto-dark',
+                        minzoom: 0,
+                        maxzoom: 19
+                    }
+                ]
+            };
         }
 
-        const osmRasterStyle = {
+        // OpenStreetMap Standard (Open-Source Default)
+        return {
             version: 8,
             sources: {
                 'osm-raster': {
                     type: 'raster',
                     tiles: [
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+                        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
                     ],
                     tileSize: 256,
                     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
@@ -60,11 +102,14 @@ export class WorldMap2D {
                 }
             ]
         };
+    }
 
-        const style = this.maptilerKey
-            ? `https://api.maptiler.com/maps/ocean/style.json?key=${this.maptilerKey}`
-            : osmRasterStyle;
+    async init() {
+        if (!window.maplibregl) {
+            throw new Error('MapLibre GL JS is not loaded. Ensure maplibre-gl.js script is included.');
+        }
 
+        const style = this._getBasemapStyle(this.currentBasemap);
         const centerLon = (this.currentBBox.min_lon + this.currentBBox.max_lon) / 2;
         const centerLat = (this.currentBBox.min_lat + this.currentBBox.max_lat) / 2;
 
@@ -80,23 +125,34 @@ export class WorldMap2D {
         this.map.addControl(new window.maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
         this.map.addControl(new window.maplibregl.ScaleControl({ maxWidth: 200, unit: 'metric' }), 'bottom-left');
 
-        // Handle possible MapTiler load failure by falling back to OSM raster
-        this.map.on('error', (e) => {
-            if (this.maptilerKey && e.error && e.error.status === 403) {
-                console.warn('[WorldMap2D] MapTiler key unauthorized or failed, switching to OpenStreetMap raster tiles.');
-                this.maptilerKey = '';
-                this.map.setStyle(osmRasterStyle);
-            }
-        });
-
         return new Promise((resolve) => {
-            this.map.on('load', () => {
+            const onReady = () => {
                 this.isLoaded = true;
                 this._initLayers();
-                this.setBBox(this.currentBBox, true);
+                this.setBBox(this.currentBBox, false);
                 this.loadEEZForBBox(this.currentBBox);
                 resolve(this);
-            });
+            };
+
+            if (this.map.loaded()) {
+                onReady();
+            } else {
+                this.map.once('load', onReady);
+            }
+        });
+    }
+
+    setBasemap(styleKey) {
+        if (this.currentBasemap === styleKey || !this.map) return;
+        this.currentBasemap = styleKey;
+        const style = this._getBasemapStyle(styleKey);
+        this.map.setStyle(style);
+        this.map.once('style.load', () => {
+            this._initLayers();
+            this.setBBox(this.currentBBox, false);
+            if (this.showEEZ) {
+                this.loadEEZForBBox(this.currentBBox);
+            }
         });
     }
 
@@ -225,13 +281,22 @@ export class WorldMap2D {
         }
 
         if (fit) {
-            this.map.fitBounds(
-                [
-                    [this.currentBBox.min_lon, this.currentBBox.min_lat],
-                    [this.currentBBox.max_lon, this.currentBBox.max_lat]
-                ],
-                { padding: 80, duration: 800, maxZoom: 8 }
-            );
+            const container = this.map.getContainer();
+            const w = container ? container.clientWidth : 0;
+            const h = container ? container.clientHeight : 0;
+            if (w > 160 && h > 160) {
+                try {
+                    this.map.fitBounds(
+                        [
+                            [this.currentBBox.min_lon, this.currentBBox.min_lat],
+                            [this.currentBBox.max_lon, this.currentBBox.max_lat]
+                        ],
+                        { padding: 80, duration: 600, maxZoom: 8 }
+                    );
+                } catch (e) {
+                    console.warn('[WorldMap2D] fitBounds skipped:', e);
+                }
+            }
         }
     }
 
@@ -256,8 +321,23 @@ export class WorldMap2D {
     }
 
     resize() {
-        if (this.map) {
-            this.map.resize();
+        if (!this.map) return;
+        this.map.resize();
+        const container = this.map.getContainer();
+        const w = container ? container.clientWidth : 0;
+        const h = container ? container.clientHeight : 0;
+        if (w > 160 && h > 160 && this.isLoaded) {
+            try {
+                this.map.fitBounds(
+                    [
+                        [this.currentBBox.min_lon, this.currentBBox.min_lat],
+                        [this.currentBBox.max_lon, this.currentBBox.max_lat]
+                    ],
+                    { padding: 80, duration: 300, maxZoom: 8 }
+                );
+            } catch (e) {
+                // ignore
+            }
         }
     }
 

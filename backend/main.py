@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import region, geography, bathymetry, ocean, observations, data
+from .api import region, geography, bathymetry, ocean, observations, data, download, ml
 from .services.ocean_data_service import (
     get_nc_files,
     find_file,
@@ -31,9 +31,9 @@ app.add_middleware(
     allow_headers=['*']
 )
 
-from .api import ml
 # Register modular API routers
 app.include_router(data.router)
+app.include_router(download.router)
 app.include_router(region.router)
 app.include_router(geography.router)
 app.include_router(bathymetry.router)

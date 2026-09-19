@@ -38,6 +38,87 @@
     <span id="fatalText"></span>
   </div>
 
+  <!-- Geography Loading & Setup Popup Modal -->
+  <div id="geoModal" class="geo-modal-overlay hidden">
+    <div class="geo-modal-box">
+      <div class="geo-modal-header">
+        <div class="geo-modal-badge">GEOGRAPHIC TERRAIN</div>
+        <h3 id="geoModalTitle">Downloading & Loading Geography…</h3>
+        <p id="geoModalSub">Building physical ocean basin, GEBCO bathymetry, and EEZ boundaries.</p>
+      </div>
+
+      <div class="geo-steps-list">
+        <div class="geo-step" id="stepBathy">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">GEBCO Seabed Bathymetry Grid</span>
+          <span class="geo-step-status" id="statusBathy">Waiting…</span>
+        </div>
+        <div class="geo-step" id="stepCoast">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">Coastline Shoreline & Minor Islands</span>
+          <span class="geo-step-status" id="statusCoast">Waiting…</span>
+        </div>
+        <div class="geo-step" id="stepEEZ">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">Maritime Boundaries (EEZ v12)</span>
+          <span class="geo-step-status" id="statusEEZ">Waiting…</span>
+        </div>
+        <div class="geo-step" id="stepTerrain">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">3D Seabed & Volumetric Scene Assembly</span>
+          <span class="geo-step-status" id="statusTerrain">Waiting…</span>
+        </div>
+      </div>
+
+      <div class="geo-modal-footer">
+        <div class="geo-progress-bar"><div id="geoProgressBar" class="geo-progress-fill"></div></div>
+        <div id="geoModalMsg" class="geo-modal-msg">Initializing geographic pipeline…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ocean Data Download & Cache Popup Modal -->
+  <div id="dataDownloadModal" class="geo-modal-overlay hidden">
+    <div class="geo-modal-box">
+      <div class="geo-modal-header">
+        <div class="geo-modal-badge" id="dataModalBadge">OCEANOGRAPHIC DOWNLOAD</div>
+        <h3 id="dataModalTitle">Downloading Ocean Data Bundle…</h3>
+        <p id="dataModalSub">Fetching 4D physics variables (temperature, salinity, currents, sea level) and saving permanently to local disk for future instant access.</p>
+      </div>
+
+      <div class="geo-steps-list">
+        <div class="geo-step" id="dataStepTemp">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">Ocean Temperature (θo)</span>
+          <span class="geo-step-status" id="dataStatusTemp">Waiting…</span>
+        </div>
+        <div class="geo-step" id="dataStepSal">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">Practical Salinity (So)</span>
+          <span class="geo-step-status" id="dataStatusSal">Waiting…</span>
+        </div>
+        <div class="geo-step" id="dataStepCur">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">Ocean Velocity (U/V Currents)</span>
+          <span class="geo-step-status" id="dataStatusCur">Waiting…</span>
+        </div>
+        <div class="geo-step" id="dataStepSSH">
+          <span class="geo-step-icon">○</span>
+          <span class="geo-step-label">Sea Surface Height (Zos)</span>
+          <span class="geo-step-status" id="dataStatusSSH">Waiting…</span>
+        </div>
+      </div>
+
+      <div class="geo-modal-footer">
+        <div class="geo-progress-bar"><div id="dataProgressBar" class="geo-progress-fill"></div></div>
+        <div class="data-modal-timing">
+          <span id="dataModalTimeEst" class="data-modal-est">Estimated time: ~15s</span>
+          <span id="dataModalMsg" class="geo-modal-msg">Downloading from Copernicus Marine…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Top Scientific Navigation Toolbar -->
   <header id="topBar" class="top-bar">
     <div class="top-left">
@@ -49,6 +130,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
         <span>2D WORLD MAP</span>
       </button>
+      <a href="/download" class="top-btn" title="Open Ocean Data Download Manager" style="text-decoration: none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span>DATA DOWNLOADER</span>
+      </a>
     </div>
 
     <div class="top-right">
@@ -84,6 +169,13 @@
           <span>Maritime EEZ (VLIZ v12)</span>
         </label>
       </div>
+
+      <div class="section-label">Open-Source Basemap</div>
+      <select id="mapBasemapSelect" class="dropdown-select">
+        <option value="osm" selected>OpenStreetMap (Standard)</option>
+        <option value="osm-dark">OpenStreetMap Dark (Carto)</option>
+        <option value="opentopo">OpenTopoMap (Topographic Relief)</option>
+      </select>
 
       <div class="section-label">Ocean Data Provider</div>
       <select id="mapProviderSelect" class="dropdown-select">

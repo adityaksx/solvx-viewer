@@ -13,45 +13,52 @@ def get_ml_grid(
 ) -> RegionAnomalyResponse:
     """
     Fetches ocean variables for the bounding box, runs anomaly detection, 
-    and predicts hazards.
+    and predicts hazards using the unified ocean bundle.
     """
-    # 1. Fetch available grids for feature extraction
+    # 1. Fetch available grids via ocean bundle
     grid_data = {}
     lats = []
     lons = []
     
-    # We fetch a subset of variables to keep it performant
-    core_vars = ['temperature', 'salinity', 'sea_surface_height', 'currents']
-    
-    # Map old vars to new
-    var_map = {
-        'temperature': 'ocean_temperature',
-        'salinity': 'salinity',
-        'sea_surface_height': 'sea_surface_height',
-        'currents': 'currents'
-    }
-    for old_var, var in var_map.items():
-        try:
-            res = COLLECTOR.get_ocean_data(
-                variable=var,
-                min_lat=bbox['min_lat'],
-                max_lat=bbox['max_lat'],
-                min_lon=bbox['min_lon'],
-                max_lon=bbox['max_lon'],
-                time=time_str,
-                stride=2
-            )
+    try:
+        bundle = COLLECTOR.get_ocean_bundle(
+            min_lat=bbox['min_lat'],
+            max_lat=bbox['max_lat'],
+            min_lon=bbox['min_lon'],
+            max_lon=bbox['max_lon'],
+            depth=depth,
+            time=time_str,
+            stride=1
+        )
+        vars_res = bundle.get('variables', {})
+        
+        # Temperature
+        if 'ocean_temperature' in vars_res and 'values' in vars_res['ocean_temperature']:
+            t_res = vars_res['ocean_temperature']
+            lats = t_res.get('latitude', [])
+            lons = t_res.get('longitude', [])
+            grid_data['temperature'] = t_res.get('values', [])
             
+        # Salinity
+        if 'salinity' in vars_res and 'values' in vars_res['salinity']:
+            s_res = vars_res['salinity']
             if not lats:
-                lats = res['latitude']
-                lons = res['longitude']
-                
-            if var == 'currents':
-                grid_data['currents_speed'] = res['speed']
-            else:
-                grid_data[old_var] = res['values']
-        except Exception:
-            pass
+                lats = s_res.get('latitude', [])
+                lons = s_res.get('longitude', [])
+            grid_data['salinity'] = s_res.get('values', [])
+            
+        # Sea surface height
+        if 'sea_surface_height' in vars_res and 'values' in vars_res['sea_surface_height']:
+            ssh_res = vars_res['sea_surface_height']
+            grid_data['sea_surface_height'] = ssh_res.get('values', [])
+            
+        # Currents
+        if 'currents' in vars_res:
+            c_res = vars_res['currents']
+            if 'speed' in c_res:
+                grid_data['currents_speed'] = c_res.get('speed', [])
+    except Exception:
+        pass
             
     # 2. Run Anomaly Detection
     anomaly_grid, features = detect_anomalies(grid_data)
@@ -114,29 +121,29 @@ def get_ml_point(
         }
     }
     
-    # To get anomaly context, we fetch a tiny region around the point
-    bbox = {
-        'min_lat': lat - 0.5,
-        'max_lat': lat + 0.5,
-        'min_lon': lon - 0.5,
-        'max_lon': lon + 0.5
-    }
-    ml_grid_res = get_ml_grid(bbox, time_str, depth)
-    
-    # Find closest index
-    lat_idx = min(range(len(ml_grid_res.lats)), key=lambda i: abs(ml_grid_res.lats[i] - lat)) if ml_grid_res.lats else 0
-    lon_idx = min(range(len(ml_grid_res.lons)), key=lambda i: abs(ml_grid_res.lons[i] - lon)) if ml_grid_res.lons else 0
-    
+    # To get anomaly context, check if cached or in Bay of Bengal to avoid blocking point clicks
+    in_bay = (15.5 <= lat <= 24.0 and 83.5 <= lon <= 93.5)
+    cache_check = COLLECTOR.check_ocean_cache(min_lat=lat-0.5, max_lat=lat+0.5, min_lon=lon-0.5, max_lon=lon+0.5, time=time_str)
     score = 0.0
-    if len(ml_grid_res.scores) > 0 and lat_idx < len(ml_grid_res.scores) and lon_idx < len(ml_grid_res.scores[0]):
-        score = ml_grid_res.scores[lat_idx][lon_idx]
-        if score < 0: score = 0.0
-        
-    # Analyze point
-    from .feature_engineering import extract_spatial_features
-    # We would ideally cache the grid data, but for prototype we just rebuild it roughly or use the hazard
-    
-    hazard = next((h for h in ml_grid_res.hazards), None)
+    hazard = None
+    if in_bay or cache_check.get('is_cached'):
+        try:
+            bbox = {
+                'min_lat': lat - 0.5,
+                'max_lat': lat + 0.5,
+                'min_lon': lon - 0.5,
+                'max_lon': lon + 0.5
+            }
+            ml_grid_res = get_ml_grid(bbox, time_str, depth)
+            lat_idx = min(range(len(ml_grid_res.lats)), key=lambda i: abs(ml_grid_res.lats[i] - lat)) if ml_grid_res.lats else 0
+            lon_idx = min(range(len(ml_grid_res.lons)), key=lambda i: abs(ml_grid_res.lons[i] - lon)) if ml_grid_res.lons else 0
+            if len(ml_grid_res.scores) > 0 and lat_idx < len(ml_grid_res.scores) and lon_idx < len(ml_grid_res.scores[0]):
+                score = ml_grid_res.scores[lat_idx][lon_idx]
+                if score < 0: score = 0.0
+            hazard = next((h for h in ml_grid_res.hazards), None)
+        except Exception:
+            pass
+
     
     return MLPointResponse(
         location=Location(latitude=lat, longitude=lon),

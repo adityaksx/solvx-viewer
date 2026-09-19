@@ -8,20 +8,41 @@ const API_BASE = (
     ? `http://${window.location.hostname || '127.0.0.1'}:8080`
     : window.location.origin;
 
+const inFlightRequests = new Map();
+
 async function request(endpoint, options = {}) {
     const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
-    const res = await fetch(url, {
-        cache: 'no-store',
-        ...options
-    });
-    if (!res.ok) {
-        let errText = '';
-        try {
-            errText = await res.text();
-        } catch (_) {}
-        throw new Error(`API ${res.status}: ${errText || res.statusText}`);
+    const isGet = !options.method || options.method === 'GET';
+    const dedupKey = isGet ? url : null;
+    if (dedupKey && inFlightRequests.has(dedupKey)) {
+        return inFlightRequests.get(dedupKey);
     }
-    return res.json();
+
+    const p = (async () => {
+        try {
+            const res = await fetch(url, {
+                cache: 'no-store',
+                ...options
+            });
+            if (!res.ok) {
+                let errText = '';
+                try {
+                    errText = await res.text();
+                } catch (_) {}
+                throw new Error(`API ${res.status}: ${errText || res.statusText}`);
+            }
+            return await res.json();
+        } finally {
+            if (dedupKey) {
+                inFlightRequests.delete(dedupKey);
+            }
+        }
+    })();
+
+    if (dedupKey) {
+        inFlightRequests.set(dedupKey, p);
+    }
+    return p;
 }
 
 export const ApiClient = {
@@ -104,6 +125,37 @@ export const ApiClient = {
         if (depth != null) q.set('depth', String(depth));
         if (time) q.set('time', time);
         return request(`/api/data/region?${q}`);
+    },
+
+    async checkOceanCache({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null }) {
+        const q = new URLSearchParams({
+            provider,
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat)
+        });
+        if (depth != null) q.set('depth', String(depth));
+        if (time) q.set('time', time);
+        if (start_time) q.set('start_time', start_time);
+        if (end_time) q.set('end_time', end_time);
+        return request(`/api/data/ocean/check?${q}`);
+    },
+
+    async getOceanBundle({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null, stride = 1 }) {
+        const q = new URLSearchParams({
+            provider,
+            min_lon: String(bbox.min_lon),
+            max_lon: String(bbox.max_lon),
+            min_lat: String(bbox.min_lat),
+            max_lat: String(bbox.max_lat),
+            stride: String(stride)
+        });
+        if (depth != null) q.set('depth', String(depth));
+        if (time) q.set('time', time);
+        if (start_time) q.set('start_time', start_time);
+        if (end_time) q.set('end_time', end_time);
+        return request(`/api/data/ocean/bundle?${q}`);
     },
 
     async getOceanVariable({ provider = 'auto', variable, bbox, depth = null, time = null, stride = 1, resolution = 'native' }) {

@@ -192,18 +192,25 @@ class DataCollector:
         max_lon: Optional[float] = None,
         depth: Optional[float] = None,
         time: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
         stride: int = 1,
         resolution: Optional[str] = 'native',
         **kwargs
     ) -> Dict[str, Any]:
         """Fetches and normalizes any ocean, biogeochemical, wave, or atmospheric variable."""
-        if min_lat is None: min_lat = DEFAULT_BBOX['min_lat']
-        if max_lat is None: max_lat = DEFAULT_BBOX['max_lat']
-        if min_lon is None: min_lon = DEFAULT_BBOX['min_lon']
-        if max_lon is None: max_lon = DEFAULT_BBOX['max_lon']
+        if not isinstance(min_lat, (int, float)): min_lat = DEFAULT_BBOX['min_lat']
+        if not isinstance(max_lat, (int, float)): max_lat = DEFAULT_BBOX['max_lat']
+        if not isinstance(min_lon, (int, float)): min_lon = DEFAULT_BBOX['min_lon']
+        if not isinstance(max_lon, (int, float)): max_lon = DEFAULT_BBOX['max_lon']
+        if not isinstance(depth, (int, float)): depth = None
+        if not isinstance(time, str): time = None
+        if not isinstance(stride, int): stride = 1
+        provider = str(provider) if provider and isinstance(provider, str) else 'auto'
+        variable = str(variable) if variable and isinstance(variable, str) else 'temperature'
 
         bbox = self._validate_bbox(min_lat, max_lat, min_lon, max_lon)
-        prov_key = str(provider).strip().lower() if provider else 'auto'
+        prov_key = str(provider).strip().lower()
         var_norm = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
 
         # 1. Atmospheric & Marine Wave Variables (Served live via Open-Meteo)
@@ -222,7 +229,37 @@ class DataCollector:
             except Exception as e:
                 logger.warning("Open-Meteo fetch failed for '%s': %s", var_norm, e)
 
-        # 2. Oceanographic & Biogeochemical Variables
+        # 2. Local-First Check: Bay of Bengal High-Resolution Archive
+        in_bay_of_bengal = (
+            bbox.min_lat >= 15.5 and bbox.max_lat <= 24.0 and
+            bbox.min_lon >= 83.5 and bbox.max_lon <= 93.5
+        )
+        if (prov_key in ('auto', 'incois', 'local') and in_bay_of_bengal):
+            try:
+                from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
+                incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
+                var_cfg = INCOIS_VARIABLE_MAP.get(incois_var) or INCOIS_VARIABLE_MAP.get('temperature', {})
+                res = self.incois._fetch_from_local_netcdf(
+                    variable=incois_var,
+                    var_config=var_cfg,
+                    min_lat=bbox.min_lat,
+                    max_lat=bbox.max_lat,
+                    min_lon=bbox.min_lon,
+                    max_lon=bbox.max_lon,
+                    depth=depth,
+                    time=time,
+                    stride=stride
+                )
+                res['variable'] = var_norm
+                res['requested_provider'] = prov_key
+                res['provider'] = 'LOCAL_ARCHIVE'
+                res['source_type'] = 'local_netcdf'
+                res['fallback'] = False
+                return res
+            except Exception as local_err:
+                logger.debug("Local NetCDF fetch failed for '%s': %s; falling back to live providers", var_norm, local_err)
+
+        # 3. Oceanographic & Biogeochemical Variables
         # Primary live provider: Copernicus Marine Service
         if prov_key in ('copernicus', 'auto'):
             try:
@@ -234,6 +271,8 @@ class DataCollector:
                     max_lon=bbox.max_lon,
                     depth=depth,
                     time=time,
+                    start_time=start_time,
+                    end_time=end_time,
                     stride=stride
                 )
                 res['requested_provider'] = prov_key
@@ -242,7 +281,7 @@ class DataCollector:
             except Exception as cop_err:
                 logger.info("Live Copernicus fetch failed for '%s' (%s); falling back to local archive / INCOIS", var_norm, cop_err)
 
-        # 3. Fallback to Local NetCDF Archive / INCOIS Model
+        # 4. Fallback to Local NetCDF Archive / INCOIS Model
         try:
             from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
             incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
@@ -315,6 +354,159 @@ class DataCollector:
             'source': f"SolvX Ocean Collection ({provider.upper()})",
             'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
             'variables': results
+        }
+
+    def get_ocean_bundle(
+        self,
+        min_lat: Optional[float] = None,
+        max_lat: Optional[float] = None,
+        min_lon: Optional[float] = None,
+        max_lon: Optional[float] = None,
+        depth: Optional[float] = None,
+        time: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        provider: str = 'auto',
+        stride: int = 1,
+        variables: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Fetches all primary ocean variables (temperature, salinity, currents, sea_surface_height) at once for a given coordinate bounding box and timestamp."""
+        if not isinstance(min_lat, (int, float)): min_lat = DEFAULT_BBOX['min_lat']
+        if not isinstance(max_lat, (int, float)): max_lat = DEFAULT_BBOX['max_lat']
+        if not isinstance(min_lon, (int, float)): min_lon = DEFAULT_BBOX['min_lon']
+        if not isinstance(max_lon, (int, float)): max_lon = DEFAULT_BBOX['max_lon']
+        if not isinstance(depth, (int, float)): depth = None
+        if not isinstance(time, str): time = None
+        if not isinstance(stride, int): stride = 1
+        provider = str(provider) if provider and isinstance(provider, str) else 'auto'
+
+        bbox = self._validate_bbox(min_lat, max_lat, min_lon, max_lon)
+        prov_key = str(provider).strip().lower()
+
+        target_vars = variables or ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height']
+
+        cache_params = {
+            'provider': prov_key,
+            'bbox': {'min_lat': bbox.min_lat, 'max_lat': bbox.max_lat, 'min_lon': bbox.min_lon, 'max_lon': bbox.max_lon},
+            'depth': depth,
+            'time': time,
+            'start_time': start_time,
+            'end_time': end_time,
+            'stride': stride,
+            'vars': sorted(target_vars)
+        }
+        cache_key = make_cache_key('ocean_bundle', cache_params)
+        cached_bundle = GLOBAL_CACHE.get(cache_key)
+        if cached_bundle:
+            return cached_bundle
+
+        results = {}
+        active_provider = None
+        for var_name in target_vars:
+            try:
+                var_stride = 3 if (var_name == 'currents' and stride == 1) else stride
+                res = self.get_ocean_data(
+                    provider=prov_key,
+                    variable=var_name,
+                    min_lat=bbox.min_lat,
+                    max_lat=bbox.max_lat,
+                    min_lon=bbox.min_lon,
+                    max_lon=bbox.max_lon,
+                    depth=depth,
+                    time=time,
+                    start_time=start_time,
+                    end_time=end_time,
+                    stride=var_stride
+                )
+                results[var_name] = res
+                if not active_provider and res.get('provider'):
+                    active_provider = res.get('provider')
+            except Exception as e:
+                logger.warning("Failed fetching bundle variable '%s': %s", var_name, e)
+                results[var_name] = {'error': str(e), 'available': False}
+
+        bundle_payload = {
+            'time': time,
+            'provider': active_provider or prov_key.upper(),
+            'bbox': {'min_lat': bbox.min_lat, 'max_lat': bbox.max_lat, 'min_lon': bbox.min_lon, 'max_lon': bbox.max_lon},
+            'depth': depth or 0,
+            'variables': results
+        }
+
+        GLOBAL_CACHE.set(cache_key, bundle_payload)
+        return bundle_payload
+
+    def check_ocean_cache(
+        self,
+        min_lat: Optional[float] = None,
+        max_lat: Optional[float] = None,
+        min_lon: Optional[float] = None,
+        max_lon: Optional[float] = None,
+        depth: Optional[float] = None,
+        time: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        provider: str = 'auto',
+        variables: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Checks whether the requested ocean bundle is cached locally on disk or requires remote downloading."""
+        if not isinstance(min_lat, (int, float)): min_lat = DEFAULT_BBOX['min_lat']
+        if not isinstance(max_lat, (int, float)): max_lat = DEFAULT_BBOX['max_lat']
+        if not isinstance(min_lon, (int, float)): min_lon = DEFAULT_BBOX['min_lon']
+        if not isinstance(max_lon, (int, float)): max_lon = DEFAULT_BBOX['max_lon']
+        if not isinstance(depth, (int, float)): depth = None
+        if not isinstance(time, str): time = None
+        provider = str(provider) if provider and isinstance(provider, str) else 'auto'
+
+        bbox = self._validate_bbox(min_lat, max_lat, min_lon, max_lon)
+        prov_key = str(provider).strip().lower()
+        target_vars = variables or ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height']
+
+        in_bay_of_bengal = (
+            bbox.min_lat >= 15.5 and bbox.max_lat <= 24.0 and
+            bbox.min_lon >= 83.5 and bbox.max_lon <= 93.5
+        )
+
+        if (prov_key in ('auto', 'incois', 'local') and in_bay_of_bengal):
+            return {
+                'is_cached': True,
+                'source': 'local_disk',
+                'provider': 'LOCAL_ARCHIVE',
+                'message': 'Available on local disk (Instant)',
+                'estimated_seconds': 0,
+                'variables': {v: {'cached': True, 'source': 'local_netcdf'} for v in target_vars}
+            }
+
+        # Check Copernicus disk cache
+        var_cache_status = {}
+        all_cached = True
+        missing_count = 0
+        for var in target_vars:
+            cached = self.copernicus.is_variable_cached(
+                variable=var,
+                min_lat=bbox.min_lat,
+                max_lat=bbox.max_lat,
+                min_lon=bbox.min_lon,
+                max_lon=bbox.max_lon,
+                depth=depth,
+                time=time,
+                start_time=start_time,
+                end_time=end_time
+            )
+            var_cache_status[var] = {'cached': cached, 'source': 'copernicus_cache' if cached else 'copernicus_remote'}
+            if not cached:
+                all_cached = False
+                missing_count += 1
+
+        est_time = 0 if all_cached else max(10, missing_count * 5)
+        return {
+            'is_cached': all_cached,
+            'source': 'local_disk' if all_cached else 'remote',
+            'provider': 'COPERNICUS',
+            'message': 'Cached on local disk (Instant)' if all_cached else f'Downloading Copernicus ocean data (~{est_time}s)...',
+            'estimated_seconds': est_time,
+            'missing_variables_count': missing_count,
+            'variables': var_cache_status
         }
 
     def get_bathymetry(

@@ -25,6 +25,7 @@ export class RegionDrawer {
         this.errorBox = document.getElementById('coordError');
         this.presetList = document.getElementById('presetList');
         this.toggleEEZBtn = document.getElementById('toggleEEZBtn');
+        this.basemapSelect = document.getElementById('mapBasemapSelect');
 
         this._bindEvents();
         this._populatePresets();
@@ -32,6 +33,13 @@ export class RegionDrawer {
     }
 
     _bindEvents() {
+        // Basemap selector
+        if (this.basemapSelect) {
+            this.basemapSelect.addEventListener('change', (e) => {
+                this.worldMap.setBasemap(e.target.value);
+            });
+        }
+
         // Toggle drawing mode button
         if (this.drawBtn) {
             this.drawBtn.addEventListener('click', () => {
@@ -247,6 +255,7 @@ export class RegionDrawer {
         this.presetList.innerHTML = '';
         presets.forEach((p, idx) => {
             const btn = document.createElement('button');
+            btn.type = 'button';
             btn.className = `preset-card ${idx === 0 ? 'active' : ''}`;
             btn.innerHTML = `<b>${p.name}</b><span>${p.desc}</span>`;
             btn.addEventListener('click', () => {

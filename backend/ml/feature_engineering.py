@@ -15,6 +15,11 @@ def extract_spatial_features(grid_data: Dict[str, Any]) -> Dict[str, Any]:
     
     for var_name, grid in grid_data.items():
         arr = np.array(grid, dtype=float)
+        while arr.ndim > 2:
+            arr = arr[0]
+        if arr.ndim != 2 or arr.shape[0] < 2 or arr.shape[1] < 2:
+            continue
+            
         valid_mask = ~np.isnan(arr)
         if not np.any(valid_mask):
             continue
@@ -59,6 +64,8 @@ def calculate_anomaly_grid(features: Dict[str, Any]) -> np.ndarray:
     total_weight = 0.0
     
     for var, data in features.items():
+        if data['array'].shape != shape:
+            continue
         w = weights.get(var, 1.0)
         
         # Z-score computation

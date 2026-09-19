@@ -80,6 +80,11 @@ class SolvXApp {
             currents: true,
             particles: true
         };
+
+        // Cache for batch ocean variables (keyed by timestamp)
+        this.bundleCache = {};
+        this.currentBundle = null;
+        this._bundleReqSeq = 0;
     }
 
     async init() {
@@ -173,7 +178,11 @@ class SolvXApp {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
                       <span>3D OCEAN SCENE</span>`;
                 }
-                this.worldMap?.resize();
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        this.worldMap?.resize();
+                    }, 60);
+                });
             } else {
                 mapView?.classList.add('hidden');
                 sceneView?.classList.remove('hidden');
@@ -199,7 +208,7 @@ class SolvXApp {
 
         // Provider Selector Controls
         const provSelect = document.getElementById('providerSelect_REMOVED');
-        const mapProvSelect = document.getElementById('mapProviderSelect_REMOVED');
+        const mapProvSelect = document.getElementById('mapProviderSelect');
 
         const onProviderSelect = async (val) => {
             if (this.activeProvider === val) return;
@@ -323,20 +332,127 @@ class SolvXApp {
         }
     }
 
+    updateGeoProgress(step, state, text, pct, msg) {
+        const modal = document.getElementById('geoModal');
+        if (modal) modal.classList.remove('hidden');
+
+        if (step) {
+            const stepEl = document.getElementById(step);
+            const statusEl = document.getElementById(step.replace('step', 'status'));
+            if (stepEl) {
+                stepEl.classList.remove('active', 'done');
+                if (state === 'active') {
+                    stepEl.classList.add('active');
+                    const icon = stepEl.querySelector('.geo-step-icon');
+                    if (icon) icon.textContent = '◐';
+                } else if (state === 'done') {
+                    stepEl.classList.add('done');
+                    const icon = stepEl.querySelector('.geo-step-icon');
+                    if (icon) icon.textContent = '✓';
+                }
+            }
+            if (statusEl && text) statusEl.textContent = text;
+        }
+
+        const bar = document.getElementById('geoProgressBar');
+        if (bar && pct != null) bar.style.width = `${pct}%`;
+
+        const msgEl = document.getElementById('geoModalMsg');
+        if (msgEl && msg) msgEl.textContent = msg;
+    }
+
+    hideGeoModal(delayMs = 1200) {
+        setTimeout(() => {
+            const modal = document.getElementById('geoModal');
+            if (modal) modal.classList.add('hidden');
+        }, delayMs);
+    }
+
+    updateDataProgress(step, state, text, pct, msg, estSeconds) {
+        const modal = document.getElementById('dataDownloadModal');
+        if (modal) modal.classList.remove('hidden');
+
+        if (step) {
+            const stepEl = document.getElementById(step);
+            const statusEl = document.getElementById(step.replace('dataStep', 'dataStatus'));
+            if (stepEl) {
+                stepEl.classList.remove('active', 'done');
+                if (state === 'active') {
+                    stepEl.classList.add('active');
+                    const icon = stepEl.querySelector('.geo-step-icon');
+                    if (icon) icon.textContent = '◐';
+                } else if (state === 'done') {
+                    stepEl.classList.add('done');
+                    const icon = stepEl.querySelector('.geo-step-icon');
+                    if (icon) icon.textContent = '✓';
+                }
+            }
+            if (statusEl && text) statusEl.textContent = text;
+        }
+
+        const bar = document.getElementById('dataProgressBar');
+        if (bar && pct != null) bar.style.width = `${pct}%`;
+
+        const msgEl = document.getElementById('dataModalMsg');
+        if (msgEl && msg) msgEl.textContent = msg;
+
+        const estEl = document.getElementById('dataModalTimeEst');
+        if (estEl && estSeconds != null) {
+            estEl.textContent = estSeconds > 0 ? `Estimated time: ~${estSeconds}s` : 'Processing & caching…';
+        }
+    }
+
+    hideDataModal(delayMs = 800) {
+        if (this._dataCountdownInterval) {
+            clearInterval(this._dataCountdownInterval);
+            this._dataCountdownInterval = null;
+        }
+        setTimeout(() => {
+            const modal = document.getElementById('dataDownloadModal');
+            if (modal) modal.classList.add('hidden');
+        }, delayMs);
+    }
+
+
     async loadRegion(bbox) {
         this.currentBBox = bbox;
-        this.status('Loading geographic & ocean data…', 'busy');
+        this.status('Downloading & loading geographic terrain…', 'busy');
+
+        // Reset bundle cache for new region
+        this.bundleCache = {};
+        this.currentBundle = null;
+
+        // Reset modal steps
+        ['stepBathy', 'stepCoast', 'stepEEZ', 'stepTerrain'].forEach(id => {
+            const el = document.getElementById(id);
+            const st = document.getElementById(id.replace('step', 'status'));
+            const ic = el?.querySelector('.geo-step-icon');
+            if (el) el.className = 'geo-step';
+            if (st) st.textContent = 'Waiting…';
+            if (ic) ic.textContent = '○';
+        });
+
+        this.updateGeoProgress('stepBathy', 'active', 'Downloading GEBCO…', 15, 'Retrieving seabed elevation grid…');
 
         try {
             // Parallel fetch of catalog, geography, bathymetry, eez, and observations
             const [catalogData, geoData, bathyData, eezData, argoData] = await Promise.all([
                 ApiClient.getDataVariables().catch(() => ({ variables: [] })),
-                ApiClient.getDataGeometry(bbox),
+                ApiClient.getDataGeometry(bbox).then(res => {
+                    this.updateGeoProgress('stepCoast', 'done', 'Loaded', 40, 'Coastlines & islands processed');
+                    return res;
+                }),
                 ApiClient.getDataBathymetry(bbox, 'medium').catch(err => {
                     console.warn('Bathymetry unavailable for region, using fallback:', err);
                     return { bounds: [bbox.min_lon, bbox.max_lon, bbox.min_lat, bbox.max_lat], terrain: null, maxDepthKm: 3.5 };
+                }).then(res => {
+                    this.updateGeoProgress('stepBathy', 'done', 'Loaded', 60, 'GEBCO seabed ready');
+                    return res;
                 }),
-                ApiClient.getDataEEZ(bbox).catch(() => ({ features: [], lines3d: [] })),
+                ApiClient.getDataEEZ(bbox).catch(() => ({ features: [], lines3d: [] })).then(res => {
+                    this.updateGeoProgress('stepEEZ', 'done', 'Loaded', 80, 'Maritime boundaries configured');
+                    return res;
+                }),
                 ApiClient.getDataObservations(bbox).catch(() => ({ observations: [] }))
             ]);
 
@@ -348,9 +464,7 @@ class SolvXApp {
 
             this.varControl.setCatalog(this.catalog);
 
-            // Discover and set timeline for the active variable
-            await this.timelineControl.loadTimelineForVariable(this.activeVar, bbox);
-            this.activeTime = this.timelineControl.getCurrentTimestamp();
+            this.updateGeoProgress('stepTerrain', 'active', 'Assembling 3D scene…', 90, 'Rendering ocean basin & seabed…');
 
             const maxD = ((bathyData?.maxDepthKm) || (bathyData?.terrain?.maxDepthKm) || 3.5) * 1000;
             this.depthControl.setMaxDepth(maxD);
@@ -358,19 +472,26 @@ class SolvXApp {
             // Assemble 3D Scene
             this.assemble3DScene(geoData, bathyData, eezData, argoData.observations || []);
 
-            // Load scientific layer
-            await this.loadActiveVariable();
+            this.updateGeoProgress('stepTerrain', 'done', 'Ready', 100, 'Geography loaded successfully!');
 
-            // Update Provenance Panel
-            this.updateProvenanceUI();
+            // Discover and set timeline for the active variable
+            await this.timelineControl.loadTimelineForVariable(this.activeVar, bbox);
+            this.activeTime = this.timelineControl.getCurrentTimestamp();
 
-            // Refresh ML Hazard & Early Warning Anomaly Engine
-            this.refreshMLAnomalies();
+            this.status('Geography ready · Loading ocean variables for timeline…');
+            this.hideGeoModal(1200);
+
+            // Phase 2: Load all ocean variables at once for the current timeline date
+            if (this.activeTime) {
+                await this.loadTimelineBundle(this.activeTime);
+            }
 
             this.status('3D ocean chunk ready');
         } catch (e) {
             console.error('Failed to load region:', e);
+            this.updateGeoProgress(null, null, null, null, `Error: ${e.message}`);
             this.status(`Load failed · ${e.message}`, 'error');
+            this.hideGeoModal(2500);
         }
     }
 
@@ -478,12 +599,189 @@ class SolvXApp {
 
     async setVariable(varId) {
         this.activeVar = varId;
-        this.status(`Loading ${varId}…`, 'busy');
-        await this.timelineControl.loadTimelineForVariable(varId, this.currentBBox);
-        this.activeTime = this.timelineControl.getCurrentTimestamp();
-        await this.loadActiveVariable();
-        this.updateProvenanceUI();
-        this.status('Ready');
+        this.status(`Switching to ${varId}…`);
+
+        // Instant switch if bundle for the active time is already cached!
+        if (this.activeTime && this.bundleCache[this.activeTime]) {
+            this.applyBundleData(this.bundleCache[this.activeTime]);
+            this.status(`Ready · Showing ${varId}`);
+            return;
+        }
+
+        // Otherwise fetch batch bundle for the active timestamp
+        await this.loadTimelineBundle(this.activeTime);
+    }
+
+    async loadTimelineBundle(timeIso) {
+        if (!timeIso) return;
+        this.activeTime = timeIso;
+
+        if (this.bundleCache[timeIso]) {
+            this.applyBundleData(this.bundleCache[timeIso]);
+            this.status(`Ready · Ocean data for ${timeIso.slice(0, 10)}`);
+            return;
+        }
+
+        const reqSeq = ++this._bundleReqSeq;
+
+        // Retrieve full timeline bounds for single-pass download
+        let startTime = null;
+        let endTime = null;
+        if (this.timelineControl?.allTimestamps?.length > 0) {
+            startTime = this.timelineControl.allTimestamps[0];
+            endTime = this.timelineControl.allTimestamps[this.timelineControl.allTimestamps.length - 1];
+        }
+
+        // Check if data is already available locally on disk or requires downloading
+        let cacheCheck = null;
+        try {
+            cacheCheck = await ApiClient.checkOceanCache({
+                provider: this.activeProvider,
+                bbox: this.currentBBox,
+                depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
+                time: timeIso,
+                start_time: startTime,
+                end_time: endTime
+            });
+        } catch (err) {
+            console.debug('Cache check error:', err);
+        }
+
+        if (this._bundleReqSeq !== reqSeq) return;
+
+        const isLocal = cacheCheck?.is_cached === true;
+
+        if (!isLocal) {
+            // Data is not cached locally -> Show Download Popup with estimated time!
+            const estSeconds = cacheCheck?.estimated_seconds || 15;
+            let remainingSeconds = estSeconds;
+
+            // Reset steps in download modal
+            ['dataStepTemp', 'dataStepSal', 'dataStepCur', 'dataStepSSH'].forEach(id => {
+                const el = document.getElementById(id);
+                const st = document.getElementById(id.replace('dataStep', 'dataStatus'));
+                const ic = el?.querySelector('.geo-step-icon');
+                if (el) el.className = 'geo-step';
+                if (st) st.textContent = 'Waiting…';
+                if (ic) ic.textContent = '○';
+            });
+
+            this.updateDataProgress('dataStepTemp', 'active', 'Downloading…', 20, 'Downloading Copernicus Marine variables…', remainingSeconds);
+
+            if (this._dataCountdownInterval) clearInterval(this._dataCountdownInterval);
+            this._dataCountdownInterval = setInterval(() => {
+                remainingSeconds = Math.max(1, remainingSeconds - 1);
+                const estEl = document.getElementById('dataModalTimeEst');
+                if (estEl) estEl.textContent = `Estimated time: ~${remainingSeconds}s remaining`;
+            }, 1000);
+
+            this.status(`Downloading ocean data from Copernicus Marine (~${estSeconds}s)…`, 'busy');
+        } else {
+            this.status(`Loading ocean variables from local disk…`, 'busy');
+        }
+
+        try {
+            const bundle = await ApiClient.getOceanBundle({
+                provider: this.activeProvider,
+                bbox: this.currentBBox,
+                depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
+                time: timeIso,
+                start_time: startTime,
+                end_time: endTime,
+                stride: 1
+            });
+
+            if (this._bundleReqSeq !== reqSeq) return;
+
+            this.bundleCache[timeIso] = bundle.variables || {};
+
+            if (!isLocal) {
+                // Mark all steps done in modal
+                ['dataStepTemp', 'dataStepSal', 'dataStepCur', 'dataStepSSH'].forEach(id => {
+                    const el = document.getElementById(id);
+                    const st = document.getElementById(id.replace('dataStep', 'dataStatus'));
+                    const ic = el?.querySelector('.geo-step-icon');
+                    if (el) el.className = 'geo-step done';
+                    if (st) st.textContent = 'Saved to disk';
+                    if (ic) ic.textContent = '✓';
+                });
+                this.updateDataProgress(null, null, null, 100, 'Data saved to local disk!', 0);
+                this.hideDataModal(1000);
+            }
+
+            this.applyBundleData(this.bundleCache[timeIso]);
+            this.updateProvenanceUI();
+            this.refreshMLAnomalies();
+
+            if (isLocal) {
+                this.status(`⚡ Loaded from local disk (${bundle.provider || 'LOCAL'}) · Instant`);
+            } else {
+                this.status(`💾 Ocean bundle saved to disk · Ready (${bundle.provider || 'Copernicus'})`);
+            }
+        } catch (e) {
+            if (this._bundleReqSeq !== reqSeq) return;
+            console.warn(`[SolvXApp] Ocean bundle download failed for ${timeIso}, falling back:`, e);
+            this.hideDataModal(500);
+            await this.loadActiveVariable();
+        }
+    }
+
+    applyBundleData(variables) {
+        if (!variables) return;
+        this.currentBundle = variables;
+
+        if (this.activeVar === 'currents') {
+            const curData = variables['currents'];
+            if (curData && !curData.error) {
+                this.renderCurrents(curData);
+            }
+        } else {
+            const varData = variables[this.activeVar];
+            if (varData && !varData.error) {
+                this.lastOceanData = varData;
+                this.scalarViz?.apply(this.activeVar, varData, this.activeDepth, this.activeDepthMode);
+            } else {
+                this.scalarViz?.apply(this.activeVar, null, this.activeDepth, this.activeDepthMode);
+            }
+        }
+
+        // Also prepare currents vectors & particles if layer is enabled
+        const curData = variables['currents'];
+        if (curData && !curData.error && this.activeVar !== 'currents' && (this.layerState.currents || this.layerState.particles)) {
+            this.renderCurrents(curData);
+        }
+
+        this.applyLayerVisibility('scientific', this.layerState.scientific);
+        this.applyLayerVisibility('currents', this.layerState.currents);
+        this.applyLayerVisibility('particles', this.layerState.particles);
+    }
+
+    renderCurrents(data) {
+        if (this.currentVectorsGroup) {
+            this.scene.disposeObject(this.currentVectorsGroup);
+            this.currentVectorsGroup = null;
+        }
+        if (this.currentParticles) {
+            this.scene.disposeObject(this.currentParticles.group);
+            this.currentParticles = null;
+        }
+
+        this.lastOceanData = data;
+        this.currentGrid = data;
+        const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
+
+        // Build 3D vector arrows
+        this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds);
+        this.scene.setLayer('currents', this.currentVectorsGroup);
+
+        // Build animated particles
+        this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
+        this.scene.setLayer('particles', this.currentParticles.group);
+
+        // Update legend for currents
+        import('./visualization/colorScale.js').then(module => {
+            module.updateLegendUI('currents', 0.0, 1.5, 'm/s');
+        });
     }
 
     async loadActiveVariable() {
@@ -494,6 +792,13 @@ class SolvXApp {
         if (this.currentParticles) {
             this.scene.disposeObject(this.currentParticles.group);
             this.currentParticles = null;
+        }
+
+        // Fast path: use already cached bundle data without any network call
+        if (this.activeTime && this.bundleCache[this.activeTime]) {
+            this.applyBundleData(this.bundleCache[this.activeTime]);
+            this.updateProvenanceUI();
+            return;
         }
 
         try {
@@ -535,28 +840,12 @@ class SolvXApp {
                 time: this.activeTime,
                 stride: 3
             });
-            this.lastOceanData = data;
-            this.currentGrid = data;
-            const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
-
-            // Build 3D vector arrows
-            this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds);
-            this.scene.setLayer('currents', this.currentVectorsGroup);
-
-            // Build animated particles
-            this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
-            this.scene.setLayer('particles', this.currentParticles.group);
-            
-            // Update legend for currents
-            import('./visualization/colorScale.js').then(module => {
-                module.updateLegendUI('currents', 0.0, 1.5, 'm/s');
-            });
+            this.renderCurrents(data);
         } catch (e) {
             console.warn(`[SolvXApp] Failed to load currents with provider '${this.activeProvider}':`, e);
             throw e;
         }
     }
-
 
     applyVerticalSlice(sLat, sLon, eLat, eLon) {
         this.activeDepthMode = 'vertical_custom';
@@ -568,7 +857,6 @@ class SolvXApp {
 
     clearVerticalSlice() {
         this.activeDepthMode = 'volume';
-        // restore depth control UI mode if we want, but simple enough to just call mode change
         this.onDepthModeChange('volume', this.activeDepth);
     }
 
@@ -584,7 +872,7 @@ class SolvXApp {
         this.activeDepthMode = mode;
         this.activeDepth = depthM;
         if (mode === 'volume' || mode === 'vertical') {
-            this.loadActiveVariable();
+            this.loadTimelineBundle(this.activeTime);
         } else {
             this.onDepthChange(depthM);
         }
@@ -592,13 +880,9 @@ class SolvXApp {
     }
 
     async onTimeChange(idx, timeIso, meta) {
-        
         this.activeTime = timeIso;
         this.activeTimeMeta = meta;
-        // Reload data for ALL variables when timeline changes
-        await this.loadActiveVariable();
-        this.updateProvenanceUI();
-        this.refreshMLAnomalies();
+        await this.loadTimelineBundle(timeIso);
     }
 
     updateProvenanceUI() {

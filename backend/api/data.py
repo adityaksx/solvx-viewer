@@ -141,6 +141,75 @@ def post_ocean_data(request: OceanVariableRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get('/ocean/bundle')
+def get_ocean_bundle(
+    provider: str = Query('auto', description='Provider: auto, incois, copernicus, noaa, hycom'),
+    min_lat: Optional[float] = Query(None, ge=-90.0, le=90.0),
+    max_lat: Optional[float] = Query(None, ge=-90.0, le=90.0),
+    min_lon: Optional[float] = Query(None, ge=-180.0, le=180.0),
+    max_lon: Optional[float] = Query(None, ge=-180.0, le=180.0),
+    depth: Optional[float] = Query(None, ge=0.0, le=6000.0),
+    time: Optional[str] = Query(None),
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    stride: int = Query(1, ge=1, le=20)
+):
+    """Retrieves all core ocean variables (temperature, salinity, currents, sea_surface_height) at once."""
+    try:
+        return COLLECTOR.get_ocean_bundle(
+            provider=provider,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            depth=depth,
+            time=time,
+            start_time=start_time,
+            end_time=end_time,
+            stride=stride
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get('/ocean/check')
+def check_ocean_cache(
+    provider: str = Query('auto', description='Provider: auto, incois, copernicus, noaa, hycom'),
+    min_lat: Optional[float] = Query(None, ge=-90.0, le=90.0),
+    max_lat: Optional[float] = Query(None, ge=-90.0, le=90.0),
+    min_lon: Optional[float] = Query(None, ge=-180.0, le=180.0),
+    max_lon: Optional[float] = Query(None, ge=-180.0, le=180.0),
+    depth: Optional[float] = Query(None, ge=0.0, le=6000.0),
+    time: Optional[str] = Query(None),
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None)
+):
+    """Checks whether the requested ocean bundle is cached locally on disk or requires downloading."""
+    try:
+        return COLLECTOR.check_ocean_cache(
+            provider=provider,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            depth=depth,
+            time=time,
+            start_time=start_time,
+            end_time=end_time
+        )
+    except Exception as e:
+        return {
+            'is_cached': False,
+            'source': 'unknown',
+            'estimated_seconds': 15,
+            'error': str(e)
+        }
+
+
 @router.get('/ocean/{variable}')
 def get_ocean_variable_by_path(
     variable: str,

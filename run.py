@@ -23,9 +23,17 @@ def main():
         print('Dynamic geometry mode enabled (fetching on demand via /api/geography and /api/bathymetry).')
     threading.Thread(target=start_api,daemon=True).start()
     class Handler(SimpleHTTPRequestHandler):
-        def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(FRONTEND),**kwargs)
-        def log_message(self,fmt,*args):print('[frontend]',fmt%args)
-    server=ThreadingHTTPServer(('127.0.0.1',5500),Handler)
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(FRONTEND), **kwargs)
+        def do_GET(self):
+            clean_path = self.path.split('?')[0].rstrip('/')
+            if clean_path == '/download':
+                query = ('?' + self.path.split('?', 1)[1]) if '?' in self.path else ''
+                self.path = '/download.html' + query
+            return super().do_GET()
+        def log_message(self, fmt, *args):
+            print('[frontend]', fmt % args)
+    server = ThreadingHTTPServer(('127.0.0.1', 5500), Handler)
     url='http://127.0.0.1:5500/'
     print(f'SolvX: {url}')
     print('API: http://127.0.0.1:8080/docs')

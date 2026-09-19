@@ -349,5 +349,31 @@ export const ApiClient = {
         if (time) q.set('time', time);
         if (depth != null) q.set('depth', String(depth));
         return request(`/api/ml/point?${q}`);
+    },
+
+    // =========================================================================
+    // Data Download & Storage Inventory Endpoints
+    // =========================================================================
+
+    async getDownloadInventory(refresh = false) {
+        const q = refresh ? '?refresh=true' : '';
+        return request(`/api/download/inventory${q}`);
+    },
+
+    async checkDownloadStatus(payload) {
+        return request('/api/download/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async executeDownload(payload) {
+        return request('/api/download/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
     }
 };
+

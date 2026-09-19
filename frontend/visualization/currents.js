@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { sampleColor, updateLegendUI } from './colorScale.js';
 
-export function buildCurrentVectors(currentGrid, sceneManager, bounds) {
+export function buildCurrentVectors(currentGrid, sceneManager, bounds, updateLegend = false) {
     const group = new THREE.Group();
     if (!currentGrid || !currentGrid.u || !currentGrid.v) return group;
 
@@ -35,7 +35,9 @@ export function buildCurrentVectors(currentGrid, sceneManager, bounds) {
         }
     }
 
-    updateLegendUI('currents', 0.0, maxSpeed, currentGrid.units || 'm s⁻¹');
+    if (updateLegend) {
+        updateLegendUI('currents', 0.0, maxSpeed, currentGrid.units || 'm s⁻¹');
+    }
 
     // Build arrow line segments
     const linePos = [];

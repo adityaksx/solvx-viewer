@@ -73,8 +73,6 @@ BATHYMETRY_BASE_URL = os.getenv('BATHYMETRY_BASE_URL', 'https://gis.ngdc.noaa.go
 GEOGRAPHY_BASE_URL = os.getenv('GEOGRAPHY_BASE_URL', 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson')
 EEZ_DATA_PATH = DATA_DIR / 'World_EEZ_v12_20231025_LR.zip'
 
-# MapTiler / Map Service
-MAPTILER_API_KEY = os.getenv('MAPTILER_API_KEY', '')
 
 # Network and Cache Settings
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '12'))

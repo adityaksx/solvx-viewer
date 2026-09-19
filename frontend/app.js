@@ -85,6 +85,7 @@ class SolvXApp {
         this.bundleCache = {};
         this.currentBundle = null;
         this._bundleReqSeq = 0;
+        this._downloadedRegions = new Set();
     }
 
     async init() {
@@ -402,15 +403,28 @@ class SolvXApp {
         }
     }
 
-    hideDataModal(delayMs = 800) {
+    hideDataModal(delayMs = 0) {
         if (this._dataCountdownInterval) {
             clearInterval(this._dataCountdownInterval);
             this._dataCountdownInterval = null;
         }
-        setTimeout(() => {
-            const modal = document.getElementById('dataDownloadModal');
-            if (modal) modal.classList.add('hidden');
-        }, delayMs);
+        const modal = document.getElementById('dataDownloadModal');
+        if (!modal) return;
+        if (delayMs <= 0) {
+            modal.classList.add('hidden');
+        } else {
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, delayMs);
+        }
+    }
+
+    isLocalRegion(bbox) {
+        if (!bbox) return false;
+        return (
+            bbox.min_lat >= 15.0 && bbox.max_lat <= 24.5 &&
+            bbox.min_lon >= 83.0 && bbox.max_lon <= 94.0
+        );
     }
 
 
@@ -601,15 +615,15 @@ class SolvXApp {
         this.activeVar = varId;
         this.status(`Switching to ${varId}…`);
 
-        // Instant switch if bundle for the active time is already cached!
-        if (this.activeTime && this.bundleCache[this.activeTime]) {
+        // Instant switch if variable is already cached in bundle for the active time!
+        if (this.activeTime && this.bundleCache[this.activeTime] && this.bundleCache[this.activeTime][varId] && !this.bundleCache[this.activeTime][varId].error) {
             this.applyBundleData(this.bundleCache[this.activeTime]);
             this.status(`Ready · Showing ${varId}`);
             return;
         }
 
-        // Otherwise fetch batch bundle for the active timestamp
-        await this.loadTimelineBundle(this.activeTime);
+        // Otherwise fetch this specific variable directly
+        await this.loadActiveVariable();
     }
 
     async loadTimelineBundle(timeIso) {
@@ -619,10 +633,14 @@ class SolvXApp {
         if (this.bundleCache[timeIso]) {
             this.applyBundleData(this.bundleCache[timeIso]);
             this.status(`Ready · Ocean data for ${timeIso.slice(0, 10)}`);
+            this.prefetchAdjacentTimestamps(timeIso);
             return;
         }
 
         const reqSeq = ++this._bundleReqSeq;
+        const isLocal = this.isLocalRegion(this.currentBBox);
+        const regionKey = `${this.currentBBox.min_lat}_${this.currentBBox.max_lat}_${this.currentBBox.min_lon}_${this.currentBBox.max_lon}`;
+        const alreadyDownloaded = isLocal || this._downloadedRegions.has(regionKey);
 
         // Retrieve full timeline bounds for single-pass download
         let startTime = null;
@@ -632,53 +650,17 @@ class SolvXApp {
             endTime = this.timelineControl.allTimestamps[this.timelineControl.allTimestamps.length - 1];
         }
 
-        // Check if data is already available locally on disk or requires downloading
-        let cacheCheck = null;
-        try {
-            cacheCheck = await ApiClient.checkOceanCache({
-                provider: this.activeProvider,
-                bbox: this.currentBBox,
-                depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
-                time: timeIso,
-                start_time: startTime,
-                end_time: endTime
-            });
-        } catch (err) {
-            console.debug('Cache check error:', err);
+        // Show modal ONLY if it is a truly remote download that takes time (NEVER for Bay of Bengal or local disk files)
+        let downloadModalTimeout = null;
+        if (!alreadyDownloaded) {
+            downloadModalTimeout = setTimeout(() => {
+                if (this._bundleReqSeq === reqSeq && !this._downloadedRegions.has(regionKey)) {
+                    this.updateDataProgress('dataStepTemp', 'active', 'Downloading…', 30, 'Downloading Copernicus Marine variables…', 10);
+                }
+            }, 800);
         }
 
-        if (this._bundleReqSeq !== reqSeq) return;
-
-        const isLocal = cacheCheck?.is_cached === true;
-
-        if (!isLocal) {
-            // Data is not cached locally -> Show Download Popup with estimated time!
-            const estSeconds = cacheCheck?.estimated_seconds || 15;
-            let remainingSeconds = estSeconds;
-
-            // Reset steps in download modal
-            ['dataStepTemp', 'dataStepSal', 'dataStepCur', 'dataStepSSH'].forEach(id => {
-                const el = document.getElementById(id);
-                const st = document.getElementById(id.replace('dataStep', 'dataStatus'));
-                const ic = el?.querySelector('.geo-step-icon');
-                if (el) el.className = 'geo-step';
-                if (st) st.textContent = 'Waiting…';
-                if (ic) ic.textContent = '○';
-            });
-
-            this.updateDataProgress('dataStepTemp', 'active', 'Downloading…', 20, 'Downloading Copernicus Marine variables…', remainingSeconds);
-
-            if (this._dataCountdownInterval) clearInterval(this._dataCountdownInterval);
-            this._dataCountdownInterval = setInterval(() => {
-                remainingSeconds = Math.max(1, remainingSeconds - 1);
-                const estEl = document.getElementById('dataModalTimeEst');
-                if (estEl) estEl.textContent = `Estimated time: ~${remainingSeconds}s remaining`;
-            }, 1000);
-
-            this.status(`Downloading ocean data from Copernicus Marine (~${estSeconds}s)…`, 'busy');
-        } else {
-            this.status(`Loading ocean variables from local disk…`, 'busy');
-        }
+        this.status(alreadyDownloaded ? `Loading ocean variables from local disk…` : `Downloading ocean data…`, 'busy');
 
         try {
             const bundle = await ApiClient.getOceanBundle({
@@ -691,49 +673,71 @@ class SolvXApp {
                 stride: 1
             });
 
+            if (downloadModalTimeout) clearTimeout(downloadModalTimeout);
+
             if (this._bundleReqSeq !== reqSeq) return;
 
+            this._downloadedRegions.add(regionKey);
             this.bundleCache[timeIso] = bundle.variables || {};
-
-            if (!isLocal) {
-                // Mark all steps done in modal
-                ['dataStepTemp', 'dataStepSal', 'dataStepCur', 'dataStepSSH'].forEach(id => {
-                    const el = document.getElementById(id);
-                    const st = document.getElementById(id.replace('dataStep', 'dataStatus'));
-                    const ic = el?.querySelector('.geo-step-icon');
-                    if (el) el.className = 'geo-step done';
-                    if (st) st.textContent = 'Saved to disk';
-                    if (ic) ic.textContent = '✓';
-                });
-                this.updateDataProgress(null, null, null, 100, 'Data saved to local disk!', 0);
-                this.hideDataModal(1000);
-            }
+            this.hideDataModal(0);
 
             this.applyBundleData(this.bundleCache[timeIso]);
             this.updateProvenanceUI();
             this.refreshMLAnomalies();
 
-            if (isLocal) {
-                this.status(`⚡ Loaded from local disk (${bundle.provider || 'LOCAL'}) · Instant`);
-            } else {
-                this.status(`💾 Ocean bundle saved to disk · Ready (${bundle.provider || 'Copernicus'})`);
-            }
+            this.status(`⚡ Ocean data loaded (${bundle.provider || 'LOCAL'}) · Ready`);
+
+            // Prefetch adjacent frames in background for instantaneous slider scrubbing & playback
+            this.prefetchAdjacentTimestamps(timeIso);
         } catch (e) {
+            if (downloadModalTimeout) clearTimeout(downloadModalTimeout);
             if (this._bundleReqSeq !== reqSeq) return;
             console.warn(`[SolvXApp] Ocean bundle download failed for ${timeIso}, falling back:`, e);
-            this.hideDataModal(500);
+            this.hideDataModal(0);
             await this.loadActiveVariable();
         }
+    }
+
+    prefetchAdjacentTimestamps(currentIso) {
+        if (!this.timelineControl?.filteredTimestamps?.length) return;
+        const list = this.timelineControl.filteredTimestamps;
+        const curIdx = list.indexOf(currentIso);
+        if (curIdx < 0) return;
+
+        // Prefetch next 2 and previous 1 timestamp in the background
+        const toPrefetch = [curIdx + 1, curIdx + 2, curIdx - 1]
+            .filter(i => i >= 0 && i < list.length)
+            .map(i => list[i])
+            .filter(iso => !this.bundleCache[iso]);
+
+        if (!toPrefetch.length) return;
+
+        toPrefetch.forEach(async (iso) => {
+            try {
+                const bundle = await ApiClient.getOceanBundle({
+                    provider: this.activeProvider,
+                    bbox: this.currentBBox,
+                    depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
+                    time: iso,
+                    stride: 1
+                });
+                if (bundle?.variables) {
+                    this.bundleCache[iso] = bundle.variables;
+                }
+            } catch (_) {}
+        });
     }
 
     applyBundleData(variables) {
         if (!variables) return;
         this.currentBundle = variables;
 
-        if (this.activeVar === 'currents') {
+        const isCurrentsActive = this.activeVar === 'currents';
+
+        if (isCurrentsActive) {
             const curData = variables['currents'];
             if (curData && !curData.error) {
-                this.renderCurrents(curData);
+                this.renderCurrents(curData, true);
             }
         } else {
             const varData = variables[this.activeVar];
@@ -743,20 +747,20 @@ class SolvXApp {
             } else {
                 this.scalarViz?.apply(this.activeVar, null, this.activeDepth, this.activeDepthMode);
             }
-        }
 
-        // Also prepare currents vectors & particles if layer is enabled
-        const curData = variables['currents'];
-        if (curData && !curData.error && this.activeVar !== 'currents' && (this.layerState.currents || this.layerState.particles)) {
-            this.renderCurrents(curData);
+            // Update particle flow in background without overriding active scalar variable or legend
+            const curData = variables['currents'];
+            if (curData && !curData.error && (this.layerState.particles || this.layerState.currents)) {
+                this.renderCurrents(curData, false);
+            }
         }
 
         this.applyLayerVisibility('scientific', this.layerState.scientific);
-        this.applyLayerVisibility('currents', this.layerState.currents);
+        this.applyLayerVisibility('currents', isCurrentsActive && this.layerState.currents);
         this.applyLayerVisibility('particles', this.layerState.particles);
     }
 
-    renderCurrents(data) {
+    renderCurrents(data, isPrimary = true) {
         if (this.currentVectorsGroup) {
             this.scene.disposeObject(this.currentVectorsGroup);
             this.currentVectorsGroup = null;
@@ -766,22 +770,19 @@ class SolvXApp {
             this.currentParticles = null;
         }
 
-        this.lastOceanData = data;
-        this.currentGrid = data;
+        if (isPrimary) {
+            this.lastOceanData = data;
+            this.currentGrid = data;
+        }
         const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
 
         // Build 3D vector arrows
-        this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds);
+        this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds, isPrimary);
         this.scene.setLayer('currents', this.currentVectorsGroup);
 
         // Build animated particles
         this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
         this.scene.setLayer('particles', this.currentParticles.group);
-
-        // Update legend for currents
-        import('./visualization/colorScale.js').then(module => {
-            module.updateLegendUI('currents', 0.0, 1.5, 'm/s');
-        });
     }
 
     async loadActiveVariable() {
@@ -794,8 +795,8 @@ class SolvXApp {
             this.currentParticles = null;
         }
 
-        // Fast path: use already cached bundle data without any network call
-        if (this.activeTime && this.bundleCache[this.activeTime]) {
+        // Fast path: use already cached bundle data if this specific variable is present
+        if (this.activeTime && this.bundleCache[this.activeTime] && this.bundleCache[this.activeTime][this.activeVar] && !this.bundleCache[this.activeTime][this.activeVar].error) {
             this.applyBundleData(this.bundleCache[this.activeTime]);
             this.updateProvenanceUI();
             return;
@@ -816,17 +817,25 @@ class SolvXApp {
                 }
                 const data = await ApiClient.getOceanVariable(requestParams);
                 this.lastOceanData = data;
+                
+                // Store in bundleCache
+                if (this.activeTime) {
+                    if (!this.bundleCache[this.activeTime]) this.bundleCache[this.activeTime] = {};
+                    this.bundleCache[this.activeTime][this.activeVar] = data;
+                    this.currentBundle = this.bundleCache[this.activeTime];
+                }
+                
                 this.scalarViz?.apply(this.activeVar, data, this.activeDepth, this.activeDepthMode);
+                this.status(`Ready · Showing ${this.activeVar}`);
             }
         } catch (e) {
             console.warn(`[SolvXApp] Failed to load variable '${this.activeVar}' with provider '${this.activeProvider}':`, e);
-            this.timelineControl?.pause();
             this.status(`Provider error (${this.activeProvider.toUpperCase()}): ${e.message}`, 'error');
             this.scalarViz?.apply(this.activeVar, null, this.activeDepth, this.activeDepthMode);
         }
 
         this.applyLayerVisibility('scientific', this.layerState.scientific);
-        this.applyLayerVisibility('currents', this.layerState.currents);
+        this.applyLayerVisibility('currents', (this.activeVar === 'currents') && this.layerState.currents);
         this.applyLayerVisibility('particles', this.layerState.particles);
         this.updateProvenanceUI();
     }

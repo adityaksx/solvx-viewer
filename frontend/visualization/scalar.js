@@ -51,14 +51,15 @@ export class ScalarVisualizer {
                 varying vec2 vUv;
                 
                 void main() {
+                    vec2 texCoord = vec2(1.0 - vUv.y, vUv.x);
                     if (uHasBathyTex) {
-                        float depthVal = texture2D(uBathyTex, vec2(1.0 - vUv.y, vUv.x)).r;
+                        float depthVal = texture2D(uBathyTex, texCoord).r;
                         if (depthVal < 0.001) {
                             discard;
                         }
                     }
                     
-                    vec4 col = texture2D(map, vec2(1.0 - vUv.y, 1.0 - vUv.x));
+                    vec4 col = texture2D(map, texCoord);
                     if (col.a < 0.05) discard;
                     
                     gl_FragColor = col;
@@ -70,6 +71,7 @@ export class ScalarVisualizer {
         });
         
         this.sliceMesh = new THREE.Mesh(geom, mat);
+        this.sliceMesh.renderOrder = 15;
         this.sliceMesh.visible = false;
         this.water.group.add(this.sliceMesh);
 
@@ -98,11 +100,25 @@ export class ScalarVisualizer {
         let hi = 31.5;
 
         if (dataArray && dataArray.values && dataArray.values.length) {
-            const flat = dataArray.values.flat(3).filter(v => v != null && isFinite(v));
+            let slice2d = dataArray.values;
+            if (Array.isArray(dataArray.values[0]) && Array.isArray(dataArray.values[0][0])) {
+                const depths = dataArray.metadata?.depth_levels;
+                const idx = findDepthIndex(depths, depthM);
+                slice2d = extractSlice2D(dataArray, idx);
+            }
+
+            const flat = (slice2d || []).flat(2).filter(v => v != null && isFinite(v));
             if (flat.length > 0) {
                 flat.sort((a, b) => a - b);
                 lo = flat[Math.floor(flat.length * 0.02)];
                 hi = flat[Math.floor(flat.length * 0.98)];
+                
+                // Ensure sufficient dynamic range for subtle gradients
+                if (Math.abs(hi - lo) < 0.6) {
+                    const mid = (lo + hi) / 2;
+                    lo = mid - 0.5;
+                    hi = mid + 0.5;
+                }
             }
         }
 
@@ -125,6 +141,17 @@ export class ScalarVisualizer {
         const lats = is3D ? vals[0].length : vals.length;
         const lons = is3D ? vals[0][0].length : vals[0].length;
         
+        // Full volume dynamic range for 3D boxes
+        let volLo = this.range.lo;
+        let volHi = this.range.hi;
+        if (is3D) {
+            const allFlat = vals.flat(3).filter(v => v != null && isFinite(v)).sort((a, b) => a - b);
+            if (allFlat.length > 0) {
+                volLo = allFlat[Math.floor(allFlat.length * 0.02)];
+                volHi = allFlat[Math.floor(allFlat.length * 0.98)];
+            }
+        }
+        
         this.water.recolorCells(c => {
             const j = Math.floor(((c.lat - bounds[2]) / dLat) * lats);
             const i = Math.floor(((c.lon - bounds[0]) / dLon) * lons);
@@ -133,13 +160,13 @@ export class ScalarVisualizer {
             
             let d = 0;
             if (is3D && this.currentData.metadata && this.currentData.metadata.depth_levels) {
-                d = findDepthIndex(this.currentData.metadata.depth_levels, c.depthM / 2);
+                d = findDepthIndex(this.currentData.metadata.depth_levels, c.depthM);
             }
             
             const val = is3D ? vals[d][j][i] : vals[j][i];
             if (val == null || isNaN(val)) return null;
             
-            const color = sampleColor(this.variable, val, this.range.lo, this.range.hi);
+            const color = sampleColor(this.variable, val, volLo, volHi);
             return new THREE.Color(color.r, color.g, color.b);
         });
     }
@@ -156,12 +183,6 @@ export class ScalarVisualizer {
         // Also update volume colors when data changes
         this.applyVolumeColors();
         
-        if (mode === 'volume') {
-            this.sliceMesh.visible = false;
-            this.verticalSliceMesh.visible = false;
-            return;
-        }
-
         if (mode === 'vertical' || mode === 'vertical_custom') {
             this.sliceMesh.visible = false;
             this.verticalSliceMesh.visible = true;
@@ -247,9 +268,9 @@ export class ScalarVisualizer {
             }
         }
         
-        // Position the slice
+        // Position the slice slightly above water plane to prevent z-fighting
         const yPos = this.sceneManager.depthY(depthM);
-        this.sliceMesh.position.set(this._centerX || 0, yPos, this._centerZ || 0);
+        this.sliceMesh.position.set(this._centerX || 0, yPos + 0.35, this._centerZ || 0);
     }
 
     sliceAtDepth(depthM, mode = 'slice') {

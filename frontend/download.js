@@ -366,12 +366,7 @@ class DownloadManager {
                 variables: this.getSelectedVariables()
             };
 
-            const res = await fetch('http://127.0.0.1:8080/api/download/check', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
+            const data = await ApiClient.checkDownloadStatus(payload);
 
             if (data.all_cached) {
                 this.cacheSummaryText.innerHTML = `⚡ <b>All selected layers are already downloaded on local disk!</b> (Instant 3D rendering)`;
@@ -421,18 +416,7 @@ class DownloadManager {
                 resolution
             };
 
-            const res = await fetch('http://127.0.0.1:8080/api/download/execute', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-                const errData = await res.json().catch(() => ({ detail: res.statusText }));
-                throw new Error(errData.detail || 'Download request failed.');
-            }
-
-            const data = await res.json();
+            const data = await ApiClient.executeDownload(payload);
             this.progressBarFill.style.width = '100%';
             this._log(`[Saved] ✓ ${data.message}`);
 
@@ -466,10 +450,7 @@ class DownloadManager {
 
     async loadInventory(force = false) {
         try {
-            const url = force ? 'http://127.0.0.1:8080/api/download/inventory?refresh=true' : 'http://127.0.0.1:8080/api/download/inventory';
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
+            const data = await ApiClient.getDownloadInventory(force);
             this.inventoryData = data;
 
             // Update stats
@@ -480,7 +461,7 @@ class DownloadManager {
             this.renderInventoryTable(this._combineInventoryItems(data));
         } catch (e) {
             console.warn('[DownloadManager] Failed loading inventory:', e);
-            this.invTableBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--accent-red); padding: 20px;">Could not connect to API server at http://127.0.0.1:8080</td></tr>`;
+            this.invTableBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--accent-red); padding: 20px;">Could not connect to API server (${e.message})</td></tr>`;
         }
     }
 

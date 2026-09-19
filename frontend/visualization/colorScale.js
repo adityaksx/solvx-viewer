@@ -106,7 +106,21 @@ export const PALETTES = {
 };
 
 export function getPaletteStops(variable) {
-    return PALETTES[variable] || PALETTES.fallback;
+    if (!variable) return PALETTES.fallback;
+    const v = String(variable).toLowerCase();
+    if (v === 'temperature' || v === 'temp' || v === 'sst' || v === 'ocean_temperature') {
+        return PALETTES.ocean_temperature;
+    }
+    if (v === 'sst_anomaly' || v === 'temperature_anomaly') {
+        return PALETTES.temperature_anomaly;
+    }
+    if (v === 'sea_level' || v === 'ssh' || v === 'sea_surface_height') {
+        return PALETTES.sea_surface_height;
+    }
+    if (v === 'sla' || v === 'sea_level_anomaly') {
+        return PALETTES.sea_level_anomaly;
+    }
+    return PALETTES[v] || PALETTES.fallback;
 }
 
 export function sampleColor(variable, val, lo, hi) {

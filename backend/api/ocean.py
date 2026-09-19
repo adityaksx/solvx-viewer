@@ -141,11 +141,29 @@ def ocean_region_array(
 @router.post('/query')
 def query_region_ocean(req: RegionRequest):
     """Retrieves multidimensional ocean data matching a RegionRequest."""
-    catalog = get_ocean_catalog()
-    avail = [v for v in catalog.get('variables', []) if v.get('available')]
-    return {
-        'bbox': req.bbox.model_dump(),
-        'available_variables': avail,
-        'requested_variables': req.variables,
-        'status': 'ready'
-    }
+    from ..services.data_collector import COLLECTOR
+    
+    start_time = req.time.start if req.time else None
+    end_time = req.time.end if req.time else None
+    depth_val = req.depth.min if req.depth else None
+    
+    try:
+        bundle = COLLECTOR.get_ocean_bundle(
+            min_lat=req.bbox.min_lat,
+            max_lat=req.bbox.max_lat,
+            min_lon=req.bbox.min_lon,
+            max_lon=req.bbox.max_lon,
+            depth=depth_val,
+            start_time=start_time,
+            end_time=end_time,
+            variables=req.variables or ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height']
+        )
+        return {
+            'bbox': req.bbox.model_dump(),
+            'requested_variables': req.variables,
+            'status': 'success',
+            'data': bundle
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

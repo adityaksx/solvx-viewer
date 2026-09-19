@@ -64,9 +64,8 @@ def health():
 
 @app.get('/api/config')
 def get_client_config():
-    from .config import MAPTILER_API_KEY, LOCAL_DATA_MODE, DEFAULT_BBOX, PRESET_REGIONS
+    from .config import LOCAL_DATA_MODE, DEFAULT_BBOX, PRESET_REGIONS
     return {
-        'maptiler_api_key': MAPTILER_API_KEY,
         'local_data_mode': LOCAL_DATA_MODE,
         'default_bbox': DEFAULT_BBOX,
         'preset_regions': PRESET_REGIONS

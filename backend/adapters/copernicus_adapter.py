@@ -151,7 +151,7 @@ class CopernicusAdapter:
         if not t_req and not t_start and not t_end:
             return candidates[0]
 
-        # 1. Prefer candidate covering the full start_time to end_time range if specified
+        # 1. If a full start_time to end_time range is specified, candidate must cover the entire range
         if t_start and t_end:
             for c in candidates:
                 try:
@@ -164,10 +164,11 @@ class CopernicusAdapter:
                                     return c
                 except Exception:
                     continue
+            if not t_req:
+                return None
 
-        # 2. Check candidate covering the specific requested time (or end/start time)
-        eval_time = t_req or t_end or t_start
-        if eval_time:
+        # 2. Check candidate covering the specific requested time (if specified)
+        if t_req:
             for c in candidates:
                 try:
                     with xr.open_dataset(c) as ds:
@@ -175,12 +176,27 @@ class CopernicusAdapter:
                             t_min = _to_naive_utc(ds.time.values.min())
                             t_max = _to_naive_utc(ds.time.values.max())
                             if t_min and t_max:
-                                if (t_min - pd.Timedelta(days=1)) <= eval_time <= (t_max + pd.Timedelta(days=1)):
+                                if (t_min - pd.Timedelta(days=1)) <= t_req <= (t_max + pd.Timedelta(days=1)):
                                     return c
                 except Exception:
                     continue
 
-        return None
+        # 3. Single boundary fallback if only start or end was provided
+        single_boundary = t_start or t_end
+        if single_boundary:
+            for c in candidates:
+                try:
+                    with xr.open_dataset(c) as ds:
+                        if 'time' in ds.coords and ds.time.size > 0:
+                            t_min = _to_naive_utc(ds.time.values.min())
+                            t_max = _to_naive_utc(ds.time.values.max())
+                            if t_min and t_max:
+                                if (t_min - pd.Timedelta(days=1)) <= single_boundary <= (t_max + pd.Timedelta(days=1)):
+                                    return c
+                except Exception:
+                    continue
+
+        return candidates[0] if candidates and not (t_req or t_start or t_end) else None
 
     def fetch_ocean_variable(
         self,

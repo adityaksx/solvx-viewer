@@ -59,10 +59,13 @@ class PointQuery(BaseModel):
             raise ValueError('Longitude must be between -180 and 180')
         return self
 
-SUPPORTED_OCEAN_PROVIDERS = {'auto', 'incois', 'copernicus', 'noaa', 'hycom'}
+SUPPORTED_OCEAN_PROVIDERS = {'auto', 'incois', 'copernicus', 'noaa', 'hycom', 'open_meteo', 'open-meteo', 'local'}
 SUPPORTED_OCEAN_VARIABLES = {
-    'temperature', 'salinity', 'currents', 'sea_surface_height',
-    'sea_level_anomaly', 'mixed_layer_depth', 'tropical_cyclone_heat_potential', 'chlorophyll'
+    'temperature', 'ocean_temperature', 'temp', 'salinity', 'currents', 'current_u', 'current_v',
+    'sea_surface_height', 'sea_level_anomaly', 'mixed_layer_depth', 'tropical_cyclone_heat_potential',
+    'temperature_anomaly', 'sst_anomaly', 'chlorophyll', 'dissolved_oxygen', 'ph', 'nitrate', 'phosphate',
+    'wave_height', 'wave_direction', 'wind_speed', 'wind_direction', 'wind_stress',
+    'air_temperature', 'relative_humidity', 'sea_level_pressure'
 }
 
 class OceanVariableRequest(BaseModel):

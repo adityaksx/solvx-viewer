@@ -15,6 +15,7 @@ Enforces strict layer responsibility:
 import time
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Union
 
 from ..config import (
@@ -613,11 +614,32 @@ class DataCollector:
         start: str = None,
         end: str = None
     ):
-        # We just generate a 7-day timeline from start/end or defaults
-        from datetime import datetime, timedelta, timezone
+        var_norm = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
+        prov_key = 'incois'
         
-        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')) if start else datetime.now(timezone.utc) - timedelta(days=7)
-        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')) if end else datetime.now(timezone.utc)
+        # Check if local/INCOIS timeline is available with real NetCDF coordinates
+        try:
+            incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
+            incois_tl = self.incois.get_variable_timeline(incois_var, min_lat, max_lat, min_lon, max_lon, depth)
+            if incois_tl and incois_tl.get('available_timestamps'):
+                incois_tl['variable'] = var_norm
+                return incois_tl
+        except Exception as e:
+            logger.debug("Failed discovering timeline from INCOIS adapter: %s", e)
+
+        now_utc = datetime.now(timezone.utc)
+        try:
+            start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')) if (start and isinstance(start, str) and start.strip()) else now_utc - timedelta(days=7)
+        except Exception:
+            start_dt = now_utc - timedelta(days=7)
+            
+        try:
+            end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')) if (end and isinstance(end, str) and end.strip()) else now_utc
+        except Exception:
+            end_dt = now_utc
+            
+        if start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
         
         timestamps = []
         curr = start_dt
@@ -627,7 +649,7 @@ class DataCollector:
             
         return {
             'provider': 'Copernicus / Open-Meteo',
-            'variable': variable,
+            'variable': var_norm,
             'dataset': 'solvx_combined',
             'available_from': timestamps[0] if timestamps else None,
             'available_to': timestamps[-1] if timestamps else None,

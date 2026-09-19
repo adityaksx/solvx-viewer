@@ -15,7 +15,7 @@ export function createDataTexture2D(dataArray, varName, minVal, maxVal) {
     for (let j = 0; j < height; j++) {
         for (let i = 0; i < width; i++) {
             const val = values[j][i];
-            const idx = ((height - 1 - j) * width + i) * 4; // Flip Y for WebGL texture
+            const idx = (j * width + i) * 4;
             
             if (val === null || val === undefined || isNaN(val)) {
                 data[idx] = 0;
@@ -24,10 +24,10 @@ export function createDataTexture2D(dataArray, varName, minVal, maxVal) {
                 data[idx+3] = 0; // Transparent for NaN
             } else {
                 const color = sampleColor(varName, val, minVal, maxVal);
-                data[idx] = color.r * 255;
-                data[idx+1] = color.g * 255;
-                data[idx+2] = color.b * 255;
-                data[idx+3] = 200; // Opacity
+                data[idx] = Math.round(color.r * 255);
+                data[idx+1] = Math.round(color.g * 255);
+                data[idx+2] = Math.round(color.b * 255);
+                data[idx+3] = 245; // High opacity for crisp data overlay
             }
         }
     }

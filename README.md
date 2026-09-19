@@ -1,195 +1,865 @@
-# SolvX — Interactive 3D Ocean Explorer (v3.0)
+# SolvX — Interactive 3D Ocean Intelligence Platform
 
-SolvX is a scientific 3D oceanographic visualization and data exploration platform. It couples a global 3D Earth selector with a regional Three.js/WebGL ocean basin scene powered by a high-performance, thread-safe FastAPI backend that dynamically extracts and subsets NetCDF ocean models, bathymetry grids, coastline geometry, and in-situ Argo float profiles.
+SolvX is a web-based scientific ocean visualization and data-analysis platform for exploring the ocean in **2D and 3D across latitude, longitude, depth and time**.
+
+It combines live and cached oceanographic datasets with an interactive Three.js/WebGL scene, bathymetry, observation data, model–observation comparison, anomaly detection and hazard-oriented analysis.
+
+> **Project direction:** SolvX is being developed as a prototype operational intelligence layer toward an Indian Ocean Digital Twin — not simply as another 3D ocean viewer.
 
 ---
 
-## Architecture Flow
+## What SolvX Does
 
+SolvX turns heterogeneous ocean data into an interactive workflow:
+
+```text
+Ocean data
+   ↓
+Provider routing / collection
+   ↓
+2D + 3D / 4D visualization
+   ↓
+Model ↔ observation comparison
+   ↓
+Anomaly analysis
+   ↓
+Hazard and decision-support views
 ```
-+-------------------------------------------------------------------------------+
-|                             INTERACTIVE WORLD GLOBE                           |
-|  - Three.js 3D Sphere with procedural Earth textures and graticules          |
-|  - Bounding Box Drag / Coordinate Form / Major Basin Presets (e.g. Bay of Bengal) |
-+---------------------------------------+---------------------------------------+
-                                        | (Select Region: [min_lon, max_lon, min_lat, max_lat])
-                                        v
-+-------------------------------------------------------------------------------+
-|                               FASTAPI BACKEND                                 |
-|  - /api/region       : Preset basins & bbox validation                        |
-|  - /api/geography    : Natural Earth 10m land & coastline vectors             |
-|  - /api/bathymetry   : GEBCO / model bathymetric seabed elevation grids       |
-|  - /api/ocean        : 3D/4D NetCDF subsets (temp, salinity, currents, SLA)   |
-|  - /api/observations : In-situ Argo float vertical profiles & model RMSE/bias |
-|  - Thread-safe NetCDF access with re-entrant locks & LRU caching             |
-+---------------------------------------+---------------------------------------+
-                                        | (JSON payloads & downsampled arrays)
-                                        v
-+-------------------------------------------------------------------------------+
-|                              3D REGIONAL SCENE                                |
-|  - 3D Extruded Land & Bedrock Slab                                            |
-|  - Shoreline & Exclusive Economic Zone (EEZ) Boundaries                       |
-|  - 3D Bathymetric Seabed Mesh & Procedural Seabed Vegetation                  |
-|  - Dynamic Animated Ocean Water Surface with Wave Shader Animation            |
-|  - 3D Scientific Layers (Temperature, Salinity, Velocity Vector Arrows)       |
-|  - Animated Particle Advection Streamlines                                    |
-|  - Interactive In-Situ Argo Float soundings with live model comparison modal  |
-+-------------------------------------------------------------------------------+
-```
+
+The platform is designed around the idea that visualization should help the user **understand what is happening in the ocean**, not just display a colored map.
 
 ---
 
 ## Key Features
 
-1. **Interactive World Globe & Region Selector**:
-   - Interactive 3D Earth globe with orbit navigation, graticule lines, atmospheric glow, and preset ocean basins (Bay of Bengal, Arabian Sea, South China Sea, Gulf of Mexico, Mediterranean Sea).
-   - Dynamic coordinate bounding box entry with instant validation.
-2. **Dynamic 3D Geography & Bathymetry**:
-   - Dynamic extraction of land polygons and coastlines from Natural Earth 10m zip datasets on the fly.
-   - Smooth bathymetric seabed mesh with realistic vertical elevation scaling.
-   - Procedural seabed decoration (seagrass tufts and rock clusters, clearly flagged visual-only).
-3. **Dynamic Ocean Physics & Wave Simulation**:
-   - Animated water surface with sinusoidal wave vertex displacement and volumetric water column.
-4. **Scientific Visualization Layers**:
-   - **Temperature**: 3D thermal gradient field with depth slicing and volume opacity.
-   - **Salinity**: Practical Salinity Units (PSU) field.
-   - **Currents**: 3D velocity vectors (`uo`, `vo`) and animated particle flow advection.
-   - **Sea Level Anomaly**: Sea surface height variations.
-5. **In-Situ Observation Comparison**:
-   - Real Argo float sounding beacons rendered in 3D with vertical profiling wires down to 1000m.
-   - Clickable float inspection modal with side-by-side vertical profile curves, RMSE, and bias error metrics against model predictions.
-6. **Robust Thread Safety & Performance**:
-   - Thread-safe NetCDF access using re-entrant `threading.RLock()` to prevent C-level `libnetcdf.so` segfaults.
-   - High-throughput LRU in-memory caching and payload downsampling with stride support.
+### 1. Interactive 2D Region Selection
+
+- Interactive world map for selecting an ocean region.
+- Draw a custom bounding box or use predefined basin presets.
+- Coordinate validation before data requests.
+- Current project presets include:
+  - Bay of Bengal
+  - Arabian Sea
+  - South China Sea
+  - Gulf of Mexico
+  - Mediterranean Sea
+
+### 2. Interactive 3D Ocean Scene
+
+The selected region is converted into an interactive WebGL ocean scene using **Three.js**.
+
+The scene can display:
+
+- Extruded land and coastlines
+- Maritime / EEZ boundaries
+- GEBCO bathymetric seabed
+- Water volume
+- Animated surface waves
+- Vertical depth structure
+- Scientific scalar fields
+- Current vectors
+- Animated current particles
+
+Users can orbit, zoom and inspect the ocean volume rather than being limited to a flat surface map.
+
+### 3. Depth-Aware Ocean Visualization
+
+Ocean variables can be inspected through the water column.
+
+Supported interactions include:
+
+- Depth control
+- Volume visualization
+- Depth slicing
+- Custom vertical slice planes
+- Vertical exploration from surface toward deeper layers
+
+This allows subsurface structure to be viewed directly.
+
+### 4. Scientific Variables
+
+The backend supports a normalized variable catalogue across multiple providers.
+
+Core variables include:
+
+| Variable | Typical Unit | Visualization |
+|---|---|---|
+| Temperature | °C | Scalar / 3D |
+| Salinity | PSU | Scalar / 3D |
+| Currents | m/s | Vectors + particles |
+| Sea-surface height | m | Scalar |
+| Sea-level anomaly | m | Scalar |
+| Mixed-layer depth | m | Scalar |
+| Temperature anomaly | °C | Scalar |
+| Chlorophyll | mg/m³ | Scalar / 3D |
+| Dissolved oxygen | mmol/m³ | Scalar / 3D |
+| pH | pH | Scalar / 3D |
+| Nitrate | mmol/m³ | Scalar / 3D |
+| Phosphate | mmol/m³ | Scalar / 3D |
+
+The exact availability depends on the selected provider and dataset.
+
+### 5. Multiple Ocean Data Providers
+
+SolvX provides a central data layer that can route requests to:
+
+- **INCOIS**
+- **Copernicus Marine**
+- **NOAA**
+- **HYCOM**
+- **Local NetCDF archives**
+
+The client can request a specific provider or use:
+
+`provider=auto`
+
+for automatic routing based on provider availability, geographic coverage and variable support.
+
+### 6. GEBCO Bathymetry
+
+The seabed is generated from numerical bathymetric elevation data rather than a synthetic ocean-floor shape.
+
+Bathymetry can be requested at multiple resolutions:
+
+- `low`
+- `medium`
+- `high`
+- `native`
+
+The backend preserves the distinction between:
+
+- **oceanographic variables** — dynamic water-state data
+- **bathymetry** — static seabed elevation
+
+### 7. Argo / In-Situ Observation Visualization
+
+SolvX can display in-situ ocean observations inside the selected region.
+
+The current prototype supports:
+
+- Argo float locations
+- Vertical float profiles
+- Interactive float inspection
+- Model profile retrieval
+- Observation vs model comparison
+
+Selecting a float can open a profile comparison containing:
+
+- Depth
+- Observed temperature
+- Model temperature
+- Difference
+- RMSE
+- Mean model bias
+
+This changes the workflow from simply viewing model output to checking **model behaviour against observations**.
+
+### 8. Model–Observation Comparison
+
+A core project objective is:
+
+```text
+Observed data ↔ Model data
+```
+
+The platform can collocate a model profile with an observed profile and calculate comparison metrics.
+
+Example:
+
+```text
+Depth      Observed      Model      Difference
+------------------------------------------------
+0 m          ...          ...          ...
+50 m         ...          ...          ...
+100 m        ...          ...          ...
+250 m        ...          ...          ...
+500 m        ...          ...          ...
+```
+
+The prototype also exposes RMSE and bias metrics for profile comparison.
+
+### 9. Multivariate Anomaly Detection
+
+SolvX contains an ML-oriented analysis layer for identifying unusual ocean states from multiple variables.
+
+The anomaly system:
+
+- Extracts spatial features
+- Calculates anomaly scores
+- Classifies severity
+- Identifies variables contributing to an anomaly
+- Provides point-level explainability
+
+The intent is to answer:
+
+> **Where does the current ocean state look unusual?**
+
+rather than requiring the user to inspect every variable manually.
+
+### 10. Ocean Hazard / Early-Warning UI
+
+The frontend contains a hazard panel and backend hazard-analysis layer.
+
+The prototype can identify elevated anomaly zones and expose:
+
+- Hazard type
+- Risk score
+- Risk level
+- Predicted center
+- Location uncertainty
+- Expected window
+- Data quality
+- Observation coverage
+- Missing inputs
+- Contributing signals
+
+The current prototype is explicitly **decision-support / analytical**, not an operational warning service.
+
+### 11. Atmospheric + Ocean Point Inspection
+
+Point inspection can combine ocean and atmospheric values where available.
+
+The interface can show fields such as:
+
+- Ocean temperature
+- Salinity
+- Sea level
+- Current velocity and direction
+- Air temperature
+- Wind velocity and direction
+- Relative humidity
+- Surface pressure
+- Anomaly score
+- Hazard risk
+
+### 12. Time-Series / Timeline Exploration
+
+The frontend includes a timeline interface with:
+
+- Historical time state
+- Hourly resolution
+- Daily resolution
+- Monthly resolution
+- Play / pause
+- Playback speed
+- Start/end datetime selection
+- Fetch-data workflow
+
+This provides a basic path toward **4D ocean replay**.
+
+### 13. Data Caching and Performance
+
+The backend is designed to avoid repeatedly downloading the same scientific data.
+
+It uses:
+
+- Local NetCDF archives
+- In-memory caching
+- Cache TTL controls
+- Request downsampling / stride
+- Thread-safe NetCDF access
+- Provider-specific rate/concurrency controls
+
+Large scientific arrays are therefore reduced before being sent to the browser where appropriate.
+
+### 14. Scientific Data Provenance
+
+Provider-specific requests remain explicitly attributed to the source that produced the data.
+
+The architecture distinguishes between:
+
+```text
+LIVE / EXTERNAL PROVIDER
+LOCAL NETCDF CACHE
+```
+
+The system should not silently relabel local or fallback data as another provider.
 
 ---
 
-## Directory Structure
+## Architecture
 
+```text
+                         ┌──────────────────────────┐
+                         │      2D WORLD MAP        │
+                         │ Region / BBOX Selection  │
+                         └────────────┬─────────────┘
+                                      │
+                                      ▼
+                         ┌──────────────────────────┐
+                         │       FastAPI Backend     │
+                         │      Central Data API     │
+                         └────────────┬─────────────┘
+                                      │
+                ┌─────────────────────┼──────────────────────┐
+                │                     │                      │
+                ▼                     ▼                      ▼
+        ┌──────────────┐     ┌──────────────┐      ┌────────────────┐
+        │   INCOIS     │     │  Copernicus  │      │ NOAA / HYCOM   │
+        └──────────────┘     └──────────────┘      └────────────────┘
+                │                     │                      │
+                └─────────────────────┼──────────────────────┘
+                                      │
+                                      ▼
+                             ┌─────────────────┐
+                             │ Normalization / │
+                             │  Subsetting /   │
+                             │    Caching      │
+                             └────────┬────────┘
+                                      │
+                    ┌─────────────────┼──────────────────┐
+                    │                 │                  │
+                    ▼                 ▼                  ▼
+             Ocean Variables     GEBCO Bathymetry   Observations
+                    │                 │                  │
+                    └─────────────────┼──────────────────┘
+                                      ▼
+                         ┌──────────────────────────┐
+                         │      Three.js / WebGL    │
+                         │       3D Ocean Scene     │
+                         └────────────┬─────────────┘
+                                      │
+                   ┌──────────────────┼──────────────────┐
+                   │                  │                  │
+                   ▼                  ▼                  ▼
+             Visualization      ML Analysis       Hazard UI
+             Temperature         Anomalies         Risk zones
+             Salinity            Explainability    Signals
+             Currents             Comparison       Uncertainty
+             Depth / Time
 ```
+
+---
+
+## Technology Stack
+
+### Frontend
+
+- HTML5
+- CSS3
+- JavaScript ES Modules
+- **Three.js**
+- WebGL
+- Interactive 2D map and region-selection UI
+
+### Backend
+
+- Python
+- **FastAPI**
+- **Uvicorn**
+- NumPy
+- Pandas
+- Xarray
+- netCDF4
+- GeoPandas
+- Shapely
+
+### Scientific Data
+
+- NetCDF
+- Copernicus Marine datasets
+- INCOIS / ERDDAP
+- NOAA / ERDDAP
+- HYCOM
+- GEBCO bathymetry
+- Argo / in-situ observations
+
+### Analysis
+
+- Spatial feature extraction
+- Multivariate anomaly detection
+- Model–observation collocation
+- RMSE / bias calculations
+- Hazard scoring
+
+---
+
+## Repository Structure
+
+```text
 solvx-viewer/
 ├── backend/
-│   ├── main.py                     # FastAPI entry point & backward compatibility routes
-│   ├── config.py                   # Basin presets, paths, thresholds, and defaults
-│   ├── models/
-│   │   └── requests.py             # Pydantic request models & coordinate validators
-│   ├── processing/
-│   │   ├── coordinate_utils.py     # Lon/Lat to regional km Easting/Northing projection
-│   │   ├── normalization.py        # Nan/Inf sanitization & variable cataloging
-│   │   ├── subset.py               # Multidimensional xarray downsampling & slicing
-│   │   └── interpolation.py        # 1D vertical profile interpolation & RMSE/bias computation
-│   ├── services/
-│   │   ├── cache_service.py        # Thread-safe NetCDF lock & LRU memory cache
-│   │   ├── geography_service.py    # Natural Earth 10m land & coastline extraction
-│   │   ├── bathymetry_service.py   # Seabed elevation grid generation
-│   │   ├── ocean_data_service.py   # NetCDF model reading (temperature, currents, etc.)
-│   │   └── observation_service.py  # Argo float sounding profiles & collocation
-│   └── api/
-│       ├── region.py               # /api/region endpoints
-│       ├── geography.py            # /api/geography endpoints
-│       ├── bathymetry.py           # /api/bathymetry endpoints
-│       ├── ocean.py                # /api/ocean endpoints
-│       └── observations.py         # /api/observations endpoints
-├── frontend/
-│   ├── index.html                  # Responsive HTML shell
-│   ├── styles.css                  # Marine design system stylesheet
-│   ├── app.js                      # Application orchestrator (Globe <-> 3D Scene <-> Controls)
 │   ├── api/
-│   │   └── apiClient.js            # Unified async API client
-│   ├── globe/
-│   │   ├── worldMap.js             # Interactive 3D Earth globe with selection box
-│   │   ├── regionSelector.js       # Ocean basin preset chips
-│   │   └── coordinateInput.js      # Coordinate input form
+│   │   ├── data.py              # Central provider/data APIs
+│   │   ├── download.py          # Data download endpoints
+│   │   ├── geography.py         # Geography endpoints
+│   │   ├── bathymetry.py        # Bathymetry endpoints
+│   │   ├── ocean.py             # Ocean APIs
+│   │   ├── observations.py      # In-situ observation APIs
+│   │   ├── region.py            # Region selection/validation
+│   │   └── ml.py                # ML/anomaly endpoints
+│   │
+│   ├── adapters/
+│   │   ├── copernicus_adapter.py
+│   │   ├── incois_adapter.py
+│   │   ├── noaa_adapter.py
+│   │   ├── hycom_adapter.py
+│   │   ├── bathymetry_adapter.py
+│   │   ├── geography_adapter.py
+│   │   └── observation_adapter.py
+│   │
+│   ├── ml/
+│   │   ├── anomaly_detector.py
+│   │   ├── feature_engineering.py
+│   │   ├── hazard_model.py
+│   │   ├── predictor.py
+│   │   └── schemas.py
+│   │
+│   ├── processing/
+│   │   ├── coordinate_utils.py
+│   │   ├── interpolation.py
+│   │   ├── normalization.py
+│   │   └── subset.py
+│   │
+│   ├── services/
+│   │   ├── data_collector.py
+│   │   ├── ocean_data_service.py
+│   │   ├── observation_service.py
+│   │   ├── bathymetry_service.py
+│   │   ├── geography_service.py
+│   │   ├── download_service.py
+│   │   ├── eez_service.py
+│   │   └── cache_service.py
+│   │
+│   ├── config.py
+│   └── main.py
+│
+├── frontend/
+│   ├── app.js
+│   ├── index.html
+│   ├── styles.css
+│   │
+│   ├── api/
+│   ├── controls/
+│   ├── map/
 │   ├── scene/
-│   │   ├── oceanScene.js           # Three.js scene manager, camera presets & lighting
-│   │   ├── land.js                 # 3D extruded land geometry & bedrock slab
-│   │   ├── coastline.js            # Coastline vectors & EEZ boundary beads
-│   │   ├── seabed.js               # 3D bathymetric seabed mesh
-│   │   ├── vegetation.js           # Procedural seabed decoration (seagrass/rocks)
-│   │   └── water.js                # Dynamic water surface & volumetric column
-│   ├── visualization/
-│   │   ├── colorScale.js           # Scientific colormaps & legend generator
-│   │   ├── temperature.js          # Temperature layer & vertical slicing
-│   │   ├── salinity.js             # Salinity layer
-│   │   ├── currents.js             # 3D current velocity arrows
-│   │   └── particles.js            # Animated flow particle system
-│   └── controls/
-│       ├── variableControl.js      # Physical variable selector
-│       ├── depthControl.js         # Depth slider & volume/slice toggle
-│       ├── timelineControl.js      # Temporal scrubber & play/pause loop
-│       └── opacityControl.js       # Vertical exaggeration & layer opacity
-├── data/                           # Natural Earth shapes & NetCDF ocean models
+│   ├── ui/
+│   └── visualization/
+│
+├── data/
+├── docs/
+├── scripts/
 ├── tests/
-│   └── test_all.py                 # Automated unit and concurrency test suite
-├── run.py                          # Unified launcher (Backend: 8000, Frontend: 5500)
-└── requirements.txt                # Python dependencies
+├── package.json
+├── requirements.txt
+├── run.py
+└── .env.example
 ```
 
 ---
 
-## Quick Start
+## Installation
 
-### 1. Requirements & Setup
+### Prerequisites
+
+Install:
+
+- **Python 3.10+**
+- **pip**
+- **Git**
+- A modern web browser with WebGL support
+
+Node.js is only needed for repository tooling such as the Puppeteer dependency; the main application itself is launched with Python.
+
+---
+
+## 1. Clone the Repository
 
 ```bash
-# Clone the repository
 git clone https://github.com/adityaksx/solvx-viewer.git
 cd solvx-viewer
+```
 
-# Activate virtual environment
-python -m venv .venv
+---
+
+## 2. Create a Python Virtual Environment
+
+### Linux / macOS
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+```
 
-# Install dependencies
+### Windows PowerShell
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+---
+
+## 3. Install Python Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Launch SolvX
+This installs the application's current Python stack:
+
+```text
+fastapi
+uvicorn
+numpy
+pandas
+xarray
+netCDF4
+geopandas
+shapely
+```
+
+---
+
+## 4. Optional: Install Node Dependencies
+
+The repository also contains a `package.json` with Puppeteer.
+
+```bash
+npm install
+```
+
+This is not required for the normal `python run.py` application startup.
+
+---
+
+## Configuration
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+The repository currently includes environment variables for:
+
+- Copernicus Marine credentials
+- INCOIS API/auth configuration
+- NOAA endpoint configuration
+- Request timeouts
+- Cache size / TTL
+- Local-data mode
+
+Example:
+
+```env
+COPERNICUSMARINE_SERVICE_USERNAME=
+COPERNICUSMARINE_SERVICE_PASSWORD=
+```
+
+Do **not** commit real credentials to GitHub.
+
+---
+
+## Running SolvX
+
+The easiest way to start the complete application is:
 
 ```bash
 python run.py
 ```
 
-The launcher will:
-1. Start the FastAPI backend at `http://127.0.0.1:8000` (interactive docs at `http://127.0.0.1:8000/docs`).
-2. Start the HTTP frontend server at `http://127.0.0.1:5500`.
-3. Automatically open `http://127.0.0.1:5500` in your default web browser.
+The launcher starts:
+
+- **Frontend:** http://127.0.0.1:5500
+- **Backend API:** http://127.0.0.1:8080
+- **FastAPI Swagger UI:** http://127.0.0.1:8080/docs
+
+Open:
+
+```text
+http://127.0.0.1:5500
+```
+
+The `run.py` launcher runs the FastAPI server and a lightweight HTTP server for the frontend together.
 
 ---
 
-## REST API Reference
+## Running the Backend Separately
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | API health check and version info |
-| `GET` | `/api/region/presets` | List predefined major ocean basins (Bay of Bengal, etc.) |
-| `POST` | `/api/region/validate` | Validate geographic bounds and calculate dimensions |
-| `GET` | `/api/geography` | Retrieve 3D land polygons, coastline vectors, and EEZ lines |
-| `GET` | `/api/bathymetry` | Retrieve seabed elevation grid (`x, y, rawDepthKm`) |
-| `GET` | `/api/ocean/catalog` | List available ocean variables with units and ranges |
-| `GET` | `/api/ocean/time` | List temporal coordinate steps in the model dataset |
-| `GET` | `/api/ocean/current-grid` | Retrieve horizontal current vectors (`u, v`) across grid |
-| `GET` | `/api/ocean/point` | Inspect all physical variables at a specific (lat, lon) point |
-| `GET` | `/api/ocean/region-array` | Downsampled 3D array subset for a specific variable |
-| `GET` | `/api/observations` | Retrieve in-situ Argo float profiles in the selected region |
-| `GET` | `/api/observations/compare/{id}` | Vertical profile comparison between float and model (with RMSE & bias) |
+For backend development:
+
+```bash
+uvicorn backend.main:app --host 127.0.0.1 --port 8080
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080/docs
+```
 
 ---
 
-## Running Automated Tests
+## API Overview
 
-Run the comprehensive unit and concurrency test suite:
+The central data router is available under:
+
+```text
+/api/data
+```
+
+### Provider APIs
+
+```http
+GET /api/data/providers
+GET /api/data/providers/status
+GET /api/data/providers/{provider}/variables
+GET /api/data/providers/{provider}/datasets
+GET /api/data/providers/{provider}/metadata
+```
+
+### Ocean Data
+
+```http
+GET  /api/data/ocean
+POST /api/data/ocean
+GET  /api/data/ocean/bundle
+GET  /api/data/ocean/check
+GET  /api/data/ocean/{variable}
+```
+
+Typical parameters include:
+
+```text
+provider
+variable
+min_lat
+max_lat
+min_lon
+max_lon
+depth
+time
+stride
+resolution
+```
+
+### Combined Region
+
+```http
+GET  /api/data/region
+POST /api/data/region
+```
+
+This can combine ocean data with bathymetry for 3D rendering.
+
+### Bathymetry
+
+```http
+GET  /api/data/bathymetry
+POST /api/data/bathymetry
+```
+
+Supported resolution modes:
+
+```text
+low
+medium
+high
+native
+```
+
+### Geometry
+
+```http
+GET /api/data/geometry
+```
+
+### Variables
+
+```http
+GET /api/data/variables
+```
+
+Additional legacy / compatibility APIs remain available under the older `/api/ocean`, `/api/region`, `/api/geography` and related routes.
+
+The complete interactive API specification is available through Swagger:
+
+**http://127.0.0.1:8080/docs**
+
+---
+
+## Typical Usage
+
+A normal exploration workflow is:
+
+```text
+1. Open SolvX
+       ↓
+2. Select an ocean region
+       ↓
+3. Choose a provider
+       ↓
+4. Select a variable
+       ↓
+5. Select time / depth
+       ↓
+6. Load the 3D ocean scene
+       ↓
+7. Inspect temperature / salinity / currents
+       ↓
+8. Inspect Argo observations
+       ↓
+9. Compare observation with model
+       ↓
+10. Examine anomalies / hazard signals
+```
+
+---
+
+## Testing
+
+The repository contains an automated test suite covering API behaviour, data processing, provider logic and concurrency-related behaviour.
+
+Run:
 
 ```bash
 python -m unittest tests/test_all.py
 ```
 
-The test suite validates:
-- API root and health checks
-- Region presets and Pydantic validation (including boundary constraints)
-- Dynamic geography and bathymetry services
-- Ocean catalog, temporal steps, current grids, point queries, and region array subsets
-- In-situ Argo observation retrieval and vertical profile comparison with RMSE/bias
-- Legacy endpoint backward compatibility
-- Multi-threaded concurrency safety (15 parallel threads executing simultaneous NetCDF queries)
+Additional provider/data tests are available under:
 
+```text
+tests/
+├── test_all.py
+├── test_data_collector.py
+└── test_ocean_providers.py
+```
+
+---
+
+## Important Data / Scientific Notes
+
+### Provider transparency
+
+When a provider is explicitly selected, SolvX is designed to return an error instead of silently replacing that provider with another source when the requested upstream service fails.
+
+This matters because scientific provenance should remain visible.
+
+### Local data mode
+
+SolvX can use cached or locally available NetCDF data when appropriate.
+
+Local data is identified as local data and should not be presented as if it came directly from an external provider.
+
+### Bathymetry is separate from ocean state
+
+GEBCO is used for seabed elevation. It is not treated as an oceanographic variable.
+
+### Prototype hazard analysis
+
+The anomaly and hazard systems are prototype analytical components. Their results should not be treated as official operational warnings or forecasts.
+
+---
+
+## Project Goals
+
+SolvX is being developed around six layers:
+
+### Explore
+
+Interactive 2D/3D ocean visualization.
+
+### Observe
+
+Bring Argo and other in-situ measurements into the same spatial context.
+
+### Compare
+
+Automatically compare model output with observations.
+
+### Diagnose
+
+Expose anomalies, bias, uncertainty and observation gaps.
+
+### Decide
+
+Provide decision-oriented workflows such as hazard-oriented exploration.
+
+### Explain
+
+Build toward a scientific query layer that can explain the selected ocean state using the available data.
+
+The intended progression is:
+
+```text
+DATA
+  ↓
+VISUALIZATION
+  ↓
+OBSERVATION
+  ↓
+COMPARISON
+  ↓
+ANOMALY
+  ↓
+ANALYSIS
+  ↓
+DECISION SUPPORT
+```
+
+---
+
+## Roadmap Direction
+
+Possible future extensions include:
+
+- Ocean replay for major events
+- Stronger uncertainty visualization
+- Observation-density / blind-spot maps
+- Observation-placement decision support
+- Dedicated cyclone / oil-spill / search-and-rescue workflows
+- Scientific question mode
+- Data-grounded AI assistant
+- More in-situ sources such as gliders, buoys and CTD profiles
+- Expanded model–observation validation
+- Toward an Indian Ocean Digital Twin workflow
+
+---
+
+## Data Sources
+
+The project architecture currently references and integrates:
+
+- Copernicus Marine Service
+- INCOIS / ERDDAP
+- NOAA data services
+- HYCOM
+- GEBCO bathymetry
+- Argo / in-situ observations
+- Local NetCDF datasets
+
+See the detailed provider and architecture documentation:
+
+```text
+docs/data_sources.md
+```
+
+---
+
+## Copernicus Marine Credentials
+
+**Important:** To fetch live data from **Copernicus Marine**, you need valid Copernicus Marine credentials.
+
+Create your credentials configuration using:
+
+```env
+COPERNICUSMARINE_SERVICE_USERNAME=YOUR_USERNAME
+COPERNICUSMARINE_SERVICE_PASSWORD=YOUR_PASSWORD
+```
+
+The application can discover credentials from the environment and from the Copernicus Marine credentials file used by the adapter.
+
+For security:
+
+- Never hard-code your username/password in source files.
+- Never commit `.env` or credential files to Git.
+- Keep credentials local to your machine or deployment environment.
+
+Without valid Copernicus credentials, Copernicus-backed live data requests may return a missing-credentials / authentication error. Other providers or locally cached data may still be available depending on the selected region, variable and configuration.
+
+---
+
+## License
+
+The repository currently declares the **ISC** license in `package.json`.

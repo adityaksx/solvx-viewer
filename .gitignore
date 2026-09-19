@@ -1,7 +1,6 @@
 __pycache__/
 *.py[cod]
 .venv/
-/data
 /data/model
 core
 core.*
@@ -118,3 +117,5 @@ fix_var_control_brace.py
 fix_var_control_final.py
 plan.md
 server.log
+/data/external
+bug_report.md

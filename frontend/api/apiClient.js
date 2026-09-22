@@ -569,7 +569,51 @@ export const ApiClient = {
         if (params.variable) q.set('variable', params.variable);
         const qs = q.toString();
         return request(`/api/analysis/summary${qs ? `?${qs}` : ''}`);
-    }
+    },
+
+    // =========================================================================
+    // Stage 5: Anomaly Detection & Abnormal Region Extraction
+    // =========================================================================
+
+    /**
+     * Detects anomalous depth levels in all Argo float vertical profiles.
+     * @param {Object} params - { variable, method, threshold_sigma, threshold_abs, min_lat, max_lat, min_lon, max_lon, time }
+     */
+    async getAnomalies(params = {}) {
+        const q = new URLSearchParams();
+        if (params.variable)          q.set('variable', params.variable);
+        if (params.method)            q.set('method', params.method);
+        if (params.threshold_sigma != null) q.set('threshold_sigma', String(params.threshold_sigma));
+        if (params.threshold_abs   != null) q.set('threshold_abs',   String(params.threshold_abs));
+        if (params.min_lat != null)   q.set('min_lat', String(params.min_lat));
+        if (params.max_lat != null)   q.set('max_lat', String(params.max_lat));
+        if (params.min_lon != null)   q.set('min_lon', String(params.min_lon));
+        if (params.max_lon != null)   q.set('max_lon', String(params.max_lon));
+        if (params.time)              q.set('time', params.time);
+        const qs = q.toString();
+        return request(`/api/analysis/anomalies${qs ? `?${qs}` : ''}`, { noCache: true });
+    },
+
+    /**
+     * Extracts spatially clustered bounding volumes of anomalous ocean regions,
+     * each with a FOCUS_REGION command for the 3D viewer bridge.
+     * @param {Object} params - { variable, method, threshold_sigma, threshold_abs, grid_res_deg, min_lat, max_lat, min_lon, max_lon, time }
+     */
+    async getAbnormalRegions(params = {}) {
+        const q = new URLSearchParams();
+        if (params.variable)          q.set('variable', params.variable);
+        if (params.method)            q.set('method', params.method);
+        if (params.threshold_sigma != null) q.set('threshold_sigma', String(params.threshold_sigma));
+        if (params.threshold_abs   != null) q.set('threshold_abs',   String(params.threshold_abs));
+        if (params.grid_res_deg    != null) q.set('grid_res_deg',    String(params.grid_res_deg));
+        if (params.min_lat != null)   q.set('min_lat', String(params.min_lat));
+        if (params.max_lat != null)   q.set('max_lat', String(params.max_lat));
+        if (params.min_lon != null)   q.set('min_lon', String(params.min_lon));
+        if (params.max_lon != null)   q.set('max_lon', String(params.max_lon));
+        if (params.time)              q.set('time', params.time);
+        const qs = q.toString();
+        return request(`/api/analysis/abnormal-regions${qs ? `?${qs}` : ''}`, { noCache: true });
+    },
 };
 
 

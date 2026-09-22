@@ -22,7 +22,12 @@ from ..models.analysis import (
     CoverageAnalysisResponse,
     GapRegion,
     DataGapsResponse,
-    AnalysisSummaryResponse
+    AnalysisSummaryResponse,
+    AnomalyRecord,
+    AnomalyDetectionResponse,
+    FocusCommand,
+    AbnormalRegion,
+    AbnormalRegionResponse,
 )
 
 
@@ -568,4 +573,300 @@ def generate_analysis_summary(
             'vertical_gaps_count': len(gaps_res.vertical_depth_gaps)
         },
         status="READY"
+    )
+
+
+# ==============================================================================
+# Stage 5: Anomaly Detection & Abnormal Region Extraction
+# ==============================================================================
+
+def _severity_from_zscore(z: float) -> str:
+    """Converts an absolute z-score to a severity label."""
+    az = abs(z)
+    if az >= 3.0:
+        return "HIGH"
+    elif az >= 2.0:
+        return "MODERATE"
+    return "LOW"
+
+
+def _severity_from_abs(diff: float, threshold_abs: float) -> str:
+    """Converts an absolute difference to a severity label relative to threshold_abs."""
+    if diff >= threshold_abs * 2.0:
+        return "HIGH"
+    elif diff >= threshold_abs:
+        return "MODERATE"
+    return "LOW"
+
+
+def detect_anomalies(
+    variable: str = 'temperature',
+    method: str = 'zscore',
+    threshold_sigma: float = 2.0,
+    threshold_abs: float = 2.0,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    time_iso: Optional[str] = None,
+) -> AnomalyDetectionResponse:
+    """
+    Scans all Argo float vertical profiles for anomalous depth levels using
+    deterministic methods:
+      - zscore           : |z| > threshold_sigma  (z = (value - basin_mean) / basin_std)
+      - threshold        : abs(value - climatology_model) > threshold_abs
+      - model_observation: abs(observed - model_interp) > threshold_abs
+      - local_deviation  : abs(value - local_mean_at_depth) > threshold_abs
+
+    Each flagged depth level produces one AnomalyRecord containing: variable,
+    location, depth, time, observed value, baseline, difference, z_score,
+    detection_method, and severity.  Thresholds are software defaults and
+    must not be hard-coded in production callers.
+    """
+    obs_list = get_argo_observations(
+        min_lon=min_lon, max_lon=max_lon,
+        min_lat=min_lat, max_lat=max_lat
+    )
+    if not obs_list:
+        obs_list = ARGO_OBSERVATIONS
+
+    val_key = 'temperature' if variable == 'temperature' else 'salinity'
+    alt_key = 'temp' if variable == 'temperature' else 'sal'
+
+    # ── Pass 1: collect all (depth, value) pairs for basin-wide statistics ──
+    all_depths: List[float] = []
+    all_values: List[float] = []
+    for obs in obs_list:
+        for pt in obs.get('profile', []):
+            v = pt.get(val_key) or pt.get(alt_key)
+            if v is not None:
+                all_depths.append(float(pt.get('depth', 0.0)))
+                all_values.append(float(v))
+
+    arr_depths = np.array(all_depths, dtype=float)
+    arr_values = np.array(all_values, dtype=float)
+    basin_mean = float(np.mean(arr_values)) if len(arr_values) > 0 else 0.0
+    basin_std  = float(np.std(arr_values))  if len(arr_values) > 1 else 1.0
+    if basin_std == 0.0:
+        basin_std = 1.0
+
+    # ── Pass 2: flag anomalies per float ──
+    anomalies: List[AnomalyRecord] = []
+    total_depth_levels = 0
+
+    for obs in obs_list:
+        float_id  = str(obs.get('float_id', obs.get('id', 'unknown')))
+        wmo       = int(obs.get('wmo', 0))
+        lat       = float(obs.get('latitude', 0.0))
+        lon       = float(obs.get('longitude', 0.0))
+        timestamp = str(obs.get('timestamp', ''))
+
+        # Pre-fetch model column for this float's position
+        m_depths, m_vals = extract_model_vertical_column(lat, lon, variable=variable, time_iso=time_iso)
+        sort_idx = np.argsort(m_depths)
+        m_depths_s = m_depths[sort_idx]
+        m_vals_s   = m_vals[sort_idx]
+
+        # Depth-band local statistics (±50 m window)
+        profile_points = obs.get('profile', [])
+        total_depth_levels += len(profile_points)
+
+        for pt in profile_points:
+            v = pt.get(val_key) or pt.get(alt_key)
+            if v is None:
+                continue
+            value = float(v)
+            depth = float(pt.get('depth', 0.0))
+
+            # Local mean within ±50 m band across all floats
+            mask = np.abs(arr_depths - depth) <= 50.0
+            local_vals = arr_values[mask]
+            local_mean = float(np.mean(local_vals)) if len(local_vals) > 0 else basin_mean
+            local_std  = float(np.std(local_vals))  if len(local_vals) > 1 else basin_std
+            if local_std == 0.0:
+                local_std = basin_std
+
+            # Model interpolated value at this depth
+            model_val = float(np.interp(depth, m_depths_s, m_vals_s))
+
+            flagged    = False
+            baseline   = basin_mean
+            difference = value - baseline
+            z_score_v: Optional[float] = None
+
+            if method == 'zscore':
+                z = (value - basin_mean) / basin_std
+                z_score_v = round(float(z), 4)
+                if abs(z) > threshold_sigma:
+                    flagged   = True
+                    baseline  = basin_mean
+                    difference = value - baseline
+
+            elif method == 'threshold':
+                diff = value - model_val
+                if abs(diff) > threshold_abs:
+                    flagged    = True
+                    baseline   = model_val
+                    difference = diff
+
+            elif method == 'model_observation':
+                diff = value - model_val
+                if abs(diff) > threshold_abs:
+                    flagged    = True
+                    baseline   = model_val
+                    difference = diff
+
+            elif method == 'local_deviation':
+                z = (value - local_mean) / local_std
+                z_score_v = round(float(z), 4)
+                diff = value - local_mean
+                if abs(diff) > threshold_abs:
+                    flagged    = True
+                    baseline   = local_mean
+                    difference = diff
+
+            if flagged:
+                abs_diff = abs(difference)
+                sev = (_severity_from_zscore(z_score_v) if z_score_v is not None
+                       else _severity_from_abs(abs_diff, threshold_abs))
+                anomalies.append(AnomalyRecord(
+                    variable=variable,
+                    float_id=float_id,
+                    wmo=wmo,
+                    latitude=round(lat, 4),
+                    longitude=round(lon, 4),
+                    depth=round(depth, 2),
+                    time=timestamp,
+                    value=round(value, 4),
+                    baseline=round(float(baseline), 4),
+                    difference=round(float(difference), 4),
+                    abs_difference=round(float(abs_diff), 4),
+                    z_score=z_score_v,
+                    detection_method=method,
+                    severity=sev,
+                ))
+
+    return AnomalyDetectionResponse(
+        variable=variable,
+        method=method,
+        threshold_sigma=threshold_sigma,
+        threshold_abs=threshold_abs,
+        floats_scanned=len(obs_list),
+        total_depth_levels=total_depth_levels,
+        anomaly_count=len(anomalies),
+        anomalies=anomalies,
+    )
+
+
+def extract_abnormal_regions(
+    variable: str = 'temperature',
+    method: str = 'zscore',
+    threshold_sigma: float = 2.0,
+    threshold_abs: float = 2.0,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    time_iso: Optional[str] = None,
+    grid_res_deg: float = 1.0,
+) -> AbnormalRegionResponse:
+    """
+    Extracts spatially clustered bounding volumes of anomalous observations.
+    Each cluster becomes an AbnormalRegion with:
+      - bounding box (lat/lon)
+      - depth range [min_depth, max_depth]
+      - aggregate anomaly magnitude (mean / max)
+      - severity (CRITICAL / MODERATE / LOW)
+      - a FocusCommand for the 3D viewer bridge
+
+    The clustering is grid-based (same 1°×1° approach as coverage analysis),
+    grouping AnomalyRecords that fall in the same spatial cell.
+    """
+    det = detect_anomalies(
+        variable=variable,
+        method=method,
+        threshold_sigma=threshold_sigma,
+        threshold_abs=threshold_abs,
+        min_lon=min_lon,
+        max_lon=max_lon,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        time_iso=time_iso,
+    )
+
+    if not det.anomalies:
+        return AbnormalRegionResponse(
+            variable=variable,
+            method=method,
+            region_count=0,
+            regions=[],
+        )
+
+    # Cluster anomaly records into 1° spatial grid cells
+    cells: Dict[str, List[AnomalyRecord]] = {}
+    for rec in det.anomalies:
+        cell_lat = float(np.floor(rec.latitude / grid_res_deg) * grid_res_deg)
+        cell_lon = float(np.floor(rec.longitude / grid_res_deg) * grid_res_deg)
+        key = f"{cell_lat:.1f}_{cell_lon:.1f}"
+        cells.setdefault(key, []).append(rec)
+
+    regions: List[AbnormalRegion] = []
+    for idx, (key, recs) in enumerate(sorted(cells.items()), start=1):
+        lats = [r.latitude for r in recs]
+        lons = [r.longitude for r in recs]
+        depths = [r.depth for r in recs]
+        mags = [r.abs_difference for r in recs]
+
+        center_lat = float(np.mean(lats))
+        center_lon = float(np.mean(lons))
+        center_depth = float(np.mean(depths))
+        mag_mean = float(np.mean(mags))
+        mag_max  = float(np.max(mags))
+
+        # Severity: if any HIGH in cluster → CRITICAL; any MODERATE → MODERATE; else LOW
+        sev_set = {r.severity for r in recs}
+        if "HIGH" in sev_set:
+            region_severity = "CRITICAL"
+        elif "MODERATE" in sev_set:
+            region_severity = "MODERATE"
+        else:
+            region_severity = "LOW"
+
+        region_id = f"abnormal_region_{idx}"
+        region_name = f"Anomalous {variable.capitalize()} Zone {idx}"
+
+        regions.append(AbnormalRegion(
+            id=region_id,
+            name=region_name,
+            bbox={
+                'min_lat': round(min(lats), 4),
+                'max_lat': round(max(lats), 4),
+                'min_lon': round(min(lons), 4),
+                'max_lon': round(max(lons), 4),
+            },
+            depth_range_m=[round(min(depths), 1), round(max(depths), 1)],
+            anomaly_count=len(recs),
+            anomaly_magnitude_mean=round(mag_mean, 4),
+            anomaly_magnitude_max=round(mag_max, 4),
+            variable=variable,
+            severity=region_severity,
+            focus_command=FocusCommand(
+                action="FOCUS_REGION",
+                lat=round(center_lat, 4),
+                lon=round(center_lon, 4),
+                depth=round(center_depth, 1),
+                variable=variable,
+                layer="anomaly",
+            ),
+        ))
+
+    # Sort regions by severity: CRITICAL first
+    severity_order = {"CRITICAL": 0, "MODERATE": 1, "LOW": 2}
+    regions.sort(key=lambda r: severity_order.get(r.severity, 3))
+
+    return AbnormalRegionResponse(
+        variable=variable,
+        method=method,
+        region_count=len(regions),
+        regions=regions,
     )

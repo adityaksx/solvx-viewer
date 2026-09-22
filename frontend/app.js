@@ -25,6 +25,7 @@ import { OpacityControl } from './controls/opacityControl.js';
 import { HazardUI } from './ui/hazardUI.js';
 import { ViewerController } from './viewer/viewerController.js';
 import { ProfileViewer } from './profiles/profileViewer.js';
+import { AnalysisPanel } from './analysis/analysisPanel.js';
 
 class SolvXApp {
     constructor() {
@@ -1225,6 +1226,8 @@ window.addEventListener('DOMContentLoaded', () => {
     const app = new SolvXApp();
     window.solvx = app;
     window.solvxViewer = app.viewerController;
+    // Stage 5: Initialize Analysis Dashboard Panel
+    AnalysisPanel.init(app.viewerController);
     app.init().catch(err => {
         console.error('Fatal initialization error:', err);
         const fatal = document.getElementById('fatal');

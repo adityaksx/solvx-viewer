@@ -234,6 +234,11 @@ export class ViewerController {
             case 'gaps':
             case 'data_gaps':
                 return ApiClient.getDataGaps(queryParams);
+            case 'anomalies':
+                return ApiClient.getAnomalies(queryParams);
+            case 'abnormal-regions':
+            case 'abnormal_regions':
+                return ApiClient.getAbnormalRegions(queryParams);
             case 'summary':
             default:
                 return ApiClient.getAnalysisSummary(queryParams);
@@ -266,5 +271,111 @@ export class ViewerController {
      */
     async getAnalysisSummary(params = {}) {
         return this.runAnalysis('summary', params);
+    }
+
+    // =========================================================================
+    // Stage 5: Anomaly Detection, Abnormal Region Extraction & 3D Highlighting
+    // =========================================================================
+
+    /**
+     * Detects anomalous depth levels across all Argo float profiles.
+     * @param {Object} [params] - { variable, method, threshold_sigma, threshold_abs, ... }
+     */
+    async getAnomalies(params = {}) {
+        return this.runAnalysis('anomalies', params);
+    }
+
+    /**
+     * Extracts spatially clustered bounding volumes of anomalous observations.
+     * Returns AbnormalRegionResponse with FOCUS_REGION commands per region.
+     * @param {Object} [params] - { variable, method, threshold_sigma, threshold_abs, grid_res_deg, ... }
+     */
+    async getAbnormalRegions(params = {}) {
+        return this.runAnalysis('abnormal-regions', params);
+    }
+
+    /**
+     * Renders a translucent 3D bounding-box highlight in the scene for an AbnormalRegion.
+     * Additive — does NOT modify oceanShader.js or the camera pipeline.
+     *
+     * @param {Object} region - AbnormalRegion JSON from /api/analysis/abnormal-regions
+     * @returns {THREE.Mesh|null} The created mesh, or null if scene unavailable.
+     */
+    highlightAnomalyRegion(region) {
+        if (!this.app?.scene?.scene) return null;
+
+        const THREE = this.app._THREE;
+        if (!THREE) return null;
+
+        const bbox = this.app.currentBBox || {};
+        const midLat = ((bbox.min_lat || 16) + (bbox.max_lat || 23)) / 2;
+        const midLon = ((bbox.min_lon || 84) + (bbox.max_lon || 93)) / 2;
+
+        const rb = region.bbox;
+        const centerLat = (rb.min_lat + rb.max_lat) / 2;
+        const centerLon = (rb.min_lon + rb.max_lon) / 2;
+        const posX = (centerLat - midLat) * 111.32;
+        const posZ = (centerLon - midLon) * 111.32 * Math.cos(midLat * Math.PI / 180);
+
+        const widthLat = Math.abs(rb.max_lat - rb.min_lat) * 111.32;
+        const widthLon = Math.abs(rb.max_lon - rb.min_lon) * 111.32 * Math.cos(midLat * Math.PI / 180);
+
+        const [minDepth, maxDepth] = region.depth_range_m || [0, 200];
+        const posY = this.app.sceneManager?.depthY
+            ? (this.app.sceneManager.depthY(minDepth) + this.app.sceneManager.depthY(maxDepth)) / 2
+            : -((minDepth + maxDepth) / 2) * 0.02;
+        const height = Math.max(
+            this.app.sceneManager?.depthY
+                ? Math.abs(this.app.sceneManager.depthY(minDepth) - this.app.sceneManager.depthY(maxDepth))
+                : (maxDepth - minDepth) * 0.02,
+            2
+        );
+
+        const colorMap = { CRITICAL: 0xff2222, MODERATE: 0xff8800, LOW: 0xffdd00 };
+        const color = colorMap[region.severity] || 0xff8800;
+
+        const geo = new THREE.BoxGeometry(
+            Math.max(widthLat, 3),
+            height,
+            Math.max(widthLon, 3)
+        );
+        const mat = new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.18,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(posX, posY, posZ);
+        mesh.userData.anomalyRegionId = region.id;
+        mesh.userData.isAnomalyHighlight = true;
+
+        // Wire-frame outline for visibility
+        const edges = new THREE.EdgesGeometry(geo);
+        const lineMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7 });
+        const wireframe = new THREE.LineSegments(edges, lineMat);
+        wireframe.userData.isAnomalyHighlight = true;
+
+        this.app.scene.scene.add(mesh);
+        this.app.scene.scene.add(wireframe);
+
+        return mesh;
+    }
+
+    /**
+     * Removes all anomaly highlight meshes previously added by highlightAnomalyRegion().
+     */
+    clearAnomalyHighlights() {
+        if (!this.app?.scene?.scene) return;
+        const toRemove = [];
+        this.app.scene.scene.traverse(obj => {
+            if (obj.userData?.isAnomalyHighlight) toRemove.push(obj);
+        });
+        toRemove.forEach(obj => {
+            obj.geometry?.dispose();
+            obj.material?.dispose();
+            this.app.scene.scene.remove(obj);
+        });
     }
 }

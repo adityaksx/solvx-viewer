@@ -127,3 +127,69 @@ class AnalysisSummaryResponse(BaseModel):
     observation_coverage: Dict[str, Any]
     data_gaps: Dict[str, Any]
     status: str = "READY"
+
+
+# ==============================================================================
+# Stage 5: Anomaly Detection & Abnormal Region Extraction
+# ==============================================================================
+
+class AnomalyRecord(BaseModel):
+    """A single flagged anomalous depth-level observation from an Argo float profile."""
+    variable: str = Field(..., description="Oceanographic variable (temperature / salinity)")
+    float_id: str
+    wmo: int
+    latitude: float
+    longitude: float
+    depth: float = Field(..., description="Depth in meters / decibars")
+    time: str
+    value: float = Field(..., description="Observed in-situ value")
+    baseline: float = Field(..., description="Reference value used for comparison (model / local mean / climatology)")
+    difference: float = Field(..., description="value - baseline")
+    abs_difference: float = Field(..., description="|value - baseline|")
+    z_score: Optional[float] = Field(None, description="Normalised z-score if computed")
+    detection_method: str = Field(..., description="zscore | threshold | model_observation | local_deviation")
+    severity: str = Field(..., description="HIGH | MODERATE | LOW")
+
+
+class AnomalyDetectionResponse(BaseModel):
+    """Full anomaly detection run result across all Argo float profiles."""
+    variable: str
+    method: str
+    threshold_sigma: float
+    threshold_abs: float
+    floats_scanned: int
+    total_depth_levels: int
+    anomaly_count: int
+    anomalies: List[AnomalyRecord]
+
+
+class FocusCommand(BaseModel):
+    """A dashboard-to-3D viewer navigation command targeting an anomalous region."""
+    action: str = "FOCUS_REGION"
+    lat: float
+    lon: float
+    depth: float
+    variable: str
+    layer: str = "anomaly"
+
+
+class AbnormalRegion(BaseModel):
+    """Spatially clustered bounding volume of anomalous observations."""
+    id: str
+    name: str
+    bbox: Dict[str, float]
+    depth_range_m: List[float] = Field(..., description="[min_depth, max_depth]")
+    anomaly_count: int
+    anomaly_magnitude_mean: float
+    anomaly_magnitude_max: float
+    variable: str
+    severity: str = Field(..., description="CRITICAL | MODERATE | LOW")
+    focus_command: FocusCommand
+
+
+class AbnormalRegionResponse(BaseModel):
+    """Complete spatial extraction of anomalous clusters with 3D navigation commands."""
+    variable: str
+    method: str
+    region_count: int
+    regions: List[AbnormalRegion]

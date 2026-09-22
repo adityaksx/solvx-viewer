@@ -2279,3 +2279,312 @@ html, body, #app {
   align-items: center;
   gap: 8px;
 }
+/* ===========================================================================
+   Stage 5 — Analysis Dashboard Panel
+   =========================================================================== */
+
+/* ── Panel container ── */
+.analysis-panel {
+  position: fixed;
+  top: 56px;
+  right: 0;
+  width: 480px;
+  max-width: 96vw;
+  height: calc(100vh - 56px);
+  background: rgba(8, 12, 20, 0.97);
+  border-left: 1px solid rgba(0, 180, 255, 0.18);
+  display: flex;
+  flex-direction: column;
+  z-index: 1100;
+  font-family: 'JetBrains Mono', 'Plus Jakarta Sans', monospace;
+  font-size: 12px;
+  color: #c8e0f0;
+  backdrop-filter: blur(12px);
+  box-shadow: -6px 0 32px rgba(0, 0, 0, 0.6);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.analysis-panel.hidden {
+  display: none;
+}
+
+/* ── Header ── */
+.analysis-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(0, 180, 255, 0.15);
+  background: rgba(0, 180, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.analysis-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #00c8ff;
+  text-transform: uppercase;
+}
+
+.analysis-panel-icon {
+  margin-right: 6px;
+  opacity: 0.8;
+}
+
+.analysis-panel-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.analysis-refresh-btn,
+.analysis-close-btn {
+  background: transparent;
+  border: 1px solid rgba(0, 180, 255, 0.2);
+  color: #80c0d8;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.analysis-refresh-btn:hover,
+.analysis-close-btn:hover {
+  background: rgba(0, 180, 255, 0.15);
+  color: #00c8ff;
+}
+
+/* ── Body / scroll ── */
+.analysis-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 160, 220, 0.3) transparent;
+}
+
+/* ── Loading spinner ── */
+.analysis-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  color: #4a8ca8;
+  font-size: 12px;
+}
+
+.analysis-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(0, 180, 255, 0.2);
+  border-top-color: #00c8ff;
+  border-radius: 50%;
+  animation: analysis-spin 0.8s linear infinite;
+}
+
+@keyframes analysis-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Sections (using <details>) ── */
+.analysis-section {
+  border-bottom: 1px solid rgba(0, 180, 255, 0.08);
+}
+
+.analysis-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #6ab4ce;
+  text-transform: uppercase;
+  user-select: none;
+  list-style: none;
+}
+.analysis-section-title::-webkit-details-marker { display: none; }
+details[open] .analysis-section-title {
+  color: #00c8ff;
+  background: rgba(0, 200, 255, 0.04);
+}
+
+.analysis-section-badge {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: #3a7090;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+/* ── Stat grid ── */
+.analysis-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 8px 14px;
+}
+
+.analysis-stat {
+  background: rgba(0, 180, 255, 0.05);
+  border: 1px solid rgba(0, 180, 255, 0.1);
+  border-radius: 5px;
+  padding: 7px 8px;
+  text-align: center;
+}
+
+.analysis-stat-label {
+  font-size: 9px;
+  color: #3a7090;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 3px;
+}
+
+.analysis-stat-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c8e0f0;
+  letter-spacing: 0.03em;
+}
+
+/* ── Sub-labels ── */
+.analysis-sub-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #3a7090;
+  text-transform: uppercase;
+  padding: 6px 14px 3px;
+}
+
+/* ── Tables ── */
+.analysis-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+  margin-bottom: 4px;
+}
+
+.analysis-table th {
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #3a7090;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(0, 180, 255, 0.1);
+}
+
+.analysis-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(0, 180, 255, 0.05);
+  color: #a0cce0;
+  vertical-align: middle;
+}
+
+.analysis-table tr:hover td {
+  background: rgba(0, 180, 255, 0.05);
+}
+
+/* ── Severity badges ── */
+.severity-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sev-critical, .sev-high {
+  background: rgba(220, 40, 40, 0.2);
+  color: #ff6060;
+  border: 1px solid rgba(220, 40, 40, 0.4);
+}
+
+.sev-moderate {
+  background: rgba(220, 140, 0, 0.2);
+  color: #ffaa40;
+  border: 1px solid rgba(220, 140, 0, 0.4);
+}
+
+.sev-low, .sev-sufficient {
+  background: rgba(0, 180, 80, 0.15);
+  color: #40cc80;
+  border: 1px solid rgba(0, 180, 80, 0.3);
+}
+
+.sev-sparse {
+  background: rgba(220, 40, 40, 0.15);
+  color: #ff8080;
+  border: 1px solid rgba(220, 40, 40, 0.3);
+}
+
+/* ── Focus / View in 3D button ── */
+.focus-btn {
+  background: rgba(0, 180, 255, 0.1);
+  border: 1px solid rgba(0, 180, 255, 0.25);
+  color: #00c8ff;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.focus-btn:hover {
+  background: rgba(0, 180, 255, 0.25);
+  color: #ffffff;
+}
+
+/* ── Highlight / discrepancy row ── */
+.analysis-highlight-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(255, 180, 0, 0.04);
+  border-top: 1px solid rgba(255, 180, 0, 0.1);
+  font-size: 11px;
+}
+.analysis-label { color: #5a8ea8; font-size: 9px; white-space: nowrap; }
+.analysis-value { color: #c8e0f0; flex: 1; }
+
+/* ── Empty/error states ── */
+.analysis-empty {
+  padding: 12px 14px;
+  color: #3a7090;
+  font-size: 11px;
+  font-style: italic;
+}
+.analysis-error {
+  padding: 16px;
+  color: #ff6060;
+  font-size: 11px;
+}
+.analysis-error-inline {
+  padding: 8px 14px;
+  color: #ff6060;
+  font-size: 11px;
+}
+
+/* ── Analysis toggle button active state ── */
+#analysisToggleBtn.active {
+  background: rgba(0, 200, 255, 0.18);
+  color: #00c8ff;
+  border-color: rgba(0, 200, 255, 0.4);
+}

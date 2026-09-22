@@ -17,14 +17,18 @@ from ..services.analysis_service import (
     compare_regional_floats,
     analyze_observation_coverage,
     detect_observation_gaps,
-    generate_analysis_summary
+    generate_analysis_summary,
+    detect_anomalies,
+    extract_abnormal_regions,
 )
 from ..models.analysis import (
     ProfileComparisonResponse,
     RegionalModelVsArgoResponse,
     CoverageAnalysisResponse,
     DataGapsResponse,
-    AnalysisSummaryResponse
+    AnalysisSummaryResponse,
+    AnomalyDetectionResponse,
+    AbnormalRegionResponse,
 )
 
 router = APIRouter(prefix='/api/analysis', tags=['Oceanographic Analysis Engine'])
@@ -156,3 +160,98 @@ def get_analysis_summary(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis summary generation failed: {str(e)}")
+
+
+# ==============================================================================
+# Stage 5: Anomaly Detection & Abnormal Region Extraction
+# ==============================================================================
+
+ALLOWED_METHODS = {'zscore', 'threshold', 'model_observation', 'local_deviation'}
+
+
+@router.get('/anomalies', response_model=AnomalyDetectionResponse)
+def get_anomalies(
+    variable: str = Query('temperature', description="Ocean variable: 'temperature' or 'salinity'"),
+    method: str = Query('zscore', description="Detection method: zscore | threshold | model_observation | local_deviation"),
+    threshold_sigma: float = Query(2.0, description="Z-score standard deviation threshold (default 2.0)"),
+    threshold_abs: float = Query(2.0, description="Absolute difference threshold in native units (°C or PSU)"),
+    min_lon: Optional[float] = Query(None),
+    max_lon: Optional[float] = Query(None),
+    min_lat: Optional[float] = Query(None),
+    max_lat: Optional[float] = Query(None),
+    time: Optional[str] = Query(None, description="ISO-8601 datetime for model colocation"),
+):
+    """
+    Scans all Argo float vertical profiles and returns flagged anomalous depth levels.
+
+    Supported detection methods:
+    - **zscore**: flags depth levels where |z| > threshold_sigma (z normalised to basin mean/std).
+    - **threshold**: flags depth levels where |observed - model| > threshold_abs.
+    - **model_observation**: alias for threshold using exact model interpolation.
+    - **local_deviation**: flags depth levels where |observed - local_band_mean| > threshold_abs.
+
+    Every AnomalyRecord includes: variable, float_id, location, depth, value, baseline,
+    difference, z_score, detection_method, and severity (HIGH / MODERATE / LOW).
+    """
+    if method not in ALLOWED_METHODS:
+        raise HTTPException(status_code=400, detail=f"Unknown method '{method}'. Must be one of: {sorted(ALLOWED_METHODS)}")
+    try:
+        return detect_anomalies(
+            variable=variable,
+            method=method,
+            threshold_sigma=threshold_sigma,
+            threshold_abs=threshold_abs,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            time_iso=time,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Anomaly detection failed: {str(e)}")
+
+
+@router.get('/abnormal-regions', response_model=AbnormalRegionResponse)
+def get_abnormal_regions(
+    variable: str = Query('temperature'),
+    method: str = Query('zscore'),
+    threshold_sigma: float = Query(2.0),
+    threshold_abs: float = Query(2.0),
+    min_lon: Optional[float] = Query(None),
+    max_lon: Optional[float] = Query(None),
+    min_lat: Optional[float] = Query(None),
+    max_lat: Optional[float] = Query(None),
+    time: Optional[str] = Query(None),
+    grid_res_deg: float = Query(1.0, description="Spatial clustering resolution in degrees (default 1.0°)"),
+):
+    """
+    Extracts spatially clustered bounding volumes of anomalous ocean regions.
+
+    Groups AnomalyRecords from /anomalies into 1°×1° (configurable) spatial cells
+    and computes per-cluster:
+    - Bounding box (lat/lon)
+    - Depth range [min_depth, max_depth]
+    - Aggregate anomaly magnitude (mean / max)
+    - Severity (CRITICAL / MODERATE / LOW)
+    - A FOCUS_REGION FocusCommand for 3D viewer navigation (window.solvxViewer.executeCommand)
+
+    Results are sorted by severity: CRITICAL regions first.
+    """
+    if method not in ALLOWED_METHODS:
+        raise HTTPException(status_code=400, detail=f"Unknown method '{method}'. Must be one of: {sorted(ALLOWED_METHODS)}")
+    try:
+        return extract_abnormal_regions(
+            variable=variable,
+            method=method,
+            threshold_sigma=threshold_sigma,
+            threshold_abs=threshold_abs,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            time_iso=time,
+            grid_res_deg=grid_res_deg,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Abnormal region extraction failed: {str(e)}")
+

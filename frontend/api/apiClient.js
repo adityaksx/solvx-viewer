@@ -488,6 +488,27 @@ export const ApiClient = {
         if (latitude != null) q.set('latitude', String(latitude));
         if (longitude != null) q.set('longitude', String(longitude));
         return request(`/api/ocean/vertical-slice?${q}`);
+    },
+
+    // =========================================================================
+    // Stage 3 In-Situ Argo Float Endpoints
+    // =========================================================================
+
+    async getArgoObservations(bbox = null) {
+        const q = new URLSearchParams();
+        if (bbox) {
+            q.set('min_lat', String(bbox.min_lat));
+            q.set('max_lat', String(bbox.max_lat));
+            q.set('min_lon', String(bbox.min_lon));
+            q.set('max_lon', String(bbox.max_lon));
+        }
+        const qs = q.toString();
+        return request(`/api/observations/argo${qs ? `?${qs}` : ''}`);
+    },
+
+    async getArgoFloat(floatId) {
+        return request(`/api/observations/argo/${encodeURIComponent(floatId)}`);
     }
 };
+
 

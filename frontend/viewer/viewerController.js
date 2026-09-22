@@ -148,17 +148,20 @@ export class ViewerController {
 
     /**
      * Displays an in-situ profile chart or modal.
-     * @param {Object} profile
+     * @param {Object|string} profileOrId
      */
-    showProfile(profile) {
-        if (!profile || !this.app) return;
-        const lat = profile.latitude ?? profile.lat;
-        const lon = profile.longitude ?? profile.lon;
-        if (lat != null && lon != null) {
-            this.focusLocation(lat, lon);
+    async showProfile(profileOrId) {
+        if (!profileOrId || !this.app) return;
+        if (this.app.profileViewer) {
+            await this.app.profileViewer.show(profileOrId);
         }
-        if (this.app.obsModal) {
-            this.app.obsModal.classList.remove('hidden');
+        const profile = typeof profileOrId === 'object' ? profileOrId : this.app.profileViewer?.currentProfile;
+        if (profile) {
+            const lat = profile.latitude ?? profile.lat;
+            const lon = profile.longitude ?? profile.lon;
+            if (lat != null && lon != null) {
+                this.focusLocation(lat, lon);
+            }
         }
     }
 

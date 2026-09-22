@@ -24,10 +24,12 @@ import { TimelineControl } from './controls/timelineControl.js';
 import { OpacityControl } from './controls/opacityControl.js';
 import { HazardUI } from './ui/hazardUI.js';
 import { ViewerController } from './viewer/viewerController.js';
+import { ProfileViewer } from './profiles/profileViewer.js';
 
 class SolvXApp {
     constructor() {
         this.viewerController = new ViewerController(this);
+        this.profileViewer = new ProfileViewer(this);
         this.currentMode = '3d'; // 'map' or '3d'
         this.currentBBox = {
             min_lon: 84.10,
@@ -80,7 +82,8 @@ class SolvXApp {
             water: true,
             scientific: true,
             currents: true,
-            particles: true
+            particles: true,
+            observations: true
         };
 
         // Cache for batch ocean variables (keyed by timestamp)
@@ -338,6 +341,8 @@ class SolvXApp {
             if (this.water?.surfaceMesh) this.water.surfaceMesh.visible = visible;
         } else if (layer === 'scientific') {
             if (this.water?.instancedVolume) this.water.instancedVolume.visible = visible;
+        } else if (layer === 'observations') {
+            if (this.argoMarkersGroup) this.argoMarkersGroup.visible = visible;
         } else {
             this.scene.setLayerVisibility(layer, visible);
         }
@@ -477,7 +482,7 @@ class SolvXApp {
                     this.updateGeoProgress('stepEEZ', 'done', 'Loaded', 80, 'Maritime boundaries configured');
                     return res;
                 }),
-                ApiClient.getDataObservations(bbox).catch(() => ({ observations: [] }))
+                ApiClient.getArgoObservations(bbox).catch(() => ApiClient.getDataObservations(bbox)).catch(() => ({ observations: [] }))
             ]);
 
             this.catalog = catalogData.variables || [];
@@ -580,37 +585,77 @@ class SolvXApp {
             const x = (obs.latitude - midLat) * klat;
             const z = (obs.longitude - midLon) * klon;
             const y = 1.2;
+            const maxD = obs.max_depth || 1000;
+            const bottomY = this.scene.depthY(maxD);
 
-            // Float beacon sphere
-            const geom = new THREE.SphereGeometry(2.0, 16, 16);
-            const mat = new THREE.MeshStandardMaterial({
-                color: 0x38bdf8,
-                emissive: 0x0284c7,
-                emissiveIntensity: 0.6
+            const floatMarker = new THREE.Group();
+            floatMarker.position.set(x, y, z);
+            floatMarker.userData = { isArgoFloat: true, float: obs };
+
+            // 1. Buoyant Surface Hull
+            const hullGeom = new THREE.CylinderGeometry(1.6, 1.4, 2.2, 16);
+            const hullMat = new THREE.MeshStandardMaterial({
+                color: 0x0284c7,
+                roughness: 0.3,
+                metalness: 0.2
             });
-            const marker = new THREE.Mesh(geom, mat);
-            marker.position.set(x, y, z);
-            marker.userData = { isArgoFloat: true, float: obs };
+            const hull = new THREE.Mesh(hullGeom, hullMat);
+            hull.userData = { isArgoFloat: true, float: obs };
+            floatMarker.add(hull);
 
-            // Vertical sounding wire down to 1000m
+            // 2. Transmitting Antenna Mast + Glowing Beacon
+            const antGeom = new THREE.CylinderGeometry(0.15, 0.2, 2.4, 8);
+            const antMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+            const antenna = new THREE.Mesh(antGeom, antMat);
+            antenna.position.set(0, 2.2, 0);
+            antenna.userData = { isArgoFloat: true, float: obs };
+            floatMarker.add(antenna);
+
+            const beaconGeom = new THREE.SphereGeometry(0.7, 12, 12);
+            const beaconMat = new THREE.MeshStandardMaterial({
+                color: 0x00d2ff,
+                emissive: 0x00d2ff,
+                emissiveIntensity: 0.85
+            });
+            const beacon = new THREE.Mesh(beaconGeom, beaconMat);
+            beacon.position.set(0, 3.4, 0);
+            beacon.userData = { isArgoFloat: true, float: obs };
+            floatMarker.add(beacon);
+
+            // 3. Vertical Sounding Wire down to profiling depth
             const lineGeom = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, this.scene.depthY(1000), 0)
+                new THREE.Vector3(0, bottomY, 0)
             ]);
             const lineMat = new THREE.LineDashedMaterial({
                 color: 0x38bdf8,
-                dashSize: 2,
+                dashSize: 2.5,
                 gapSize: 1.5,
-                opacity: 0.7,
+                opacity: 0.8,
                 transparent: true
             });
             const wire = new THREE.Line(lineGeom, lineMat);
             wire.computeLineDistances();
-            marker.add(wire);
+            wire.userData = { isArgoFloat: true, float: obs };
+            floatMarker.add(wire);
 
-            this.argoMarkersGroup.add(marker);
+            // 4. CTD Sensor Payload Package at Profiling Depth
+            const ctdGeom = new THREE.CylinderGeometry(1.0, 1.0, 1.8, 12);
+            const ctdMat = new THREE.MeshStandardMaterial({
+                color: 0xf59e0b,
+                emissive: 0xd97706,
+                emissiveIntensity: 0.5
+            });
+            const ctd = new THREE.Mesh(ctdGeom, ctdMat);
+            ctd.position.set(0, bottomY, 0);
+            ctd.userData = { isArgoFloat: true, float: obs };
+            floatMarker.add(ctd);
+
+            this.argoMarkersGroup.add(floatMarker);
         });
 
+        // Register with scene layers so targeted raycasting interrogates observations
+        this.scene.layers.observations = { group: this.argoMarkersGroup };
         this.scene.root.add(this.argoMarkersGroup);
     }
 
@@ -1099,14 +1144,21 @@ class SolvXApp {
     }
 
     async inspectObservation(argo) {
+        if (!argo) return;
+
+        if (this.profileViewer) {
+            await this.profileViewer.show(argo);
+            return;
+        }
+
         const modal = document.getElementById('obsModal');
         const title = document.getElementById('obsTitle');
         const stats = document.getElementById('obsStats');
         const body = document.getElementById('obsBody');
 
-        if (!modal || !argo) return;
-        if (title) title.textContent = `Argo Float #${argo.wmo} Sounding Profile`;
-        this.status(`Comparing Argo #${argo.wmo} with model…`, 'busy');
+        if (!modal) return;
+        if (title) title.textContent = `Argo Float #${argo.wmo || argo.id} Sounding Profile`;
+        this.status(`Comparing Argo #${argo.wmo || argo.id} with model…`, 'busy');
 
         try {
             const cmp = await ApiClient.compareObservation(argo.id);

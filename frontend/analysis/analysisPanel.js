@@ -9,6 +9,7 @@
 // modifies oceanShader.js, the camera pipeline, or any existing module.
 
 import { ApiClient } from '../api/apiClient.js';
+import { AiChat } from './aiChat.js';
 
 // ---------------------------------------------------------------------------
 // Panel state
@@ -102,12 +103,18 @@ async function _refresh() {
         ]);
 
         content.innerHTML = [
+            _renderAiAssistant(),
             _renderModelVsArgo(summary.value, anomalies.value),
             _renderCoverage(coverage.value),
             _renderGaps(gaps.value),
             _renderAnomalies(anomalies.value, regions.value),
             _renderProfileAnalysis(),
         ].join('');
+
+        const aiContainer = document.getElementById('aiChatContainer');
+        if (aiContainer && _vc) {
+            AiChat.init(_vc, aiContainer);
+        }
 
         _attachViewIn3D(content);
         loading.classList.add('hidden');
@@ -320,6 +327,17 @@ function _renderProfileAnalysis() {
             Click an Argo float in the 3D scene or a <strong>⬡ VIEW</strong> button above to open the
             Profile Viewer with Model / Argo depth charts and comparison statistics.
         </div>
+    </details>`;
+}
+
+function _renderAiAssistant() {
+    return `
+    <details class="analysis-section" open>
+        <summary class="analysis-section-title">
+            <span>AI ASSISTANT</span>
+            <span class="analysis-section-badge">Gemini Powered</span>
+        </summary>
+        <div id="aiChatContainer"></div>
     </details>`;
 }
 

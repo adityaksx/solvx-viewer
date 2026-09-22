@@ -614,6 +614,62 @@ export const ApiClient = {
         const qs = q.toString();
         return request(`/api/analysis/abnormal-regions${qs ? `?${qs}` : ''}`, { noCache: true });
     },
+
+    // =========================================================================
+    // Stage 6: Scientific AI Assistant (Explanation & Natural Language -> 3D)
+    // =========================================================================
+
+    /**
+     * Checks if the Gemini AI assistant is configured and operational.
+     */
+    async getAIStatus() {
+        return request('/api/ai/status', { noCache: true });
+    },
+
+    /**
+     * Sends an oceanographic inquiry to the AI assistant for natural-language explanation.
+     * @param {string} question
+     * @param {Object} [params] - { variable, method, context, apiKey }
+     */
+    async explainAnalysis(question, params = {}) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (params.apiKey) {
+            headers['X-Gemini-Key'] = params.apiKey;
+        }
+        return request('/api/ai/explain', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                question,
+                variable: params.variable || 'temperature',
+                method: params.method || 'zscore',
+                context: params.context || null
+            }),
+            noCache: true
+        });
+    },
+
+    /**
+     * Translates a natural-language viewer instruction into a validated 3D VisualizationCommand.
+     * @param {string} text
+     * @param {string} [variable='temperature']
+     * @param {string} [apiKey=null]
+     */
+    async parseNLCommand(text, variable = 'temperature', apiKey = null) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) {
+            headers['X-Gemini-Key'] = apiKey;
+        }
+        return request('/api/ai/command', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                text,
+                variable
+            }),
+            noCache: true
+        });
+    }
 };
 
 

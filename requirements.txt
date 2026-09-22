@@ -11,3 +11,6 @@ netCDF4
 # Geospatial processing
 geopandas
 shapely
+
+# AI / LLM
+google-genai>=1.0.0

@@ -84,4 +84,8 @@ NOAA_ERDDAP_BASE = os.getenv('NOAA_ERDDAP_URL', 'https://coastwatch.pfeg.noaa.go
 COPERNICUS_API_KEY = os.getenv('COPERNICUS_API_KEY', '')
 MAPTILER_API_KEY = os.getenv('MAPTILER_API_KEY', '')
 
+# Gemini AI Assistant Configuration
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
+
 

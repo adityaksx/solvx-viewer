@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .api import region, geography, bathymetry, ocean, observations, data, download, ml
 from .services.ocean_data_service import (
@@ -14,7 +15,7 @@ from .services.ocean_data_service import (
     get_region_array
 )
 from .services.observation_service import get_observations
-from .services.cache_service import safe_open_dataset
+from .services.cache_service import safe_open_dataset, DATASET_METADATA_INDEX
 from .processing.normalization import variable_catalog, sanitize
 
 app = FastAPI(
@@ -30,6 +31,7 @@ app.add_middleware(
     allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*']
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Register modular API routers
 app.include_router(data.router)
@@ -64,12 +66,14 @@ def health():
 
 @app.get('/api/config')
 def get_client_config():
-    from .config import LOCAL_DATA_MODE, DEFAULT_BBOX, PRESET_REGIONS
+    from .config import LOCAL_DATA_MODE, DEFAULT_BBOX, PRESET_REGIONS, MAPTILER_API_KEY
     return {
+        'maptiler_api_key': MAPTILER_API_KEY,
         'local_data_mode': LOCAL_DATA_MODE,
         'default_bbox': DEFAULT_BBOX,
         'preset_regions': PRESET_REGIONS
     }
+
 
 # ==============================================================================
 # Backward Compatibility Layer for Legacy Routes
@@ -129,32 +133,21 @@ def legacy_datasets():
     out = []
     for f in get_nc_files():
         try:
-            with safe_open_dataset(f) as ds:
-                out.append({'file': f.name, 'variables': variable_catalog(ds), 'dimensions': {k: int(v) for k, v in ds.sizes.items()}})
+            meta = DATASET_METADATA_INDEX.get_metadata(f)
+            out.append({'file': f.name, 'variables': meta['variables'], 'dimensions': meta['dimensions']})
         except Exception as e:
             out.append({'file': f.name, 'error': str(e)})
     return {'count': len(out), 'datasets': out}
 
 @app.get('/variables/{filename}')
 def legacy_variables(filename: str):
-    with safe_open_dataset(find_file(filename)) as ds:
-        return {'file': filename, 'variables': variable_catalog(ds)}
+    meta = DATASET_METADATA_INDEX.get_metadata(find_file(filename))
+    return {'file': filename, 'variables': meta['variables']}
 
 @app.get('/metadata/{filename}')
 def legacy_metadata(filename: str):
-    with safe_open_dataset(find_file(filename)) as ds:
-        coords = {}
-        for n, c in ds.coords.items():
-            vals = c.values
-            step = max(1, vals.size // 5000)
-            coords[n] = {
-                'size': int(vals.size),
-                'min': sanitize(vals.min()) if vals.size else None,
-                'max': sanitize(vals.max()) if vals.size else None,
-                'values': sanitize(vals.tolist() if n == 'time' or vals.size <= 5000 else vals[::step].tolist()),
-                'units': c.attrs.get('units')
-            }
-        return {'file': filename, 'variables': variable_catalog(ds), 'coordinates': coords}
+    meta = DATASET_METADATA_INDEX.get_metadata(find_file(filename))
+    return {'file': filename, 'variables': meta['variables'], 'coordinates': meta['coordinates']}
 
 if __name__ == '__main__':
     import uvicorn

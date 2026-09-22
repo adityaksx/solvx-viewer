@@ -1,7 +1,68 @@
-// SolvX Viewer — 3D Temperature Field Visualization
+// SolvX Viewer — High-Performance 3D Scalar Field Visualization
 import * as THREE from 'three';
 import { updateLegendUI, sampleColor } from './colorScale.js';
 import { createDataTexture2D, extractSlice2D, findDepthIndex } from './dataTexture.js';
+
+const _reusableColor = new THREE.Color();
+
+function calculatePercentileRange(data2dOr3d, maxSamples = 1500) {
+    if (!data2dOr3d || !data2dOr3d.length) return { lo: 24.0, hi: 31.0 };
+    
+    // Sample deterministically without flattening/sorting huge multi-megabyte arrays
+    const samples = [];
+    const is3D = Array.isArray(data2dOr3d[0]) && Array.isArray(data2dOr3d[0][0]);
+    
+    if (is3D) {
+        const dLen = data2dOr3d.length;
+        const latLen = data2dOr3d[0].length;
+        const lonLen = data2dOr3d[0][0].length;
+        const total = dLen * latLen * lonLen;
+        const step = Math.max(1, Math.floor(total / maxSamples));
+        
+        let count = 0;
+        for (let d = 0; d < dLen; d++) {
+            for (let j = 0; j < latLen; j++) {
+                for (let i = 0; i < lonLen; i++) {
+                    if (count % step === 0) {
+                        const val = data2dOr3d[d][j][i];
+                        if (val != null && isFinite(val)) samples.push(val);
+                    }
+                    count++;
+                }
+            }
+        }
+    } else {
+        const latLen = data2dOr3d.length;
+        const lonLen = (data2dOr3d[0] || []).length;
+        const total = latLen * lonLen;
+        const step = Math.max(1, Math.floor(total / maxSamples));
+        
+        let count = 0;
+        for (let j = 0; j < latLen; j++) {
+            for (let i = 0; i < lonLen; i++) {
+                if (count % step === 0) {
+                    const val = data2dOr3d[j][i];
+                    if (val != null && isFinite(val)) samples.push(val);
+                }
+                count++;
+            }
+        }
+    }
+
+    if (samples.length === 0) return { lo: 24.0, hi: 31.0 };
+    
+    samples.sort((a, b) => a - b);
+    let lo = samples[Math.floor(samples.length * 0.02)];
+    let hi = samples[Math.floor(samples.length * 0.98)];
+    
+    if (Math.abs(hi - lo) < 0.6) {
+        const mid = (lo + hi) / 2;
+        lo = mid - 0.5;
+        hi = mid + 0.5;
+    }
+    
+    return { lo, hi };
+}
 
 export class ScalarVisualizer {
     constructor(waterComponent, options = {}) {
@@ -10,9 +71,12 @@ export class ScalarVisualizer {
         this.range = { lo: 24.0, hi: 31.0 };
         this.units = '°C';
         this.currentData = null;
+        this.lastRenderedDepth = null;
+        this.lastMode = null;
         
-        // Create horizontal slice mesh
+        // Horizontal & vertical slice meshes
         this.sliceMesh = null;
+        this.verticalSliceMesh = null;
         this.initSliceMesh();
     }
 
@@ -75,17 +139,11 @@ export class ScalarVisualizer {
         this.sliceMesh.visible = false;
         this.water.group.add(this.sliceMesh);
 
-        // Vertical slice (diagonal across the bounds)
-        // Length of diagonal
+        // Vertical slice
         const diagLen = Math.sqrt(widthX * widthX + widthZ * widthZ);
         const maxDepthM = 3500;
-        const geomVert = new THREE.PlaneGeometry(diagLen, maxDepthM); // width, height (y)
-        
-        // Center of plane is at (0, 0, 0), we want it to extend down to -maxDepthM
+        const geomVert = new THREE.PlaneGeometry(diagLen, maxDepthM);
         geomVert.translate(0, -maxDepthM / 2, 0);
-        
-        // Rotate so it aligns with the diagonal
-        // No initial rotation, rotate the mesh dynamically
         
         this.verticalSliceMesh = new THREE.Mesh(geomVert, mat.clone());
         this.verticalSliceMesh.visible = false;
@@ -96,35 +154,25 @@ export class ScalarVisualizer {
         this.variable = variable;
         this.currentData = dataArray;
         
-        let lo = 24.0;
-        let hi = 31.5;
+        let { lo, hi } = { lo: 24.0, hi: 31.5 };
 
         if (dataArray && dataArray.values && dataArray.values.length) {
-            let slice2d = dataArray.values;
+            let sliceOrVolume = dataArray.values;
             if (Array.isArray(dataArray.values[0]) && Array.isArray(dataArray.values[0][0])) {
                 const depths = dataArray.metadata?.depth_levels;
                 const idx = findDepthIndex(depths, depthM);
-                slice2d = extractSlice2D(dataArray, idx);
+                sliceOrVolume = extractSlice2D(dataArray, idx);
             }
-
-            const flat = (slice2d || []).flat(2).filter(v => v != null && isFinite(v));
-            if (flat.length > 0) {
-                flat.sort((a, b) => a - b);
-                lo = flat[Math.floor(flat.length * 0.02)];
-                hi = flat[Math.floor(flat.length * 0.98)];
-                
-                // Ensure sufficient dynamic range for subtle gradients
-                if (Math.abs(hi - lo) < 0.6) {
-                    const mid = (lo + hi) / 2;
-                    lo = mid - 0.5;
-                    hi = mid + 0.5;
-                }
-            }
+            const range = calculatePercentileRange(sliceOrVolume);
+            lo = range.lo;
+            hi = range.hi;
         }
 
         this.range = { lo, hi };
         updateLegendUI(this.variable, lo, hi, dataArray?.units || '');
 
+        // Recolor volume only when new data is supplied
+        this.applyVolumeColors();
         this.updateSliceTexture(depthM, mode);
     }
 
@@ -138,20 +186,21 @@ export class ScalarVisualizer {
         const dLon = bounds[1] - bounds[0];
         
         const is3D = Array.isArray(vals[0]) && Array.isArray(vals[0][0]);
-        const lats = is3D ? vals[0].length : vals.length;
-        const lons = is3D ? vals[0][0].length : vals[0].length;
+        const lats = is3D ? (vals[0]?.length || 0) : vals.length;
+        const lons = is3D ? (vals[0]?.[0]?.length || 0) : (vals[0]?.length || 0);
+        if (!lats || !lons) return;
         
-        // Full volume dynamic range for 3D boxes
         let volLo = this.range.lo;
         let volHi = this.range.hi;
         if (is3D) {
-            const allFlat = vals.flat(3).filter(v => v != null && isFinite(v)).sort((a, b) => a - b);
-            if (allFlat.length > 0) {
-                volLo = allFlat[Math.floor(allFlat.length * 0.02)];
-                volHi = allFlat[Math.floor(allFlat.length * 0.98)];
-            }
+            const volRange = calculatePercentileRange(vals);
+            volLo = volRange.lo;
+            volHi = volRange.hi;
         }
         
+        const variable = this.variable;
+        const depthLevels = this.currentData.metadata?.depth_levels;
+
         this.water.recolorCells(c => {
             const j = Math.floor(((c.lat - bounds[2]) / dLat) * lats);
             const i = Math.floor(((c.lon - bounds[0]) / dLon) * lons);
@@ -159,18 +208,18 @@ export class ScalarVisualizer {
             if (j < 0 || j >= lats || i < 0 || i >= lons) return null;
             
             let d = 0;
-            if (is3D && this.currentData.metadata && this.currentData.metadata.depth_levels) {
-                d = findDepthIndex(this.currentData.metadata.depth_levels, c.depthM);
+            if (is3D && depthLevels) {
+                d = findDepthIndex(depthLevels, c.depthM);
             }
             
-            const val = is3D ? vals[d][j][i] : vals[j][i];
+            const val = is3D ? vals[d]?.[j]?.[i] : vals[j]?.[i];
             if (val == null || isNaN(val)) return null;
             
-            const color = sampleColor(this.variable, val, volLo, volHi);
-            return new THREE.Color(color.r, color.g, color.b);
+            const color = sampleColor(variable, val, volLo, volHi);
+            _reusableColor.setRGB(color.r, color.g, color.b);
+            return _reusableColor;
         });
     }
-
 
     applyVerticalSlicePlane(sLat, sLon, eLat, eLon) {
         this.customVerticalCoords = { sLat, sLon, eLat, eLon };
@@ -178,14 +227,27 @@ export class ScalarVisualizer {
     }
 
     updateSliceTexture(depthM, mode = 'slice') {
-        if (!this.currentData) return;
-        
-        // Also update volume colors when data changes
-        this.applyVolumeColors();
+        if (!this.currentData) {
+            if (this.sliceMesh) this.sliceMesh.visible = false;
+            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            if (this.water) this.water.setDataTexture(null, 0.0);
+            return;
+        }
+
+        if (mode === 'volume') {
+            if (this.sliceMesh) this.sliceMesh.visible = false;
+            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            if (this.water) {
+                this.water.setDataTexture(null, 0.0);
+                this.water.setOpacity(0.35);
+            }
+            return;
+        }
         
         if (mode === 'vertical' || mode === 'vertical_custom') {
-            this.sliceMesh.visible = false;
-            this.verticalSliceMesh.visible = true;
+            if (this.sliceMesh) this.sliceMesh.visible = false;
+            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = true;
+            if (this.water) this.water.setDataTexture(null, 0.0);
             
             import('./verticalSlice.js').then(module => {
                 const texture = module.createVerticalSliceTexture(this.currentData, this.variable, this.range.lo, this.range.hi, this.customVerticalCoords, this.water.bounds);
@@ -208,7 +270,6 @@ export class ScalarVisualizer {
                     this.verticalSliceMesh.scale.set(length / origLen, 1, 1);
                     this.verticalSliceMesh.rotation.set(0, -angle, 0);
                 } else if (mode === 'vertical') {
-                    // Default diagonal
                     const cx = this._centerX || 0;
                     const cz = this._centerZ || 0;
                     const widthX = this.water.widthX || 100;
@@ -219,16 +280,13 @@ export class ScalarVisualizer {
                     this.verticalSliceMesh.rotation.set(0, -angle, 0);
                 }
 
-                if (texture && this.verticalSliceMesh.material) {
+                if (texture && this.verticalSliceMesh && this.verticalSliceMesh.material) {
                     if (this.verticalSliceMesh.material.uniforms) {
-                        if (this.verticalSliceMesh.material.uniforms.map.value) this.verticalSliceMesh.material.uniforms.map.value.dispose();
+                        if (this.verticalSliceMesh.material.uniforms.map.value) {
+                            this.verticalSliceMesh.material.uniforms.map.value.dispose();
+                        }
                         this.verticalSliceMesh.material.uniforms.map.value = texture;
-                        // Turn off bathy mask for vertical slice since it goes straight down
                         this.verticalSliceMesh.material.uniforms.uHasBathyTex.value = false;
-                    } else {
-                        if (this.verticalSliceMesh.material.map) this.verticalSliceMesh.material.map.dispose();
-                        this.verticalSliceMesh.material.map = texture;
-                        this.verticalSliceMesh.material.needsUpdate = true;
                     }
                 }
             });
@@ -236,8 +294,7 @@ export class ScalarVisualizer {
         }
         
         // Horizontal slice mode
-        this.sliceMesh.visible = true;
-        this.verticalSliceMesh.visible = false;
+        const isSurface = (depthM == null || Math.abs(depthM) < 1);
 
         let slice2d = null;
         if (this.currentData.metadata && this.currentData.metadata.depth_levels) {
@@ -245,35 +302,69 @@ export class ScalarVisualizer {
             const idx = findDepthIndex(depths, depthM);
             slice2d = extractSlice2D(this.currentData, idx);
         } else {
-            // No depth levels, just use the first slice
             slice2d = extractSlice2D(this.currentData, 0);
         }
         
         const tempFakeArray = { values: slice2d };
         const texture = createDataTexture2D(tempFakeArray, this.variable, this.range.lo, this.range.hi);
         
-        if (texture && this.sliceMesh.material) {
-            if (this.sliceMesh.material.uniforms) {
-                if (this.sliceMesh.material.uniforms.map.value) this.sliceMesh.material.uniforms.map.value.dispose();
-                this.sliceMesh.material.uniforms.map.value = texture;
-                // Also ensure bathyTex is linked if it wasn't available at init
-                if (this.water.bathyTex && !this.sliceMesh.material.uniforms.uHasBathyTex.value) {
-                    this.sliceMesh.material.uniforms.uBathyTex.value = this.water.bathyTex;
-                    this.sliceMesh.material.uniforms.uHasBathyTex.value = true;
+        if (isSurface) {
+            // Apply directly onto realistic 3D animated water surface shader — avoids double layer / reflection artifacts
+            if (this.sliceMesh) this.sliceMesh.visible = false;
+            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            if (this.water) {
+                this.water.setDataTexture(texture, 1.0);
+            }
+        } else {
+            // Subsurface depth slice: position underwater mesh at actual depth
+            if (this.water) {
+                this.water.setDataTexture(null, 0.0);
+            }
+            if (this.sliceMesh) this.sliceMesh.visible = true;
+            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+
+            if (texture && this.sliceMesh && this.sliceMesh.material) {
+                if (this.sliceMesh.material.uniforms) {
+                    if (this.sliceMesh.material.uniforms.map.value) {
+                        this.sliceMesh.material.uniforms.map.value.dispose();
+                    }
+                    this.sliceMesh.material.uniforms.map.value = texture;
+                    if (this.water.bathyTex && !this.sliceMesh.material.uniforms.uHasBathyTex.value) {
+                        this.sliceMesh.material.uniforms.uBathyTex.value = this.water.bathyTex;
+                        this.sliceMesh.material.uniforms.uHasBathyTex.value = true;
+                    }
                 }
-            } else {
-                if (this.sliceMesh.material.map) this.sliceMesh.material.map.dispose();
-                this.sliceMesh.material.map = texture;
-                this.sliceMesh.material.needsUpdate = true;
+            }
+            
+            const yPos = this.sceneManager.depthY(depthM);
+            if (this.sliceMesh) {
+                this.sliceMesh.position.set(this._centerX || 0, yPos, this._centerZ || 0);
             }
         }
-        
-        // Position the slice slightly above water plane to prevent z-fighting
-        const yPos = this.sceneManager.depthY(depthM);
-        this.sliceMesh.position.set(this._centerX || 0, yPos + 0.35, this._centerZ || 0);
     }
 
     sliceAtDepth(depthM, mode = 'slice') {
         this.updateSliceTexture(depthM, mode);
+    }
+
+    dispose() {
+        if (this.sliceMesh) {
+            this.sliceMesh.geometry?.dispose();
+            if (this.sliceMesh.material?.uniforms?.map?.value) {
+                this.sliceMesh.material.uniforms.map.value.dispose();
+            }
+            this.sliceMesh.material?.dispose();
+            this.water.group.remove(this.sliceMesh);
+            this.sliceMesh = null;
+        }
+        if (this.verticalSliceMesh) {
+            this.verticalSliceMesh.geometry?.dispose();
+            if (this.verticalSliceMesh.material?.uniforms?.map?.value) {
+                this.verticalSliceMesh.material.uniforms.map.value.dispose();
+            }
+            this.verticalSliceMesh.material?.dispose();
+            this.water.group.remove(this.verticalSliceMesh);
+            this.verticalSliceMesh = null;
+        }
     }
 }

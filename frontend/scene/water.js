@@ -9,7 +9,7 @@ export class DynamicWater {
         this.bounds = bathymetry.bounds || [84.1, 93.0, 16.0, 23.5];
 
         this.temperature = options.temperature || 28.0;
-        this.waveHeight = options.waveHeight || 1.2;
+        this.waveHeight = options.waveHeight || 0.6;
         this.opacity = options.opacity || 0.28;
 
         this.group = new THREE.Group();
@@ -26,7 +26,10 @@ export class DynamicWater {
             uBaseColor: { value: new THREE.Color(0x0c659e) },
             uSkyColor: { value: new THREE.Color(0xb9dfe9) },
             uBathyTex: { value: this.bathyTex },
-            uHasBathyTex: { value: this.bathyTex ? 1.0 : 0.0 }
+            uHasBathyTex: { value: this.bathyTex ? 1.0 : 0.0 },
+            uDataTex: { value: null },
+            uHasDataTex: { value: 0.0 },
+            uDataOpacity: { value: 1.0 }
         };
 
         this.buildVolume();
@@ -168,7 +171,7 @@ export class DynamicWater {
         const centerX = (t.y[0] + t.y[t.y.length - 1]) / 2;
         const centerZ = (t.x[0] + t.x[t.x.length - 1]) / 2;
 
-        const geom = new THREE.PlaneGeometry(widthX, widthZ, 256, 256);
+        const geom = new THREE.PlaneGeometry(widthX, widthZ, 128, 128);
         geom.rotateX(-Math.PI / 2);
 
         // Responsive ocean color based on temperature
@@ -219,6 +222,38 @@ export class DynamicWater {
         }
         if (this.instancedVolume.instanceColor) {
             this.instancedVolume.instanceColor.needsUpdate = true;
+        }
+    }
+
+    setDataTexture(tex, opacity = 1.0) {
+        if (this.uniforms.uDataTex.value && this.uniforms.uDataTex.value !== tex) {
+            this.uniforms.uDataTex.value.dispose();
+        }
+        this.uniforms.uDataTex.value = tex;
+        this.uniforms.uHasDataTex.value = tex ? 1.0 : 0.0;
+        this.uniforms.uDataOpacity.value = opacity;
+    }
+
+    dispose() {
+        if (this.uniforms?.uDataTex?.value) {
+            this.uniforms.uDataTex.value.dispose();
+            this.uniforms.uDataTex.value = null;
+        }
+        if (this.bathyTex) {
+            this.bathyTex.dispose();
+            this.bathyTex = null;
+        }
+        if (this.surfaceMesh) {
+            this.surfaceMesh.geometry?.dispose();
+            this.surfaceMesh.material?.dispose();
+            this.group.remove(this.surfaceMesh);
+            this.surfaceMesh = null;
+        }
+        if (this.instancedVolume) {
+            this.instancedVolume.geometry?.dispose();
+            this.instancedVolume.material?.dispose();
+            this.group.remove(this.instancedVolume);
+            this.instancedVolume = null;
         }
     }
 }

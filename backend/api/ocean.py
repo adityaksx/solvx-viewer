@@ -32,82 +32,70 @@ def ocean_current_grid(
     return get_ocean_current_grid(time=time, depth=depth, stride=stride)
 
 @router.get('/point')
-def ocean_point(
-    latitude: float = Query(..., ge=-90.0, le=90.0),
-    longitude: float = Query(..., ge=-180.0, le=180.0),
-    time: Optional[str] = None
-):
-    """Inspects all physical ocean variables at a specific geographic point."""
-    from ..adapters.copernicus_adapter import CopernicusAdapter
-    from ..adapters.open_meteo_adapter import OpenMeteoAdapter
-    
-    ca = CopernicusAdapter()
-    oma = OpenMeteoAdapter()
-    
-    # We use time for both start and end to get nearest
-    start_time = time
-    end_time = time
-    
-    try:
-        ocean_data = ca.fetch_ocean_point(latitude, longitude, start_time, end_time)
-    except Exception as e:
-        ocean_data = {}
+def ocean_point(latitude: float = Query(...), longitude: float = Query(...), time: Optional[str] = None):
+    """Point query for all physical oceanographic and atmospheric variables at a given location."""
+    from ..services.cache_service import GLOBAL_CACHE, make_cache_key
 
-    # Supplement with local model data if live values are missing
-    try:
-        local_point = get_ocean_point(latitude, longitude, time)
-        for item in local_point.get('variables', []):
-            vid = item.get('id')
-            val = item.get('value')
-            if val is not None:
-                if vid == 'temperature' and ocean_data.get('ocean_temperature') is None:
-                    ocean_data['ocean_temperature'] = val
-                elif vid == 'salinity' and ocean_data.get('salinity') is None:
-                    ocean_data['salinity'] = val
-                elif vid in ('sea_level', 'sea_surface_height') and ocean_data.get('sea_surface_height') is None:
-                    ocean_data['sea_surface_height'] = val
-                elif vid == 'currents' and (ocean_data.get('current_u') is None or ocean_data.get('current_v') is None):
-                    ocean_data['current_u'] = item.get('u', 0.0)
-                    ocean_data['current_v'] = item.get('v', 0.0)
-    except Exception as e:
-        pass
-        
-    try:
-        atmos_data = oma.fetch_atmospheric_point(latitude, longitude, start_time, end_time)
-    except Exception as e:
+    cache_key = make_cache_key('ocean_point', {'lat': round(latitude, 4), 'lon': round(longitude, 4), 'time': time})
+
+    def _compute_point():
+        from ..services.ocean_data_service import get_ocean_point
+        base_res = get_ocean_point(latitude=latitude, longitude=longitude, time=time)
+        val_map = {v['id']: v.get('value') for v in base_res.get('values', [])}
+
+        u_val = None
+        v_val = None
+        cur_val = val_map.get('currents')
+        if isinstance(cur_val, dict):
+            u_val = cur_val.get('uo') or cur_val.get('u')
+            v_val = cur_val.get('vo') or cur_val.get('v')
+
         atmos_data = {}
-        
-    return {
-        "location": {
-            "latitude": latitude,
-            "longitude": longitude
-        },
-        "time": ocean_data.get("timestamp") or atmos_data.get("timestamp") or time,
-        "variables": {
-            "ocean_temperature": ocean_data.get("ocean_temperature"),
-            "salinity": ocean_data.get("salinity"),
-            "current_u": ocean_data.get("current_u"),
-            "current_v": ocean_data.get("current_v"),
-            "sea_surface_height": ocean_data.get("sea_surface_height"),
-            "air_temperature": atmos_data.get("air_temperature"),
-            "relative_humidity": atmos_data.get("relative_humidity"),
-            "wind_speed": atmos_data.get("wind_speed"),
-            "wind_direction": atmos_data.get("wind_direction"),
-            "sea_level_pressure": atmos_data.get("sea_level_pressure")
-        },
-        "units": {
-            "ocean_temperature": "°C",
-            "salinity": "PSU",
-            "current_u": "m/s",
-            "current_v": "m/s",
-            "sea_surface_height": "m",
-            "air_temperature": "°C",
-            "relative_humidity": "%",
-            "wind_speed": "m/s",
-            "wind_direction": "°",
-            "sea_level_pressure": "hPa"
-        }
-    }
+        try:
+            from ..adapters.open_meteo_adapter import OpenMeteoAdapter
+            oma = OpenMeteoAdapter()
+            atmos_data = oma.fetch_atmospheric_point(latitude, longitude, time, time)
+        except Exception:
+            pass
+
+        ocean_temp = val_map.get('temperature')
+        salinity = val_map.get('salinity')
+        ssh = val_map.get('sea_level') or val_map.get('sea_surface_height')
+
+        base_res.update({
+            "location": {
+                "latitude": latitude,
+                "longitude": longitude
+            },
+            "time": time or base_res.get("time"),
+            "variables": {
+                "ocean_temperature": ocean_temp,
+                "salinity": salinity,
+                "current_u": u_val,
+                "current_v": v_val,
+                "sea_surface_height": ssh,
+                "air_temperature": atmos_data.get("air_temperature"),
+                "relative_humidity": atmos_data.get("relative_humidity"),
+                "wind_speed": atmos_data.get("wind_speed"),
+                "wind_direction": atmos_data.get("wind_direction"),
+                "sea_level_pressure": atmos_data.get("sea_level_pressure")
+            },
+            "units": {
+                "ocean_temperature": "°C",
+                "salinity": "PSU",
+                "current_u": "m/s",
+                "current_v": "m/s",
+                "sea_surface_height": "m",
+                "air_temperature": "°C",
+                "relative_humidity": "%",
+                "wind_speed": "m/s",
+                "wind_direction": "°",
+                "sea_level_pressure": "hPa"
+            }
+        })
+        return base_res
+
+    return GLOBAL_CACHE.get_or_compute(cache_key, _compute_point)
 
 @router.get('/region-array')
 def ocean_region_array(

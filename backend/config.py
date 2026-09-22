@@ -82,4 +82,6 @@ CACHE_TTL = int(os.getenv('CACHE_TTL', '3600'))
 # Legacy external scientific API endpoints
 NOAA_ERDDAP_BASE = os.getenv('NOAA_ERDDAP_URL', 'https://coastwatch.pfeg.noaa.gov/erddap/griddap')
 COPERNICUS_API_KEY = os.getenv('COPERNICUS_API_KEY', '')
+MAPTILER_API_KEY = os.getenv('MAPTILER_API_KEY', '')
+
 

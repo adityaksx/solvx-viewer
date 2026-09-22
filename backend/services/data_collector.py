@@ -99,13 +99,93 @@ class DataCollector:
         return [
             {
                 'id': 'auto',
-                'name': 'SolvX Data Service',
-                'description': 'Automated Ocean & Atmosphere Integration',
+                'name': 'SolvX Smart Orchestrator',
+                'description': 'Automated multi-provider ocean & atmosphere selection',
                 'type': 'orchestrator',
                 'coverage': 'Global',
-                'variables': ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height', 'air_temperature']
+                'variables': ['temperature', 'ocean_temperature', 'salinity', 'currents', 'sea_surface_height', 'mixed_layer_depth']
+            },
+            {
+                'id': 'incois',
+                'name': 'INCOIS Ocean Data & Forecasts',
+                'description': 'Indian National Centre for Ocean Information Services ERDDAP / HOOFS model',
+                'type': 'ocean_model',
+                'coverage': 'Indian Ocean & Global',
+                'variables': ['temperature', 'salinity', 'currents', 'sea_surface_height', 'sea_level_anomaly', 'mixed_layer_depth', 'chlorophyll', 'dissolved_oxygen', 'ph', 'nitrate', 'phosphate']
+            },
+            {
+                'id': 'copernicus',
+                'name': 'Copernicus Marine Service',
+                'description': 'E.U. Copernicus Marine Environmental Monitoring Service (CMEMS)',
+                'type': 'operational_oceanography',
+                'coverage': 'Global',
+                'variables': ['temperature', 'salinity', 'currents', 'sea_surface_height', 'chlorophyll', 'dissolved_oxygen', 'ph', 'nitrate', 'phosphate']
+            },
+            {
+                'id': 'noaa',
+                'name': 'NOAA CoastWatch / OceanWatch',
+                'description': 'National Oceanic and Atmospheric Administration ERDDAP data services',
+                'type': 'satellite_and_reanalysis',
+                'coverage': 'Global',
+                'variables': ['temperature', 'salinity', 'currents', 'sea_surface_height']
+            },
+            {
+                'id': 'hycom',
+                'name': 'HYCOM Ocean Prediction',
+                'description': 'Hybrid Coordinate Ocean Model NCSS grid service',
+                'type': 'data_assimilative_model',
+                'coverage': 'Global',
+                'variables': ['temperature', 'salinity', 'currents', 'sea_surface_height']
+            },
+            {
+                'id': 'open_meteo',
+                'name': 'Open-Meteo Marine & Atmosphere',
+                'description': 'Global marine wave models, sea surface conditions, and atmospheric wind fields',
+                'type': 'marine_weather',
+                'coverage': 'Global',
+                'variables': ['wave_height', 'wave_direction', 'wind_speed', 'wind_direction', 'wind_stress']
+            },
+            {
+                'id': 'gebco',
+                'name': 'GEBCO Bathymetry',
+                'description': 'General Bathymetric Chart of the Oceans high-resolution seabed topography',
+                'type': 'bathymetry',
+                'coverage': 'Global',
+                'variables': ['elevation', 'depth']
             }
         ]
+
+    def get_provider_status(self) -> Dict[str, Any]:
+        return {
+            'gebco': {'status': 'healthy', 'active': True, 'mode': 'local_netcdf_optimized'},
+            'incois': {'status': 'healthy', 'active': True, 'mode': 'local_first_with_erddap_fallback'},
+            'noaa': {'status': 'healthy', 'active': True, 'endpoint': getattr(self.noaa, 'base_url', 'https://coastwatch.pfeg.noaa.gov/erddap/griddap')},
+            'copernicus': {'status': 'healthy', 'active': True, 'endpoint': 'https://my.cmems-du.eu/motu-web/Motu'},
+            'hycom': {'status': 'healthy', 'active': True, 'endpoint': getattr(self.hycom, 'base_url', 'https://ncss.hycom.org/thredds/ncss/GLBy0.08/expt_93.0')},
+            'open_meteo': {'status': 'healthy', 'active': True, 'endpoint': 'https://marine-api.open-meteo.com/v1/marine'},
+            'geography': {'status': 'healthy', 'active': True, 'dataset': 'Natural Earth 10m'},
+            'observations': {'status': 'healthy', 'active': True, 'dataset': 'Argo Float Profiles'}
+        }
+
+    def get_provider_variables(self, provider: str) -> List[str]:
+        p = str(provider).strip().lower()
+        if p in ('noaa',):
+            return self.noaa.get_supported_variables()
+        elif p in ('copernicus', 'cmems'):
+            return self.copernicus.get_supported_variables()
+        elif p in ('hycom',):
+            return self.hycom.get_supported_variables()
+        elif p in ('incois',):
+            return ['temperature', 'salinity', 'currents', 'sea_surface_height', 'sea_level_anomaly', 'mixed_layer_depth', 'chlorophyll', 'dissolved_oxygen', 'ph', 'nitrate', 'phosphate']
+        elif p in ('open_meteo', 'marine_weather'):
+            return self.open_meteo.get_supported_variables()
+        elif p in ('gebco', 'bathymetry'):
+            return ['elevation', 'depth']
+        elif p in ('auto', 'all'):
+            return ['temperature', 'salinity', 'currents', 'sea_surface_height', 'sea_level_anomaly', 'mixed_layer_depth', 'chlorophyll', 'dissolved_oxygen', 'ph', 'nitrate', 'phosphate', 'wave_height', 'wind_speed', 'elevation', 'depth']
+        else:
+            raise ValueError(f"Unknown provider '{provider}'")
+
 
     def get_combined_region(
         self,
@@ -183,6 +263,15 @@ class DataCollector:
     # Backward Compatibility & Ancillary Layer Delegations
     # =========================================================================
 
+    def _ensure_source_metadata(self, res: Dict[str, Any], provider: str = 'INCOIS', dataset: str = 'INCOIS HOOFS 2026 Grid'):
+        if not isinstance(res.get('source'), dict):
+            res['source'] = {
+                'provider': res.get('provider') or provider,
+                'dataset': res.get('dataset') or dataset,
+                'mode': 'local' if (LOCAL_DATA_MODE or res.get('source_type') == 'local_netcdf') else 'remote',
+                'retrieved_at': datetime.now(timezone.utc).isoformat()
+            }
+
     def get_ocean_data(
         self,
         provider: str = 'auto',
@@ -214,11 +303,43 @@ class DataCollector:
         prov_key = str(provider).strip().lower()
         var_norm = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
 
-        # 1. Atmospheric & Marine Wave Variables (Served live via Open-Meteo)
-        if var_norm in self.open_meteo.get_supported_variables():
-            try:
-                return self.open_meteo.fetch_ocean_variable(
-                    variable=var_norm,
+        valid_vars = {
+            'temperature', 'ocean_temperature', 'temp', 'sst', 'sea_water_temperature',
+            'salinity', 'salt', 'so', 'sss', 'sea_water_salinity',
+            'currents', 'current', 'velocity', 'ocean_currents', 'sea_water_velocity',
+            'sea_surface_height', 'ssh', 'sea_level', 'zos', 'total_sea_level',
+            'sea_level_anomaly', 'sla', 'ssta', 'temperature_anomaly', 'temp_anomaly',
+            'mixed_layer_depth', 'mld', 'ocean_mixed_layer_thickness',
+            'tropical_cyclone_heat_potential', 'tchp',
+            'chlorophyll', 'chl', 'chlor_a', 'chlorophyll_a',
+            'dissolved_oxygen', 'oxygen', 'o2',
+            'ph', 'ocean_ph', 'sea_water_ph',
+            'nitrate', 'no3',
+            'phosphate', 'po4',
+            'wave_height', 'wave_direction', 'wind_speed', 'wind_direction', 'wind_stress',
+            'air_temperature', 'relative_humidity', 'sea_level_pressure'
+        }
+        if variable.lower() not in valid_vars and var_norm.lower() not in valid_vars:
+            raise ValueError(f"Unsupported variable '{variable}'.")
+
+        cache_params = {
+            'provider': prov_key,
+            'variable': variable,
+            'bbox': {'min_lat': bbox.min_lat, 'max_lat': bbox.max_lat, 'min_lon': bbox.min_lon, 'max_lon': bbox.max_lon},
+            'depth': depth,
+            'time': time,
+            'start_time': start_time,
+            'end_time': end_time,
+            'stride': stride,
+            'resolution': resolution
+        }
+        cache_key = make_cache_key('ocean_data', cache_params)
+
+        def _fetch():
+            # Explicit NOAA routing
+            if prov_key == 'noaa':
+                res = self.noaa.fetch_ocean_variable(
+                    variable='temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm,
                     min_lat=bbox.min_lat,
                     max_lat=bbox.max_lat,
                     min_lon=bbox.min_lon,
@@ -227,15 +348,126 @@ class DataCollector:
                     time=time,
                     stride=stride
                 )
-            except Exception as e:
-                logger.warning("Open-Meteo fetch failed for '%s': %s", var_norm, e)
+                res['requested_provider'] = prov_key
+                res['variable'] = variable
+                res['fallback'] = False
+                self._ensure_source_metadata(res, provider='NOAA', dataset=self.noaa.get_datasets().get(var_norm, 'NOAA ERDDAP'))
+                return res
 
-        # 2. Local-First Check: Bay of Bengal High-Resolution Archive
-        in_bay_of_bengal = (
-            bbox.min_lat >= 15.5 and bbox.max_lat <= 24.0 and
-            bbox.min_lon >= 83.5 and bbox.max_lon <= 93.5
-        )
-        if (prov_key in ('auto', 'incois', 'local') and in_bay_of_bengal):
+            # Explicit HYCOM routing
+            if prov_key == 'hycom':
+                res = self.hycom.fetch_ocean_variable(
+                    variable='temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm,
+                    min_lat=bbox.min_lat,
+                    max_lat=bbox.max_lat,
+                    min_lon=bbox.min_lon,
+                    max_lon=bbox.max_lon,
+                    depth=depth,
+                    time=time,
+                    stride=stride
+                )
+                res['requested_provider'] = prov_key
+                res['variable'] = variable
+                res['fallback'] = False
+                self._ensure_source_metadata(res, provider='HYCOM', dataset='HYCOM GLBy0.08 NCSS')
+                return res
+
+            # Explicit Copernicus routing
+            if prov_key in ('copernicus', 'cmems'):
+                res = self.copernicus.fetch_ocean_variable(
+                    variable=var_norm,
+                    min_lat=bbox.min_lat,
+                    max_lat=bbox.max_lat,
+                    min_lon=bbox.min_lon,
+                    max_lon=bbox.max_lon,
+                    depth=depth,
+                    time=time,
+                    start_time=start_time,
+                    end_time=end_time,
+                    stride=stride
+                )
+                res['requested_provider'] = prov_key
+                res['variable'] = variable
+                res['fallback'] = False
+                self._ensure_source_metadata(res, provider='COPERNICUS', dataset='Copernicus Global Ocean Analysis')
+                return res
+
+            # 1. Atmospheric & Marine Wave Variables (Served live via Open-Meteo)
+            if var_norm in self.open_meteo.get_supported_variables():
+                try:
+                    res = self.open_meteo.fetch_ocean_variable(
+                        variable=var_norm,
+                        min_lat=bbox.min_lat,
+                        max_lat=bbox.max_lat,
+                        min_lon=bbox.min_lon,
+                        max_lon=bbox.max_lon,
+                        depth=depth,
+                        time=time,
+                        stride=stride
+                    )
+                    res['requested_provider'] = prov_key
+                    res['variable'] = variable
+                    res['fallback'] = False
+                    self._ensure_source_metadata(res, provider='OPEN_METEO', dataset='Open-Meteo Marine Forecast')
+                    return res
+                except Exception as e:
+                    logger.warning("Open-Meteo fetch failed for '%s': %s", var_norm, e)
+
+            # 2. Local-First Check: Bay of Bengal High-Resolution Archive
+            in_bay_of_bengal = (
+                bbox.min_lat >= 15.5 and bbox.max_lat <= 24.0 and
+                bbox.min_lon >= 83.5 and bbox.max_lon <= 93.5
+            )
+            if (prov_key in ('auto', 'incois', 'local') and in_bay_of_bengal):
+                try:
+                    from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
+                    incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
+                    var_cfg = INCOIS_VARIABLE_MAP.get(incois_var) or INCOIS_VARIABLE_MAP.get('temperature', {})
+                    res = self.incois._fetch_from_local_netcdf(
+                        variable=incois_var,
+                        var_config=var_cfg,
+                        min_lat=bbox.min_lat,
+                        max_lat=bbox.max_lat,
+                        min_lon=bbox.min_lon,
+                        max_lon=bbox.max_lon,
+                        depth=depth,
+                        time=time,
+                        stride=stride
+                    )
+                    res['variable'] = variable
+                    res['requested_provider'] = prov_key
+                    res['provider'] = 'LOCAL'
+                    res['source_type'] = 'local_netcdf'
+                    res['fallback'] = False
+                    self._ensure_source_metadata(res, provider='LOCAL', dataset='Indian Ocean Model Archive (Local NetCDF)')
+                    return res
+                except Exception as local_err:
+                    logger.debug("Local NetCDF fetch failed for '%s': %s; falling back to live providers", var_norm, local_err)
+
+            # 3. Oceanographic & Biogeochemical Variables via Copernicus
+            if prov_key in ('copernicus', 'auto'):
+                try:
+                    res = self.copernicus.fetch_ocean_variable(
+                        variable=var_norm,
+                        min_lat=bbox.min_lat,
+                        max_lat=bbox.max_lat,
+                        min_lon=bbox.min_lon,
+                        max_lon=bbox.max_lon,
+                        depth=depth,
+                        time=time,
+                        start_time=start_time,
+                        end_time=end_time,
+                        stride=stride
+                    )
+                    res['requested_provider'] = prov_key
+                    res['variable'] = variable
+                    res['fallback'] = False
+                    self._ensure_source_metadata(res, provider='COPERNICUS', dataset='Copernicus Global Ocean Analysis')
+                    return res
+                except Exception as cop_err:
+                    logger.info("Live Copernicus fetch failed for '%s' (%s); falling back to local archive / INCOIS", var_norm, cop_err)
+
+            # 4. Fallback to Local NetCDF Archive / INCOIS Model
             try:
                 from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
                 incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
@@ -251,63 +483,21 @@ class DataCollector:
                     time=time,
                     stride=stride
                 )
-                res['variable'] = var_norm
+                res['variable'] = variable
                 res['requested_provider'] = prov_key
-                res['provider'] = 'LOCAL_ARCHIVE'
+                res['provider'] = 'LOCAL'
                 res['source_type'] = 'local_netcdf'
-                res['fallback'] = False
+                res['fallback'] = True
+                self._ensure_source_metadata(res, provider='LOCAL', dataset='Indian Ocean Model Archive (Local NetCDF)')
                 return res
             except Exception as local_err:
-                logger.debug("Local NetCDF fetch failed for '%s': %s; falling back to live providers", var_norm, local_err)
+                logger.error("Local NetCDF fallback failed for '%s': %s", var_norm, local_err)
 
-        # 3. Oceanographic & Biogeochemical Variables
-        # Primary live provider: Copernicus Marine Service
-        if prov_key in ('copernicus', 'auto'):
-            try:
-                res = self.copernicus.fetch_ocean_variable(
-                    variable=var_norm,
-                    min_lat=bbox.min_lat,
-                    max_lat=bbox.max_lat,
-                    min_lon=bbox.min_lon,
-                    max_lon=bbox.max_lon,
-                    depth=depth,
-                    time=time,
-                    start_time=start_time,
-                    end_time=end_time,
-                    stride=stride
-                )
-                res['requested_provider'] = prov_key
-                res['fallback'] = False
-                return res
-            except Exception as cop_err:
-                logger.info("Live Copernicus fetch failed for '%s' (%s); falling back to local archive / INCOIS", var_norm, cop_err)
+            raise RuntimeError(f"Could not retrieve ocean data for variable '{variable}'.")
 
-        # 4. Fallback to Local NetCDF Archive / INCOIS Model
-        try:
-            from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
-            incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
-            var_cfg = INCOIS_VARIABLE_MAP.get(incois_var) or INCOIS_VARIABLE_MAP.get('temperature', {})
-            res = self.incois._fetch_from_local_netcdf(
-                variable=incois_var,
-                var_config=var_cfg,
-                min_lat=bbox.min_lat,
-                max_lat=bbox.max_lat,
-                min_lon=bbox.min_lon,
-                max_lon=bbox.max_lon,
-                depth=depth,
-                time=time,
-                stride=stride
-            )
-            res['variable'] = var_norm
-            res['requested_provider'] = prov_key
-            res['provider'] = 'LOCAL_ARCHIVE'
-            res['source_type'] = 'local_netcdf'
-            res['fallback'] = True
-            return res
-        except Exception as local_err:
-            logger.error("Local NetCDF fallback failed for '%s': %s", var_norm, local_err)
+        return GLOBAL_CACHE.get_or_compute(cache_key, _fetch)
 
-        raise RuntimeError(f"Could not retrieve ocean data for variable '{variable}'.")
+
 
     def get_ocean_variable(self, *args, **kwargs) -> Dict[str, Any]:
         """Universal entry point for variable retrieval; accepts provider and all keyword arguments."""
@@ -383,7 +573,6 @@ class DataCollector:
 
         bbox = self._validate_bbox(min_lat, max_lat, min_lon, max_lon)
         prov_key = str(provider).strip().lower()
-
         target_vars = variables or ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height']
 
         cache_params = {
@@ -397,45 +586,46 @@ class DataCollector:
             'vars': sorted(target_vars)
         }
         cache_key = make_cache_key('ocean_bundle', cache_params)
-        cached_bundle = GLOBAL_CACHE.get(cache_key)
-        if cached_bundle:
-            return cached_bundle
 
-        results = {}
-        active_provider = None
-        for var_name in target_vars:
-            try:
+        def _fetch_bundle():
+            # CRITICAL: Fetch variables SEQUENTIALLY — HDF5/NetCDF C libraries are NOT
+            # thread-safe even with file-level locks. Concurrent H5Aiterate2/H5C_unprotect
+            # calls from multiple threads crash with SIGSEGV in libhdf5.
+            results = {}
+            active_provider = None
+
+            for var_name in target_vars:
                 var_stride = 3 if (var_name == 'currents' and stride == 1) else stride
-                res = self.get_ocean_data(
-                    provider=prov_key,
-                    variable=var_name,
-                    min_lat=bbox.min_lat,
-                    max_lat=bbox.max_lat,
-                    min_lon=bbox.min_lon,
-                    max_lon=bbox.max_lon,
-                    depth=depth,
-                    time=time,
-                    start_time=start_time,
-                    end_time=end_time,
-                    stride=var_stride
-                )
-                results[var_name] = res
-                if not active_provider and res.get('provider'):
-                    active_provider = res.get('provider')
-            except Exception as e:
-                logger.warning("Failed fetching bundle variable '%s': %s", var_name, e)
-                results[var_name] = {'error': str(e), 'available': False}
+                try:
+                    res = self.get_ocean_data(
+                        provider=prov_key,
+                        variable=var_name,
+                        min_lat=bbox.min_lat,
+                        max_lat=bbox.max_lat,
+                        min_lon=bbox.min_lon,
+                        max_lon=bbox.max_lon,
+                        depth=depth,
+                        time=time,
+                        start_time=start_time,
+                        end_time=end_time,
+                        stride=var_stride
+                    )
+                    results[var_name] = res
+                    if not active_provider and isinstance(res, dict) and res.get('provider'):
+                        active_provider = res.get('provider')
+                except Exception as e:
+                    logger.warning("Failed fetching bundle variable '%s': %s", var_name, e)
+                    results[var_name] = {'error': str(e), 'available': False}
 
-        bundle_payload = {
-            'time': time,
-            'provider': active_provider or prov_key.upper(),
-            'bbox': {'min_lat': bbox.min_lat, 'max_lat': bbox.max_lat, 'min_lon': bbox.min_lon, 'max_lon': bbox.max_lon},
-            'depth': depth or 0,
-            'variables': results
-        }
+            return {
+                'time': time,
+                'provider': active_provider or prov_key.upper(),
+                'bbox': {'min_lat': bbox.min_lat, 'max_lat': bbox.max_lat, 'min_lon': bbox.min_lon, 'max_lon': bbox.max_lon},
+                'depth': depth or 0,
+                'variables': results
+            }
 
-        GLOBAL_CACHE.set(cache_key, bundle_payload)
-        return bundle_payload
+        return GLOBAL_CACHE.get_or_compute(cache_key, _fetch_bundle)
 
     def check_ocean_cache(
         self,
@@ -529,10 +719,12 @@ class DataCollector:
 
     def get_variables_catalog(self) -> Dict[str, Any]:
         vars_list = [
+            {'id': 'temperature', 'label': 'Sea Water Temperature', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'ocean_temperature', 'label': 'Ocean Temperature', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'salinity', 'label': 'Salinity', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'currents', 'label': 'Ocean Currents', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'sea_surface_height', 'label': 'Sea Surface Height', 'available': True, 'group': 'PHYSICAL OCEAN'},
+            {'id': 'sea_level', 'label': 'Sea Level', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'sea_level_anomaly', 'label': 'Sea Level Anomaly', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'temperature_anomaly', 'label': 'SST Anomaly', 'available': True, 'group': 'PHYSICAL OCEAN'},
             {'id': 'mixed_layer_depth', 'label': 'Mixed Layer Depth', 'available': True, 'group': 'PHYSICAL OCEAN'},
@@ -615,14 +807,13 @@ class DataCollector:
         end: str = None
     ):
         var_norm = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
-        prov_key = 'incois'
         
         # Check if local/INCOIS timeline is available with real NetCDF coordinates
         try:
             incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
             incois_tl = self.incois.get_variable_timeline(incois_var, min_lat, max_lat, min_lon, max_lon, depth)
             if incois_tl and incois_tl.get('available_timestamps'):
-                incois_tl['variable'] = var_norm
+                incois_tl['variable'] = variable
                 return incois_tl
         except Exception as e:
             logger.debug("Failed discovering timeline from INCOIS adapter: %s", e)
@@ -649,17 +840,18 @@ class DataCollector:
             
         return {
             'provider': 'Copernicus / Open-Meteo',
-            'variable': var_norm,
+            'variable': variable,
             'dataset': 'solvx_combined',
             'available_from': timestamps[0] if timestamps else None,
             'available_to': timestamps[-1] if timestamps else None,
-            'default_resolution': 'daily',
+            'default_resolution': 'hourly' if len(timestamps) > 100 else 'daily',
             'resolutions': ['hourly', 'daily', 'monthly'],
             'historical': {'from': timestamps[0] if timestamps else None, 'to': timestamps[-1] if timestamps else None},
             'forecast': {'from': timestamps[-1] if timestamps else None, 'to': timestamps[-1] if timestamps else None},
             'available_timestamps': timestamps,
             'depth_levels': [0.494]
         }
+
 
     def get_eez(
         self,

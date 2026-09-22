@@ -1,4 +1,5 @@
-// SolvX Viewer — Centralized API Client
+// SolvX Viewer — High-Performance Centralized API Client
+// Implements client-side LRU cache, single-flight deduplication, and AbortController request cancellation.
 
 const API_BASE = (
     window.location.port === '5500' ||
@@ -9,10 +10,55 @@ const API_BASE = (
     : window.location.origin;
 
 const inFlightRequests = new Map();
+const clientLRUCache = new Map();
+const MAX_CACHE_ENTRIES = 50;
+
+const activeAbortControllers = new Map();
+
+function getFromCache(key) {
+    if (!clientLRUCache.has(key)) return null;
+    const item = clientLRUCache.get(key);
+    // Refresh LRU order
+    clientLRUCache.delete(key);
+    clientLRUCache.set(key, item);
+    return item;
+}
+
+function setToCache(key, value) {
+    if (clientLRUCache.has(key)) {
+        clientLRUCache.delete(key);
+    } else if (clientLRUCache.size >= MAX_CACHE_ENTRIES) {
+        const firstKey = clientLRUCache.keys().next().value;
+        clientLRUCache.delete(firstKey);
+    }
+    clientLRUCache.set(key, value);
+}
 
 async function request(endpoint, options = {}) {
     const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
     const isGet = !options.method || options.method === 'GET';
+    const category = options.category || null;
+
+    // Abort previous in-flight request in the same category if requested
+    if (category) {
+        if (activeAbortControllers.has(category)) {
+            try {
+                activeAbortControllers.get(category).abort();
+            } catch (_) {}
+        }
+        const controller = new AbortController();
+        activeAbortControllers.set(category, controller);
+        options.signal = controller.signal;
+    }
+
+    const cacheKey = isGet ? url : null;
+    if (cacheKey && !options.noCache) {
+        const cached = getFromCache(cacheKey);
+        if (cached) {
+            return Promise.resolve(cached);
+        }
+    }
+
     const dedupKey = isGet ? url : null;
     if (dedupKey && inFlightRequests.has(dedupKey)) {
         return inFlightRequests.get(dedupKey);
@@ -20,10 +66,11 @@ async function request(endpoint, options = {}) {
 
     const p = (async () => {
         try {
-            const res = await fetch(url, {
-                cache: 'no-store',
-                ...options
-            });
+            const fetchOptions = { ...options };
+            delete fetchOptions.category;
+            delete fetchOptions.noCache;
+
+            const res = await fetch(url, fetchOptions);
             if (!res.ok) {
                 let errText = '';
                 try {
@@ -31,10 +78,22 @@ async function request(endpoint, options = {}) {
                 } catch (_) {}
                 throw new Error(`API ${res.status}: ${errText || res.statusText}`);
             }
-            return await res.json();
+            const data = await res.json();
+            if (cacheKey && !options.noCache) {
+                setToCache(cacheKey, data);
+            }
+            return data;
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                return { aborted: true };
+            }
+            throw err;
         } finally {
             if (dedupKey) {
                 inFlightRequests.delete(dedupKey);
+            }
+            if (category && activeAbortControllers.get(category)?.signal === options.signal) {
+                activeAbortControllers.delete(category);
             }
         }
     })();
@@ -50,19 +109,34 @@ export const ApiClient = {
         return API_BASE;
     },
 
-    async get(endpoint, params = {}) {
+    cancelCategory(category) {
+        if (activeAbortControllers.has(category)) {
+            try {
+                activeAbortControllers.get(category).abort();
+            } catch (_) {}
+            activeAbortControllers.delete(category);
+        }
+    },
+
+    clearCache() {
+        clientLRUCache.clear();
+        inFlightRequests.clear();
+    },
+
+    async get(endpoint, params = {}, options = {}) {
         const q = new URLSearchParams();
         for (const [k, v] of Object.entries(params)) {
             if (v != null) q.set(k, String(v));
         }
         const qs = q.toString();
-        return request(qs ? `${endpoint}?${qs}` : endpoint);
+        return request(qs ? `${endpoint}?${qs}` : endpoint, { ...options, method: 'GET' });
     },
 
-    async post(endpoint, data = {}) {
+    async post(endpoint, data = {}, options = {}) {
         return request(endpoint, {
+            ...options,
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
             body: JSON.stringify(data)
         });
     },
@@ -90,7 +164,7 @@ export const ApiClient = {
         if (depth != null) q.set('depth', String(depth));
         if (start) q.set('start', String(start));
         if (end) q.set('end', String(end));
-        return request(`/api/data/timeline?${q}`);
+        return request(`/api/data/timeline?${q}`, { category: 'timeline_meta' });
     },
 
     async getDataEEZ(bbox) {
@@ -124,7 +198,7 @@ export const ApiClient = {
         });
         if (depth != null) q.set('depth', String(depth));
         if (time) q.set('time', time);
-        return request(`/api/data/region?${q}`);
+        return request(`/api/data/region?${q}`, { category: 'region' });
     },
 
     async checkOceanCache({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null }) {
@@ -142,7 +216,7 @@ export const ApiClient = {
         return request(`/api/data/ocean/check?${q}`);
     },
 
-    async getOceanBundle({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null, stride = 1 }) {
+    async getOceanBundle({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null, stride = 1, options = {} }) {
         const q = new URLSearchParams({
             provider,
             min_lon: String(bbox.min_lon),
@@ -155,10 +229,10 @@ export const ApiClient = {
         if (time) q.set('time', time);
         if (start_time) q.set('start_time', start_time);
         if (end_time) q.set('end_time', end_time);
-        return request(`/api/data/ocean/bundle?${q}`);
+        return request(`/api/data/ocean/bundle?${q}`, { category: 'bundle', ...options });
     },
 
-    async getOceanVariable({ provider = 'auto', variable, bbox, depth = null, time = null, stride = 1, resolution = 'native' }) {
+    async getOceanVariable({ provider = 'auto', variable, bbox, depth = null, time = null, stride = 1, resolution = 'native', options = {} }) {
         const q = new URLSearchParams({
             provider,
             variable,
@@ -171,7 +245,7 @@ export const ApiClient = {
         });
         if (depth != null) q.set('depth', String(depth));
         if (time) q.set('time', time);
-        return request(`/api/data/ocean?${q}`);
+        return request(`/api/data/ocean?${q}`, { category: 'variable', ...options });
     },
 
     async getOceanVariables({ provider = 'auto', bbox, depth = null, time = null }) {
@@ -286,7 +360,7 @@ export const ApiClient = {
             longitude: String(lon)
         });
         if (time) q.set('time', time);
-        return request(`/api/ocean/point?${q}`);
+        return request(`/api/ocean/point?${q}`, { category: 'point_inspect' });
     },
 
     async getRegionArray(params) {
@@ -376,4 +450,3 @@ export const ApiClient = {
         });
     }
 };
-

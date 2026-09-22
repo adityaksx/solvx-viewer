@@ -52,7 +52,8 @@ export class OceanScene {
             powerPreference: 'high-performance',
             logarithmicDepthBuffer: true
         });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        // Cap DPR at 1.5 for balanced performance and sharpness
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
         this.renderer.setSize(width, height);
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
@@ -116,11 +117,25 @@ export class OceanScene {
 
     disposeObject(obj) {
         if (!obj) return;
+        if (typeof obj.dispose === 'function') {
+            try { obj.dispose(); } catch (_) {}
+        }
         obj.traverse(x => {
             x.geometry?.dispose();
-            if (x.material) {
-                if (Array.isArray(x.material)) x.material.forEach(m => m.dispose());
-                else x.material.dispose();
+            const mats = Array.isArray(x.material) ? x.material : x.material ? [x.material] : [];
+            for (const m of mats) {
+                // Explicitly dispose all texture maps to prevent GPU VRAM leaks
+                if (m.map) m.map.dispose();
+                if (m.alphaMap) m.alphaMap.dispose();
+                if (m.normalMap) m.normalMap.dispose();
+                if (m.roughnessMap) m.roughnessMap.dispose();
+                if (m.metalnessMap) m.metalnessMap.dispose();
+                if (m.uniforms) {
+                    for (const u of Object.values(m.uniforms)) {
+                        if (u?.value?.isTexture) u.value.dispose();
+                    }
+                }
+                m.dispose();
             }
         });
         obj.parent?.remove(obj);
@@ -174,20 +189,29 @@ export class OceanScene {
         this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.mouse, this.camera);
 
+        // Targeted raycasting: only test relevant interactive groups
+        const interactiveTargets = [];
+        if (this.layers.water?.group) interactiveTargets.push(this.layers.water.group);
+        if (this.layers.observations?.group) interactiveTargets.push(this.layers.observations.group);
+
+        const hits = this.raycaster.intersectObjects(interactiveTargets.length ? interactiveTargets : this.root.children, true);
+
         // Check for Argo floats
-        const floatHits = this.raycaster.intersectObjects(this.root.children, true).filter(h => h.object.userData?.isArgoFloat);
-        if (floatHits.length > 0) {
-            this.onFloatClick(floatHits[0].object.userData.float);
-            return;
+        for (const hit of hits) {
+            if (hit.object.userData?.isArgoFloat) {
+                this.onFloatClick(hit.object.userData.float);
+                return;
+            }
         }
 
         // Check for ocean cells
-        const oceanHits = this.raycaster.intersectObjects(this.root.children, true).filter(h => h.object.userData?.isWater && h.instanceId != null);
-        if (oceanHits.length > 0) {
-            const hit = oceanHits[0];
-            const cell = hit.object.userData.cells?.[hit.instanceId];
-            if (cell) {
-                this.onOceanClick(cell);
+        for (const hit of hits) {
+            if (hit.object.userData?.isWater && hit.instanceId != null) {
+                const cell = hit.object.userData.cells?.[hit.instanceId];
+                if (cell) {
+                    this.onOceanClick(cell);
+                    return;
+                }
             }
         }
     }

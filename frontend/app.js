@@ -142,8 +142,7 @@ class SolvXApp {
 
         this.opacityControl = new OpacityControl({
             onExaggerationChange: (ex) => {
-                this.scene.setExaggeration(ex);
-                this.rebuildTerrain();
+                this.setExaggeration(ex);
             }
         });
 
@@ -604,6 +603,18 @@ class SolvXApp {
         this.scene.root.add(this.argoMarkersGroup);
     }
 
+    setExaggeration(ex) {
+        this.scene.setExaggeration(ex);
+        const base = 70.0;
+        const scale = Number(ex) / base;
+        if (this.scene.layers.seabed) {
+            this.scene.layers.seabed.scale.set(1, scale, 1);
+        }
+        if (this.scene.layers.water) {
+            this.scene.layers.water.scale.set(1, scale, 1);
+        }
+    }
+
     rebuildTerrain() {
         if (this.currentGeo && this.currentBathy) {
             this.assemble3DScene(this.currentGeo, this.currentBathy, this.currentEEZ, []);
@@ -611,15 +622,46 @@ class SolvXApp {
         }
     }
 
+    _resolveVarData(variables, varId) {
+        if (!variables) return null;
+        if (variables[varId] && !variables[varId].error) return variables[varId];
+        const aliases = {
+            'ocean_temperature': ['temperature', 'thetao', 'temp', 'sst', 'sea_water_temperature'],
+            'temperature': ['ocean_temperature', 'thetao', 'temp', 'sst', 'sea_water_temperature'],
+            'sea_surface_height': ['ssh', 'zos', 'sla', 'sea_level', 'total_sea_level'],
+            'sea_level': ['sea_surface_height', 'ssh', 'zos', 'sla', 'total_sea_level'],
+            'ssh': ['sea_surface_height', 'zos', 'sla', 'sea_level'],
+            'currents': ['uo', 'vo', 'ocean_currents', 'velocity'],
+            'salinity': ['so', 'salt', 'vosaline', 'sea_water_salinity'],
+            'temperature_anomaly': ['sst_anomaly', 'sea_surface_temperature_anomaly', 'ssta', 'temp_anomaly'],
+            'chlorophyll': ['chl', 'chlor_a', 'chlorophyll_a'],
+            'dissolved_oxygen': ['o2', 'oxygen'],
+            'ph': ['ocean_ph', 'sea_water_ph'],
+            'nitrate': ['no3'],
+            'phosphate': ['po4'],
+            'mixed_layer_depth': ['mld', 'ocean_mixed_layer_thickness']
+        };
+        const fallbacks = aliases[varId] || [];
+        for (const alias of fallbacks) {
+            if (variables[alias] && !variables[alias].error) {
+                return variables[alias];
+            }
+        }
+        return null;
+    }
+
     async setVariable(varId) {
         this.activeVar = varId;
         this.status(`Switching to ${varId}…`);
 
         // Instant switch if variable is already cached in bundle for the active time!
-        if (this.activeTime && this.bundleCache[this.activeTime] && this.bundleCache[this.activeTime][varId] && !this.bundleCache[this.activeTime][varId].error) {
-            this.applyBundleData(this.bundleCache[this.activeTime]);
-            this.status(`Ready · Showing ${varId}`);
-            return;
+        if (this.activeTime && this.bundleCache[this.activeTime]) {
+            const cachedVar = this._resolveVarData(this.bundleCache[this.activeTime], varId);
+            if (cachedVar) {
+                this.applyBundleData(this.bundleCache[this.activeTime]);
+                this.status(`Ready · Showing ${varId}`);
+                return;
+            }
         }
 
         // Otherwise fetch this specific variable directly
@@ -630,7 +672,7 @@ class SolvXApp {
         if (!timeIso) return;
         this.activeTime = timeIso;
 
-        if (this.bundleCache[timeIso]) {
+        if (this.bundleCache[timeIso] && Object.keys(this.bundleCache[timeIso]).length > 0) {
             this.applyBundleData(this.bundleCache[timeIso]);
             this.status(`Ready · Ocean data for ${timeIso.slice(0, 10)}`);
             this.prefetchAdjacentTimestamps(timeIso);
@@ -675,20 +717,23 @@ class SolvXApp {
 
             if (downloadModalTimeout) clearTimeout(downloadModalTimeout);
 
+            // Discard aborted requests or superseded requests
+            if (bundle?.aborted) return;
             if (this._bundleReqSeq !== reqSeq) return;
 
-            this._downloadedRegions.add(regionKey);
-            this.bundleCache[timeIso] = bundle.variables || {};
-            this.hideDataModal(0);
-
-            this.applyBundleData(this.bundleCache[timeIso]);
-            this.updateProvenanceUI();
-            this.refreshMLAnomalies();
-
-            this.status(`⚡ Ocean data loaded (${bundle.provider || 'LOCAL'}) · Ready`);
-
-            // Prefetch adjacent frames in background for instantaneous slider scrubbing & playback
-            this.prefetchAdjacentTimestamps(timeIso);
+            if (bundle && bundle.variables && Object.keys(bundle.variables).length > 0) {
+                this._downloadedRegions.add(regionKey);
+                this.bundleCache[timeIso] = bundle.variables;
+                this.hideDataModal(0);
+                this.applyBundleData(this.bundleCache[timeIso]);
+                this.updateProvenanceUI();
+                this.refreshMLAnomalies();
+                this.status(`⚡ Ocean data loaded (${bundle.provider || 'LOCAL'}) · Ready`);
+                this.prefetchAdjacentTimestamps(timeIso);
+            } else {
+                this.hideDataModal(0);
+                await this.loadActiveVariable();
+            }
         } catch (e) {
             if (downloadModalTimeout) clearTimeout(downloadModalTimeout);
             if (this._bundleReqSeq !== reqSeq) return;
@@ -704,28 +749,32 @@ class SolvXApp {
         const curIdx = list.indexOf(currentIso);
         if (curIdx < 0) return;
 
-        // Prefetch next 2 and previous 1 timestamp in the background
+        // Prefetch adjacent timestamps sequentially with category: null so they don't abort active playback
         const toPrefetch = [curIdx + 1, curIdx + 2, curIdx - 1]
             .filter(i => i >= 0 && i < list.length)
             .map(i => list[i])
-            .filter(iso => !this.bundleCache[iso]);
+            .filter(iso => !this.bundleCache[iso] || Object.keys(this.bundleCache[iso]).length === 0);
 
         if (!toPrefetch.length) return;
 
-        toPrefetch.forEach(async (iso) => {
-            try {
-                const bundle = await ApiClient.getOceanBundle({
-                    provider: this.activeProvider,
-                    bbox: this.currentBBox,
-                    depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
-                    time: iso,
-                    stride: 1
-                });
-                if (bundle?.variables) {
-                    this.bundleCache[iso] = bundle.variables;
-                }
-            } catch (_) {}
-        });
+        (async () => {
+            for (const iso of toPrefetch) {
+                if (this.bundleCache[iso] && Object.keys(this.bundleCache[iso]).length > 0) continue;
+                try {
+                    const bundle = await ApiClient.getOceanBundle({
+                        provider: this.activeProvider,
+                        bbox: this.currentBBox,
+                        depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
+                        time: iso,
+                        stride: 1,
+                        options: { category: null }
+                    });
+                    if (bundle?.variables && !bundle.aborted && Object.keys(bundle.variables).length > 0) {
+                        this.bundleCache[iso] = bundle.variables;
+                    }
+                } catch (_) {}
+            }
+        })();
     }
 
     applyBundleData(variables) {
@@ -735,12 +784,12 @@ class SolvXApp {
         const isCurrentsActive = this.activeVar === 'currents';
 
         if (isCurrentsActive) {
-            const curData = variables['currents'];
+            const curData = this._resolveVarData(variables, 'currents');
             if (curData && !curData.error) {
                 this.renderCurrents(curData, true);
             }
         } else {
-            const varData = variables[this.activeVar];
+            const varData = this._resolveVarData(variables, this.activeVar);
             if (varData && !varData.error) {
                 this.lastOceanData = varData;
                 this.scalarViz?.apply(this.activeVar, varData, this.activeDepth, this.activeDepthMode);
@@ -749,7 +798,7 @@ class SolvXApp {
             }
 
             // Update particle flow in background without overriding active scalar variable or legend
-            const curData = variables['currents'];
+            const curData = this._resolveVarData(variables, 'currents');
             if (curData && !curData.error && (this.layerState.particles || this.layerState.currents)) {
                 this.renderCurrents(curData, false);
             }
@@ -796,10 +845,13 @@ class SolvXApp {
         }
 
         // Fast path: use already cached bundle data if this specific variable is present
-        if (this.activeTime && this.bundleCache[this.activeTime] && this.bundleCache[this.activeTime][this.activeVar] && !this.bundleCache[this.activeTime][this.activeVar].error) {
-            this.applyBundleData(this.bundleCache[this.activeTime]);
-            this.updateProvenanceUI();
-            return;
+        if (this.activeTime && this.bundleCache[this.activeTime]) {
+            const cachedVar = this._resolveVarData(this.bundleCache[this.activeTime], this.activeVar);
+            if (cachedVar) {
+                this.applyBundleData(this.bundleCache[this.activeTime]);
+                this.updateProvenanceUI();
+                return;
+            }
         }
 
         try {

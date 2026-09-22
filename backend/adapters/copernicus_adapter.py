@@ -47,16 +47,35 @@ def _to_naive_utc(ts):
 class CopernicusAdapter:
     """Official Copernicus Marine Service (CMEMS) adapter with automatic credential discovery."""
 
-    def __init__(self):
-        self.username, self.password = self._discover_credentials()
+    def __init__(self, username: Optional[str] = None, password: Optional[str] = None, api_key: Optional[str] = None, timeout: int = 12):
+        if username and password:
+            self.username = username
+            self.password = password
+        else:
+            self.username, self.password = self._discover_credentials()
+        self.api_key = api_key
+        self.timeout = timeout
         self.cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/external/ocean'))
         os.makedirs(self.cache_dir, exist_ok=True)
+
+    def _execute_http_query(self, url: str) -> str:
+        import urllib.request
+        import urllib.error
+        headers = {'User-Agent': 'SolvX-Ocean-Engine/3.0'}
+        if self.username and self.password:
+            auth_str = f"{self.username}:{self.password}"
+            b64_auth = base64.b64encode(auth_str.encode('utf-8')).decode('ascii')
+            headers['Authorization'] = f"Basic {b64_auth}"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            return response.read().decode('utf-8')
 
     def _discover_credentials(self):
         u = os.getenv('COPERNICUSMARINE_SERVICE_USERNAME') or os.getenv('COPERNICUS_MARINE_SERVICE_USERNAME')
         p = os.getenv('COPERNICUSMARINE_SERVICE_PASSWORD') or os.getenv('COPERNICUS_MARINE_SERVICE_PASSWORD')
         if u and p:
             return u, p
+
 
         # Check .copernicusmarine/.copernicusmarine-credentials
         candidate_paths = [
@@ -125,18 +144,19 @@ class CopernicusAdapter:
             for c in all_cmems[:35]:
                 if os.path.getsize(c) == 0: continue
                 try:
-                    with xr.open_dataset(c) as ds:
-                        if 'latitude' in ds.coords and 'longitude' in ds.coords:
-                            ds_min_lat = float(ds.latitude.min())
-                            ds_max_lat = float(ds.latitude.max())
-                            ds_min_lon = float(ds.longitude.min())
-                            ds_max_lon = float(ds.longitude.max())
-                            if (ds_min_lat <= min_lat + 0.1 and ds_max_lat >= max_lat - 0.1 and
-                                ds_min_lon <= min_lon + 0.1 and ds_max_lon >= max_lon - 0.1):
-                                cfg = COPERNICUS_VARIABLE_CATALOG.get(norm_var, {})
-                                var_match = cfg.get("var") or (cfg.get("vars", [None])[0])
-                                if var_match and var_match in ds.data_vars:
-                                    candidates.append(c)
+                    with NETCDF_LOCK:
+                        with xr.open_dataset(c) as ds:
+                            if 'latitude' in ds.coords and 'longitude' in ds.coords:
+                                ds_min_lat = float(ds.latitude.min())
+                                ds_max_lat = float(ds.latitude.max())
+                                ds_min_lon = float(ds.longitude.min())
+                                ds_max_lon = float(ds.longitude.max())
+                                if (ds_min_lat <= min_lat + 0.1 and ds_max_lat >= max_lat - 0.1 and
+                                    ds_min_lon <= min_lon + 0.1 and ds_max_lon >= max_lon - 0.1):
+                                    cfg = COPERNICUS_VARIABLE_CATALOG.get(norm_var, {})
+                                    var_match = cfg.get("var") or (cfg.get("vars", [None])[0])
+                                    if var_match and var_match in ds.data_vars:
+                                        candidates.append(c)
                 except Exception:
                     continue
 
@@ -155,13 +175,14 @@ class CopernicusAdapter:
         if t_start and t_end:
             for c in candidates:
                 try:
-                    with xr.open_dataset(c) as ds:
-                        if 'time' in ds.coords and ds.time.size > 0:
-                            t_min = _to_naive_utc(ds.time.values.min())
-                            t_max = _to_naive_utc(ds.time.values.max())
-                            if t_min and t_max:
-                                if (t_min - pd.Timedelta(days=1)) <= t_start and t_end <= (t_max + pd.Timedelta(days=1)):
-                                    return c
+                    with NETCDF_LOCK:
+                        with xr.open_dataset(c) as ds:
+                            if 'time' in ds.coords and ds.time.size > 0:
+                                t_min = _to_naive_utc(ds.time.values.min())
+                                t_max = _to_naive_utc(ds.time.values.max())
+                                if t_min and t_max:
+                                    if (t_min - pd.Timedelta(days=1)) <= t_start and t_end <= (t_max + pd.Timedelta(days=1)):
+                                        return c
                 except Exception:
                     continue
             if not t_req:
@@ -171,13 +192,14 @@ class CopernicusAdapter:
         if t_req:
             for c in candidates:
                 try:
-                    with xr.open_dataset(c) as ds:
-                        if 'time' in ds.coords and ds.time.size > 0:
-                            t_min = _to_naive_utc(ds.time.values.min())
-                            t_max = _to_naive_utc(ds.time.values.max())
-                            if t_min and t_max:
-                                if (t_min - pd.Timedelta(days=1)) <= t_req <= (t_max + pd.Timedelta(days=1)):
-                                    return c
+                    with NETCDF_LOCK:
+                        with xr.open_dataset(c) as ds:
+                            if 'time' in ds.coords and ds.time.size > 0:
+                                t_min = _to_naive_utc(ds.time.values.min())
+                                t_max = _to_naive_utc(ds.time.values.max())
+                                if t_min and t_max:
+                                    if (t_min - pd.Timedelta(days=1)) <= t_req <= (t_max + pd.Timedelta(days=1)):
+                                        return c
                 except Exception:
                     continue
 
@@ -186,13 +208,14 @@ class CopernicusAdapter:
         if single_boundary:
             for c in candidates:
                 try:
-                    with xr.open_dataset(c) as ds:
-                        if 'time' in ds.coords and ds.time.size > 0:
-                            t_min = _to_naive_utc(ds.time.values.min())
-                            t_max = _to_naive_utc(ds.time.values.max())
-                            if t_min and t_max:
-                                if (t_min - pd.Timedelta(days=1)) <= single_boundary <= (t_max + pd.Timedelta(days=1)):
-                                    return c
+                    with NETCDF_LOCK:
+                        with xr.open_dataset(c) as ds:
+                            if 'time' in ds.coords and ds.time.size > 0:
+                                t_min = _to_naive_utc(ds.time.values.min())
+                                t_max = _to_naive_utc(ds.time.values.max())
+                                if t_min and t_max:
+                                    if (t_min - pd.Timedelta(days=1)) <= single_boundary <= (t_max + pd.Timedelta(days=1)):
+                                        return c
                 except Exception:
                     continue
 
@@ -242,7 +265,13 @@ class CopernicusAdapter:
         if cached_nc:
             out_nc = cached_nc
         else:
+            try:
+                self._execute_http_query(f"https://cmems.copernicus.eu/{dataset_id}")
+            except Exception as probe_err:
+                if "Copernicus" in str(probe_err) or "401" in str(probe_err) or "Unauthorized" in str(probe_err):
+                    raise probe_err
             # 2. Determine multi-day / full-year timeline range to download at once in a SINGLE NetCDF file
+
             now_dt = datetime.now(timezone.utc)
             if start_time and end_time:
                 try:
@@ -304,116 +333,116 @@ class CopernicusAdapter:
                             except Exception: pass
                         raise dl_err
 
-        # 3. Read dataset from local file & slice requested time
-        with NETCDF_LOCK:
-            with xr.open_dataset(out_nc) as ds:
-                ds_loaded = ds.load()
-
-        ds_slice = ds_loaded
-        selected_time_str = time or datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        if 'time' in ds_slice.sizes and ds_slice.sizes['time'] > 1:
-            if time:
-                try:
-                    t_req = _to_naive_utc(time)
-                    ds_slice = ds_slice.sel(time=t_req, method='nearest')
-                    if 'time' in ds_slice.coords:
-                        selected_time_str = str(ds_slice.time.values)[:19] + 'Z'
-                except Exception:
+        # 3. Read dataset from local file & slice requested time lazily without loading full dataset
+        from ..services.cache_service import safe_open_dataset
+        with safe_open_dataset(Path(out_nc)) as ds:
+            ds_slice = ds
+            selected_time_str = time or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            if 'time' in ds_slice.sizes and ds_slice.sizes['time'] > 1:
+                if time:
                     try:
-                        ds_slice = ds_slice.sel(time=str(_to_naive_utc(time))[:19], method='nearest')
+                        t_req = _to_naive_utc(time)
+                        ds_slice = ds_slice.sel(time=t_req, method='nearest')
+                        if 'time' in ds_slice.coords:
+                            selected_time_str = str(ds_slice.time.values)[:19] + 'Z'
                     except Exception:
-                        ds_slice = ds_slice.isel(time=-1)
-            else:
-                ds_slice = ds_slice.isel(time=-1)
-        elif 'time' in ds_slice.sizes:
-            ds_slice = ds_slice.isel(time=0)
+                        try:
+                            ds_slice = ds_slice.sel(time=str(_to_naive_utc(time))[:19], method='nearest')
+                        except Exception:
+                            ds_slice = ds_slice.isel(time=-1)
+                else:
+                    ds_slice = ds_slice.isel(time=-1)
+            elif 'time' in ds_slice.sizes:
+                ds_slice = ds_slice.isel(time=0)
 
-        if 'depth' in ds_slice.coords and ds_slice.depth.ndim > 0 and ds_slice.depth.size > 0:
-            if depth is not None and ds_slice.sizes.get('depth', 0) > 1:
-                ds_slice = ds_slice.sel(depth=float(depth), method='nearest')
-            else:
-                ds_slice = ds_slice.isel(depth=0)
+            if 'depth' in ds_slice.coords and ds_slice.depth.ndim > 0 and ds_slice.depth.size > 0:
+                if depth is not None and ds_slice.sizes.get('depth', 0) > 1:
+                    ds_slice = ds_slice.sel(depth=float(depth), method='nearest')
+                else:
+                    ds_slice = ds_slice.isel(depth=0)
 
-        lats = [float(x) for x in ds_slice.latitude.values]
-        lons = [float(x) for x in ds_slice.longitude.values]
+            lats = [float(x) for x in ds_slice.latitude.values]
+            lons = [float(x) for x in ds_slice.longitude.values]
 
-        # Apply stride if requested
-        if stride > 1:
-            lats = lats[::stride]
-            lons = lons[::stride]
-
-        if is_vector:
-            # Currents u and v
-            u_raw = ds_slice['uo'].values
-            v_raw = ds_slice['vo'].values
+            # Apply stride if requested
             if stride > 1:
-                u_raw = u_raw[::stride, ::stride]
-                v_raw = v_raw[::stride, ::stride]
+                lats = lats[::stride]
+                lons = lons[::stride]
 
-            u_grid = np.where(np.isnan(u_raw), 0.0, u_raw).tolist()
-            v_grid = np.where(np.isnan(v_raw), 0.0, v_raw).tolist()
+            if is_vector:
+                # Currents u and v
+                u_slice = ds_slice['uo']
+                v_slice = ds_slice['vo']
+                if stride > 1:
+                    u_slice = u_slice[::stride, ::stride]
+                    v_slice = v_slice[::stride, ::stride]
+                u_raw = u_slice.values
+                v_raw = v_slice.values
 
-            speed_grid = []
-            dir_grid = []
-            for ru, rv in zip(u_grid, v_grid):
-                s_row = []
-                d_row = []
-                for val_u, val_v in zip(ru, rv):
-                    spd = float(np.sqrt(val_u**2 + val_v**2))
-                    ang = float((np.degrees(np.arctan2(val_u, val_v)) + 360) % 360)
-                    s_row.append(round(spd, 3))
-                    d_row.append(round(ang, 1))
-                speed_grid.append(s_row)
-                dir_grid.append(d_row)
+                u_grid = np.where(np.isnan(u_raw), 0.0, u_raw).tolist()
+                v_grid = np.where(np.isnan(v_raw), 0.0, v_raw).tolist()
 
-            return {
-                'provider': 'COPERNICUS',
-                'variable': 'currents',
-                'dataset': dataset_id,
-                'latitude': lats,
-                'longitude': lons,
-                'u': u_grid,
-                'v': v_grid,
-                'speed': speed_grid,
-                'direction': dir_grid,
-                'units': units,
-                'metadata': {
-                    'data_type': 'LOCAL_DISK_ARCHIVE' if cached_nc else 'LIVE_API',
-                    'retrieved_at': datetime.now(timezone.utc).isoformat(),
-                    'time': selected_time_str,
-                    'depth_m': depth or 0.494
+                speed_grid = []
+                dir_grid = []
+                for ru, rv in zip(u_grid, v_grid):
+                    s_row = []
+                    d_row = []
+                    for val_u, val_v in zip(ru, rv):
+                        spd = float(np.sqrt(val_u**2 + val_v**2))
+                        ang = float((np.degrees(np.arctan2(val_u, val_v)) + 360) % 360)
+                        s_row.append(round(spd, 3))
+                        d_row.append(round(ang, 1))
+                    speed_grid.append(s_row)
+                    dir_grid.append(d_row)
+
+                return {
+                    'provider': 'COPERNICUS',
+                    'variable': 'currents',
+                    'dataset': dataset_id,
+                    'latitude': lats,
+                    'longitude': lons,
+                    'u': u_grid,
+                    'v': v_grid,
+                    'speed': speed_grid,
+                    'direction': dir_grid,
+                    'units': units,
+                    'metadata': {
+                        'data_type': 'LOCAL_DISK_ARCHIVE' if cached_nc else 'LIVE_API',
+                        'retrieved_at': datetime.now(timezone.utc).isoformat(),
+                        'time': selected_time_str,
+                        'depth_m': depth or 0.494
+                    }
                 }
-            }
-        else:
-            var_name = vars_to_fetch[0]
-            vals_raw = ds_slice[var_name].values
-            if stride > 1:
-                vals_raw = vals_raw[::stride, ::stride]
+            else:
+                var_name = vars_to_fetch[0]
+                vals_raw = ds_slice[var_name].values
+                if stride > 1:
+                    vals_raw = vals_raw[::stride, ::stride]
 
-            vals_grid = np.where(np.isnan(vals_raw), None, vals_raw).tolist()
+                vals_grid = np.where(np.isnan(vals_raw), None, vals_raw).tolist()
 
-            # Calculate min and max
-            valid_vals = vals_raw[~np.isnan(vals_raw)]
-            val_min = float(valid_vals.min()) if len(valid_vals) > 0 else 0.0
-            val_max = float(valid_vals.max()) if len(valid_vals) > 0 else 1.0
+                # Calculate min and max
+                valid_vals = vals_raw[~np.isnan(vals_raw)]
+                val_min = float(valid_vals.min()) if len(valid_vals) > 0 else 0.0
+                val_max = float(valid_vals.max()) if len(valid_vals) > 0 else 1.0
 
-            return {
-                'provider': 'COPERNICUS',
-                'variable': norm_var,
-                'dataset': dataset_id,
-                'latitude': lats,
-                'longitude': lons,
-                'values': vals_grid,
-                'units': units,
-                'min_val': round(val_min, 3),
-                'max_val': round(val_max, 3),
-                'metadata': {
-                    'data_type': 'LOCAL_DISK_ARCHIVE' if cached_nc else 'LIVE_API',
-                    'retrieved_at': datetime.now(timezone.utc).isoformat(),
-                    'time': selected_time_str,
-                    'depth_m': depth or 0.494
+                return {
+                    'provider': 'COPERNICUS',
+                    'variable': norm_var,
+                    'dataset': dataset_id,
+                    'latitude': lats,
+                    'longitude': lons,
+                    'values': vals_grid,
+                    'units': units,
+                    'min_val': round(val_min, 3),
+                    'max_val': round(val_max, 3),
+                    'metadata': {
+                        'data_type': 'LOCAL_DISK_ARCHIVE' if cached_nc else 'LIVE_API',
+                        'retrieved_at': datetime.now(timezone.utc).isoformat(),
+                        'time': selected_time_str,
+                        'depth_m': depth or 0.494
+                    }
                 }
-            }
 
     def is_variable_cached(
         self,
@@ -480,30 +509,31 @@ class CopernicusAdapter:
                 cached_files = glob.glob(os.path.join(self.cache_dir, "cmems_*.nc"))
                 for cf in cached_files[-30:]:
                     try:
-                        with xr.open_dataset(cf) as ds:
-                            if 'latitude' in ds.coords and 'longitude' in ds.coords:
-                                min_la = float(ds.latitude.min())
-                                max_la = float(ds.latitude.max())
-                                min_lo = float(ds.longitude.min())
-                                max_lo = float(ds.longitude.max())
-                                if min_la <= lat <= max_la and min_lo <= lon <= max_lo:
-                                    p_ds = ds.sel(latitude=lat, longitude=lon, method='nearest')
-                                    if 'depth' in p_ds.coords: p_ds = p_ds.isel(depth=0)
-                                    if 'time' in p_ds.dims: p_ds = p_ds.isel(time=0)
-                                    if 'thetao' in p_ds.data_vars and point_data["ocean_temperature"] is None:
-                                        v = float(p_ds['thetao'].values)
-                                        if np.isfinite(v): point_data["ocean_temperature"] = round(v, 2)
-                                    if 'so' in p_ds.data_vars and point_data["salinity"] is None:
-                                        v = float(p_ds['so'].values)
-                                        if np.isfinite(v): point_data["salinity"] = round(v, 2)
-                                    if 'zos' in p_ds.data_vars and point_data["sea_surface_height"] is None:
-                                        v = float(p_ds['zos'].values)
-                                        if np.isfinite(v): point_data["sea_surface_height"] = round(v, 3)
-                                    if 'uo' in p_ds.data_vars and point_data["current_u"] is None:
-                                        u = float(p_ds['uo'].values)
-                                        v = float(p_ds['vo'].values)
-                                        if np.isfinite(u): point_data["current_u"] = round(u, 3)
-                                        if np.isfinite(v): point_data["current_v"] = round(v, 3)
+                        with NETCDF_LOCK:
+                            with xr.open_dataset(cf) as ds:
+                                if 'latitude' in ds.coords and 'longitude' in ds.coords:
+                                    min_la = float(ds.latitude.min())
+                                    max_la = float(ds.latitude.max())
+                                    min_lo = float(ds.longitude.min())
+                                    max_lo = float(ds.longitude.max())
+                                    if min_la <= lat <= max_la and min_lo <= lon <= max_lo:
+                                        p_ds = ds.sel(latitude=lat, longitude=lon, method='nearest')
+                                        if 'depth' in p_ds.coords: p_ds = p_ds.isel(depth=0)
+                                        if 'time' in p_ds.dims: p_ds = p_ds.isel(time=0)
+                                        if 'thetao' in p_ds.data_vars and point_data["ocean_temperature"] is None:
+                                            v = float(p_ds['thetao'].values)
+                                            if np.isfinite(v): point_data["ocean_temperature"] = round(v, 2)
+                                        if 'so' in p_ds.data_vars and point_data["salinity"] is None:
+                                            v = float(p_ds['so'].values)
+                                            if np.isfinite(v): point_data["salinity"] = round(v, 2)
+                                        if 'zos' in p_ds.data_vars and point_data["sea_surface_height"] is None:
+                                            v = float(p_ds['zos'].values)
+                                            if np.isfinite(v): point_data["sea_surface_height"] = round(v, 3)
+                                        if 'uo' in p_ds.data_vars and point_data["current_u"] is None:
+                                            u = float(p_ds['uo'].values)
+                                            v = float(p_ds['vo'].values)
+                                            if np.isfinite(u): point_data["current_u"] = round(u, 3)
+                                            if np.isfinite(v): point_data["current_v"] = round(v, 3)
                     except Exception:
                         continue
             except Exception as e:

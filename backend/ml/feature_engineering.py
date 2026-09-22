@@ -85,8 +85,6 @@ def calculate_anomaly_grid(features: Dict[str, Any]) -> np.ndarray:
     if total_weight > 0:
         composite_score = composite_score / total_weight
         
-    # Apply a slight non-linear scaling to emphasize higher anomalies
-    composite_score = np.power(composite_score / 100.0, 1.2) * 100.0
     composite_score = np.clip(composite_score, 0, 100)
-    
     return composite_score
+

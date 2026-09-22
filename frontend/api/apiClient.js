@@ -448,5 +448,46 @@ export const ApiClient = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+    },
+
+    // =========================================================================
+    // Stage 2 Ocean Slicing Endpoints
+    // =========================================================================
+
+    async getOceanDepths(variable = 'temperature') {
+        const q = new URLSearchParams({ variable });
+        return request(`/api/ocean/depths?${q}`);
+    },
+
+    async getOceanSlice({ variable = 'temperature', depth = 0, time = null, bbox = null, stride = 1 } = {}) {
+        const q = new URLSearchParams({
+            variable,
+            depth: String(depth),
+            stride: String(stride)
+        });
+        if (time) q.set('time', time);
+        if (bbox) {
+            q.set('min_lat', String(bbox.min_lat));
+            q.set('max_lat', String(bbox.max_lat));
+            q.set('min_lon', String(bbox.min_lon));
+            q.set('max_lon', String(bbox.max_lon));
+        }
+        return request(`/api/ocean/slice?${q}`);
+    },
+
+    async getOceanVerticalSlice({ variable = 'temperature', time = null, startLat = null, startLon = null, endLat = null, endLon = null, latitude = null, longitude = null, numPoints = 100 } = {}) {
+        const q = new URLSearchParams({
+            variable,
+            num_points: String(numPoints)
+        });
+        if (time) q.set('time', time);
+        if (startLat != null) q.set('start_lat', String(startLat));
+        if (startLon != null) q.set('start_lon', String(startLon));
+        if (endLat != null) q.set('end_lat', String(endLat));
+        if (endLon != null) q.set('end_lon', String(endLon));
+        if (latitude != null) q.set('latitude', String(latitude));
+        if (longitude != null) q.set('longitude', String(longitude));
+        return request(`/api/ocean/vertical-slice?${q}`);
     }
 };
+

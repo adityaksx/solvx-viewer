@@ -278,3 +278,298 @@ def get_region_array(
             'coordinates': {d: sanitize(data[d].values) for d in data.dims if d in data.coords},
             'data': sanitize(values)
         }
+
+
+def get_ocean_depths(variable: Optional[str] = None) -> Dict[str, Any]:
+    """Returns available vertical depth levels for a variable or active model dataset."""
+    logical = variable or 'temperature'
+    if logical in ('temp', 'ocean_temperature'):
+        logical = 'temperature'
+
+    matches = find_logical(logical)
+    if not matches and logical != 'temperature':
+        matches = find_logical('temperature')
+
+    if not matches:
+        return {
+            'variable': logical,
+            'file': None,
+            'depth_dimension': None,
+            'depths': [0.49],
+            'min_depth': 0.49,
+            'max_depth': 0.49,
+            'count': 1,
+            'units': 'meters'
+        }
+
+    f, n, a, d, s = matches[0]
+    with safe_open_dataset(f) as ds:
+        da = ds[n]
+        depth_dim = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z') if dim in da.dims or dim in da.coords), None)
+        if depth_dim and depth_dim in da.coords:
+            raw_depths = [round(float(x), 2) for x in da.coords[depth_dim].values]
+            return {
+                'variable': logical,
+                'file': f.name,
+                'depth_dimension': depth_dim,
+                'depths': raw_depths,
+                'min_depth': min(raw_depths),
+                'max_depth': max(raw_depths),
+                'count': len(raw_depths),
+                'units': 'meters'
+            }
+
+        return {
+            'variable': logical,
+            'file': f.name,
+            'depth_dimension': None,
+            'depths': [0.49],
+            'min_depth': 0.49,
+            'max_depth': 0.49,
+            'count': 1,
+            'units': 'meters'
+        }
+
+
+def get_ocean_slice(
+    variable: str = 'temperature',
+    depth: float = 0.0,
+    time: Optional[str] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    stride: int = 1
+) -> Dict[str, Any]:
+    """Extracts a 2D horizontal field slice at a specific depth level."""
+    logical = 'temperature' if variable in ('temp', 'ocean_temperature') else variable
+
+    if logical == 'currents':
+        cg = get_ocean_current_grid(time=time, depth=depth, stride=stride)
+        return {
+            'variable': 'currents',
+            'depth': depth,
+            'time': time,
+            'latitude': cg['latitude'],
+            'longitude': cg['longitude'],
+            'u': cg['u'],
+            'v': cg['v'],
+            'units': cg.get('units', 'm/s')
+        }
+
+    matches = find_logical(logical)
+    if not matches:
+        raise HTTPException(404, detail=f"Variable '{variable}' not found in catalog")
+
+    f, n, a, d, s = matches[0]
+    with safe_open_dataset(f) as ds:
+        da = ds[n]
+        sub = subset_array(
+            da,
+            lat_min=min_lat,
+            lat_max=max_lat,
+            lon_min=min_lon,
+            lon_max=max_lon,
+            depth_min=depth,
+            depth_max=depth,
+            time_start=time,
+            time_end=time,
+            stride=stride
+        )
+        if time is None and 'time' in sub.dims:
+            sub = sub.isel(time=0)
+        elif time is not None:
+            sub = select_time(sub, time)
+
+        depth_dim = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z') if dim in sub.dims), None)
+        selected_depth = depth
+        if depth_dim:
+            if sub.sizes[depth_dim] > 1:
+                sub = sub.sel({depth_dim: float(depth)}, method='nearest')
+            else:
+                sub = sub.squeeze(dim=depth_dim, drop=True)
+            if depth_dim in da.coords:
+                selected_depth = float(da[depth_dim].sel({depth_dim: float(depth)}, method='nearest').values)
+
+        yd = 'latitude' if 'latitude' in sub.dims else 'lat' if 'lat' in sub.dims else None
+        xd = 'longitude' if 'longitude' in sub.dims else 'lon' if 'lon' in sub.dims else None
+        if not yd or not xd:
+            raise HTTPException(422, detail='Dataset missing latitude/longitude dimensions')
+
+        lats = sanitize(sub.coords[yd].values.tolist())
+        lons = sanitize(sub.coords[xd].values.tolist())
+        vals_raw = sub.values.astype(np.float32)
+        vals_grid = sanitize(vals_raw.tolist())
+
+        valid = vals_raw[~np.isnan(vals_raw)]
+        min_v = float(valid.min()) if len(valid) > 0 else 0.0
+        max_v = float(valid.max()) if len(valid) > 0 else 1.0
+
+        return {
+            'variable': logical,
+            'file': f.name,
+            'depth': round(selected_depth, 2),
+            'time': time,
+            'latitude': lats,
+            'longitude': lons,
+            'values': vals_grid,
+            'min_val': round(min_v, 3),
+            'max_val': round(max_v, 3),
+            'units': a.get('units', '')
+        }
+
+
+def get_ocean_vertical_slice(
+    variable: str = 'temperature',
+    time: Optional[str] = None,
+    start_lat: Optional[float] = None,
+    start_lon: Optional[float] = None,
+    end_lat: Optional[float] = None,
+    end_lon: Optional[float] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    num_points: int = 100
+) -> Dict[str, Any]:
+    """
+    Extracts a 2D vertical cross-section (depth x distance) along a transect.
+    Supports:
+      - Orthogonal transects: constant latitude (varying lon) or constant longitude (varying lat)
+      - Arbitrary diagonal transects between (start_lat, start_lon) and (end_lat, end_lon).
+    """
+    logical = 'temperature' if variable in ('temp', 'ocean_temperature') else variable
+    matches = find_logical(logical)
+    if not matches:
+        raise HTTPException(404, detail=f"Variable '{variable}' not found in catalog")
+
+    f, n, a, d, s = matches[0]
+    with safe_open_dataset(f) as ds:
+        da = ds[n]
+        yd = 'latitude' if 'latitude' in da.dims else 'lat' if 'lat' in da.dims else None
+        xd = 'longitude' if 'longitude' in da.dims else 'lon' if 'lon' in da.dims else None
+        if not yd or not xd:
+            raise HTTPException(422, detail='Dataset missing latitude/longitude dimensions')
+
+        grid_lats = np.asarray(da.coords[yd].values, dtype=float)
+        grid_lons = np.asarray(da.coords[xd].values, dtype=float)
+
+        # 1. Resolve transect endpoints
+        transect_type = 'custom'
+        if latitude is not None:
+            transect_type = 'constant_latitude'
+            s_lat = e_lat = float(latitude)
+            s_lon = float(start_lon) if start_lon is not None else float(grid_lons.min())
+            e_lon = float(end_lon) if end_lon is not None else float(grid_lons.max())
+        elif longitude is not None:
+            transect_type = 'constant_longitude'
+            s_lon = e_lon = float(longitude)
+            s_lat = float(start_lat) if start_lat is not None else float(grid_lats.min())
+            e_lat = float(end_lat) if end_lat is not None else float(grid_lats.max())
+        else:
+            if start_lat is None or start_lon is None or end_lat is None or end_lon is None:
+                # Default diagonal across the dataset
+                s_lat = float(grid_lats.min())
+                s_lon = float(grid_lons.min())
+                e_lat = float(grid_lats.max())
+                e_lon = float(grid_lons.max())
+            else:
+                s_lat = float(start_lat)
+                s_lon = float(start_lon)
+                e_lat = float(end_lat)
+                e_lon = float(end_lon)
+
+        num_points = max(2, min(int(num_points), 500))
+        t_steps = np.linspace(0.0, 1.0, num_points)
+        sample_lats = s_lat + t_steps * (e_lat - s_lat)
+        sample_lons = s_lon + t_steps * (e_lon - s_lon)
+
+        # Calculate distances in km along transect
+        distances_km = [0.0]
+        for k in range(1, num_points):
+            lat1, lon1 = sample_lats[k - 1], sample_lons[k - 1]
+            lat2, lon2 = sample_lats[k], sample_lons[k]
+            d_lat = (lat2 - lat1) * 111.32
+            mid_lat_rad = np.radians((lat1 + lat2) / 2.0)
+            d_lon = (lon2 - lon1) * 111.32 * np.cos(mid_lat_rad)
+            dist_step = float(np.hypot(d_lat, d_lon))
+            distances_km.append(round(distances_km[-1] + dist_step, 2))
+
+        stations = [
+            {
+                'station_index': k,
+                'latitude': round(float(sample_lats[k]), 4),
+                'longitude': round(float(sample_lons[k]), 4),
+                'distance_km': round(distances_km[k], 2)
+            }
+            for k in range(num_points)
+        ]
+
+        # 2. Select temporal step
+        da_time = da
+        if time is not None and 'time' in da_time.dims:
+            da_time = select_time(da_time, time)
+        elif 'time' in da_time.dims:
+            da_time = da_time.isel(time=0)
+
+        # 3. Depth levels
+        depth_dim = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z') if dim in da_time.dims), None)
+        if depth_dim and depth_dim in da_time.coords:
+            depth_vals = [round(float(z), 2) for z in da_time.coords[depth_dim].values]
+        else:
+            depth_vals = [0.49]
+            da_time = da_time.expand_dims('depth', axis=0)
+            depth_dim = 'depth'
+
+        D = len(depth_vals)
+        H = len(grid_lats)
+        W = len(grid_lons)
+        vals_3d = da_time.values.astype(np.float32)
+        if vals_3d.ndim == 2:
+            vals_3d = vals_3d[np.newaxis, :, :]
+
+        # 4. Bilinear sampling across transect
+        lats_clamped = np.clip(sample_lats, grid_lats.min(), grid_lats.max())
+        lons_clamped = np.clip(sample_lons, grid_lons.min(), grid_lons.max())
+
+        i = np.clip(np.searchsorted(grid_lats, lats_clamped, side='right') - 1, 0, H - 2)
+        j = np.clip(np.searchsorted(grid_lons, lons_clamped, side='right') - 1, 0, W - 2)
+
+        dlat = grid_lats[i + 1] - grid_lats[i]
+        dlon = grid_lons[j + 1] - grid_lons[j]
+        fy = np.where(dlat > 0, (lats_clamped - grid_lats[i]) / dlat, 0.0)
+        fx = np.where(dlon > 0, (lons_clamped - grid_lons[j]) / dlon, 0.0)
+
+        v00 = vals_3d[:, i, j]
+        v01 = vals_3d[:, i, j + 1]
+        v10 = vals_3d[:, i + 1, j]
+        v11 = vals_3d[:, i + 1, j + 1]
+
+        w00 = (1.0 - fy) * (1.0 - fx)
+        w01 = (1.0 - fy) * fx
+        w10 = fy * (1.0 - fx)
+        w11 = fy * fx
+
+        interp_grid = w00 * v00 + w01 * v01 + w10 * v10 + w11 * v11
+        nan_mask = np.isnan(interp_grid)
+        if np.any(nan_mask):
+            v_near = vals_3d[:, np.round(i + fy).astype(int), np.round(j + fx).astype(int)]
+            interp_grid = np.where(nan_mask, v_near, interp_grid)
+
+        valid = interp_grid[~np.isnan(interp_grid)]
+        min_v = float(valid.min()) if len(valid) > 0 else 0.0
+        max_v = float(valid.max()) if len(valid) > 0 else 1.0
+
+        return {
+            'variable': logical,
+            'file': f.name,
+            'transect_type': transect_type,
+            'time': time,
+            'stations': stations,
+            'total_distance_km': distances_km[-1],
+            'depths': depth_vals,
+            'shape': [D, num_points],
+            'values': sanitize(interp_grid.tolist()),
+            'min_val': round(min_v, 3),
+            'max_val': round(max_v, 3),
+            'units': a.get('units', '')
+        }
+

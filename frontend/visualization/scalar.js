@@ -221,13 +221,13 @@ export class ScalarVisualizer {
         });
     }
 
-    applyVerticalSlicePlane(sLat, sLon, eLat, eLon) {
-        this.customVerticalCoords = { sLat, sLon, eLat, eLon };
+    applyVerticalSlicePlane(sLat, sLon, eLat, eLon, transectData = null) {
+        this.customVerticalCoords = { sLat, sLon, eLat, eLon, transectData };
         this.updateSliceTexture(0, 'vertical_custom');
     }
 
     updateSliceTexture(depthM, mode = 'slice') {
-        if (!this.currentData) {
+        if (!this.currentData && !(this.customVerticalCoords && this.customVerticalCoords.transectData)) {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water) this.water.setDataTexture(null, 0.0);
@@ -250,7 +250,17 @@ export class ScalarVisualizer {
             if (this.water) this.water.setDataTexture(null, 0.0);
             
             import('./verticalSlice.js').then(module => {
-                const texture = module.createVerticalSliceTexture(this.currentData, this.variable, this.range.lo, this.range.hi, this.customVerticalCoords, this.water.bounds);
+                const dataSource = (this.customVerticalCoords && this.customVerticalCoords.transectData)
+                    ? this.customVerticalCoords.transectData
+                    : this.currentData;
+                const texture = module.createVerticalSliceTexture(
+                    dataSource,
+                    this.variable,
+                    this.range.lo,
+                    this.range.hi,
+                    this.customVerticalCoords,
+                    this.water.bounds
+                );
                 
                 if (mode === 'vertical_custom' && this.customVerticalCoords) {
                     const { sLat, sLon, eLat, eLon } = this.customVerticalCoords;

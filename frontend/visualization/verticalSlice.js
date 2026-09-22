@@ -5,7 +5,36 @@ export function createVerticalSliceTexture(dataArray, varName, minVal, maxVal, c
     const values = dataArray.values;
     if (!values || !values.length) return null;
     
-    // Check if 3D
+    // Case 1: Pre-interpolated 2D transect grid [depths][steps] (from /api/ocean/vertical-slice)
+    if (Array.isArray(values[0]) && !Array.isArray(values[0][0])) {
+        const depths = values.length;
+        const steps = values[0].length;
+        const data = new Uint8Array(4 * steps * depths);
+
+        for (let d = 0; d < depths; d++) {
+            for (let s = 0; s < steps; s++) {
+                const idx = ((depths - 1 - d) * steps + s) * 4; // Y is depth
+                const val = values[d][s];
+                if (val === null || val === undefined || isNaN(val)) {
+                    data[idx + 3] = 0;
+                } else {
+                    const color = sampleColor(varName, val, minVal, maxVal);
+                    data[idx] = color.r * 255;
+                    data[idx + 1] = color.g * 255;
+                    data[idx + 2] = color.b * 255;
+                    data[idx + 3] = 220;
+                }
+            }
+        }
+
+        const texture = new THREE.DataTexture(data, steps, depths, THREE.RGBAFormat);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+        return texture;
+    }
+
+    // Case 2: 3D volume array [depths][lats][lons]
     if (!Array.isArray(values[0]) || !Array.isArray(values[0][0])) return null;
 
     const depths = values.length;
@@ -24,10 +53,10 @@ export function createVerticalSliceTexture(dataArray, varName, minVal, maxVal, c
         const dLon = bounds[1] - bounds[0];
         const dLat = bounds[3] - bounds[2];
         
-        startLonIdx = ((customCoords.sLon - bounds[0]) / dLon) * (lons - 1);
-        startLatIdx = ((customCoords.sLat - bounds[2]) / dLat) * (lats - 1);
-        endLonIdx = ((customCoords.eLon - bounds[0]) / dLon) * (lons - 1);
-        endLatIdx = ((customCoords.eLat - bounds[2]) / dLat) * (lats - 1);
+        startLonIdx = ((customCoords.sLon - bounds[0]) / (dLon || 1)) * (lons - 1);
+        startLatIdx = ((customCoords.sLat - bounds[2]) / (dLat || 1)) * (lats - 1);
+        endLonIdx = ((customCoords.eLon - bounds[0]) / (dLon || 1)) * (lons - 1);
+        endLatIdx = ((customCoords.eLat - bounds[2]) / (dLat || 1)) * (lats - 1);
     }
     
     for (let d = 0; d < depths; d++) {
@@ -40,21 +69,20 @@ export function createVerticalSliceTexture(dataArray, varName, minVal, maxVal, c
             const idx = ((depths - 1 - d) * steps + s) * 4; // Y is depth
             
             if (latIdx < 0 || latIdx >= lats || lonIdx < 0 || lonIdx >= lons) {
-                // Out of bounds
-                data[idx+3] = 0;
+                data[idx + 3] = 0;
                 continue;
             }
             
             const val = values[d][latIdx][lonIdx];
             
             if (val === null || val === undefined || isNaN(val)) {
-                data[idx+3] = 0;
+                data[idx + 3] = 0;
             } else {
                 const color = sampleColor(varName, val, minVal, maxVal);
                 data[idx] = color.r * 255;
-                data[idx+1] = color.g * 255;
-                data[idx+2] = color.b * 255;
-                data[idx+3] = 200;
+                data[idx + 1] = color.g * 255;
+                data[idx + 2] = color.b * 255;
+                data[idx + 3] = 220;
             }
         }
     }

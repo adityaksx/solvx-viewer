@@ -825,6 +825,54 @@ html, body, #app {
   font-family: var(--font-mono);
 }
 
+.slice-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.slice-depth-badge {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 700;
+  background: rgba(0, 229, 160, 0.1);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(0, 229, 160, 0.2);
+}
+
+.transect-mode-pills {
+  display: flex;
+  gap: 4px;
+}
+
+.pill-btn {
+  flex: 1;
+  background: rgba(14, 30, 48, 0.6);
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: all var(--trans-fast);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.pill-btn:hover {
+  color: var(--ink);
+  background: rgba(14, 30, 48, 0.9);
+}
+
+.pill-btn.active {
+  background: rgba(0, 229, 160, 0.15);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+
 /* ==============================================================================
    Vertical Exaggeration
    ============================================================================== */

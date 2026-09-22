@@ -23,9 +23,11 @@ import { VariableControl } from './controls/variableControl.js';
 import { TimelineControl } from './controls/timelineControl.js';
 import { OpacityControl } from './controls/opacityControl.js';
 import { HazardUI } from './ui/hazardUI.js';
+import { ViewerController } from './viewer/viewerController.js';
 
 class SolvXApp {
     constructor() {
+        this.viewerController = new ViewerController(this);
         this.currentMode = '3d'; // 'map' or '3d'
         this.currentBBox = {
             min_lon: 84.10,
@@ -133,8 +135,17 @@ class SolvXApp {
             onDepthChange: (depthM) => this.onDepthChange(depthM),
             onModeChange: (mode, depthM) => this.onDepthModeChange(mode, depthM),
             onVerticalSlice: (slat, slon, elat, elon) => this.applyVerticalSlice(slat, slon, elat, elon),
-            onClearVerticalSlice: () => this.clearVerticalSlice()
+            onClearVerticalSlice: () => this.clearVerticalSlice(),
+            getBBox: () => this.currentBBox
         });
+
+        // Initialize depth levels for active variable
+        try {
+            const depthData = await ApiClient.getOceanDepths(this.activeVar);
+            if (depthData?.depths) {
+                this.depthControl.setDepthLevels(depthData.depths);
+            }
+        } catch (_) {}
 
         this.timelineControl = new TimelineControl({
             onTimeChange: (idx, timeIso, meta) => this.onTimeChange(idx, timeIso, meta)
@@ -654,6 +665,13 @@ class SolvXApp {
         this.activeVar = varId;
         this.status(`Switching to ${varId}…`);
 
+        try {
+            const depthData = await ApiClient.getOceanDepths(varId);
+            if (depthData?.depths) {
+                this.depthControl?.setDepthLevels(depthData.depths);
+            }
+        } catch (_) {}
+
         // Instant switch if variable is already cached in bundle for the active time!
         if (this.activeTime && this.bundleCache[this.activeTime]) {
             const cachedVar = this._resolveVarData(this.bundleCache[this.activeTime], varId);
@@ -908,11 +926,30 @@ class SolvXApp {
         }
     }
 
-    applyVerticalSlice(sLat, sLon, eLat, eLon) {
+    async applyVerticalSlice(sLat, sLon, eLat, eLon) {
         this.activeDepthMode = 'vertical_custom';
-        this.verticalSliceCoords = {sLat, sLon, eLat, eLon};
-        if (this.scalarViz) {
-            this.scalarViz.applyVerticalSlicePlane(sLat, sLon, eLat, eLon);
+        this.verticalSliceCoords = { sLat, sLon, eLat, eLon };
+        try {
+            const transect = await ApiClient.getOceanVerticalSlice({
+                variable: this.activeVar === 'currents' ? 'temperature' : this.activeVar,
+                time: this.activeTime,
+                startLat: sLat,
+                startLon: sLon,
+                endLat: eLat,
+                endLon: eLon,
+                numPoints: 100
+            });
+            if (this.scalarViz) {
+                this.scalarViz.applyVerticalSlicePlane(sLat, sLon, eLat, eLon, transect);
+            }
+            if (this.depthControl?.vertInfo && transect.total_distance_km) {
+                this.depthControl.vertInfo.textContent = `Transect: ${transect.total_distance_km} km · ${transect.depths?.length || 32} levels`;
+            }
+        } catch (e) {
+            console.warn('[SolvXApp] Vertical slice API call failed, falling back to local array:', e);
+            if (this.scalarViz) {
+                this.scalarViz.applyVerticalSlicePlane(sLat, sLon, eLat, eLon);
+            }
         }
     }
 
@@ -1135,6 +1172,7 @@ class SolvXApp {
 window.addEventListener('DOMContentLoaded', () => {
     const app = new SolvXApp();
     window.solvx = app;
+    window.solvxViewer = app.viewerController;
     app.init().catch(err => {
         console.error('Fatal initialization error:', err);
         const fatal = document.getElementById('fatal');

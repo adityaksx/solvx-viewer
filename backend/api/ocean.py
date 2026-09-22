@@ -6,7 +6,10 @@ from ..services.ocean_data_service import (
     get_ocean_time,
     get_ocean_current_grid,
     get_ocean_point,
-    get_region_array
+    get_region_array,
+    get_ocean_depths,
+    get_ocean_slice,
+    get_ocean_vertical_slice
 )
 
 router = APIRouter(prefix='/api/ocean', tags=['Ocean Data'])
@@ -16,6 +19,59 @@ def ocean_catalog():
     """Returns available scientific variables and their physical attributes."""
     from ..services.data_collector import COLLECTOR
     return COLLECTOR.get_variables_catalog()
+
+@router.get('/depths')
+def ocean_depths(variable: Optional[str] = None):
+    """Returns available vertical depth levels for a variable or active model dataset."""
+    return get_ocean_depths(variable=variable)
+
+@router.get('/slice')
+def ocean_slice(
+    variable: str = Query('temperature'),
+    depth: float = Query(0.0),
+    time: Optional[str] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    stride: int = Query(1, ge=1, le=20)
+):
+    """Extracts a 2D horizontal field slice at a specific depth level."""
+    return get_ocean_slice(
+        variable=variable,
+        depth=depth,
+        time=time,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        min_lon=min_lon,
+        max_lon=max_lon,
+        stride=stride
+    )
+
+@router.get('/vertical-slice')
+def ocean_vertical_slice(
+    variable: str = Query('temperature'),
+    time: Optional[str] = None,
+    start_lat: Optional[float] = None,
+    start_lon: Optional[float] = None,
+    end_lat: Optional[float] = None,
+    end_lon: Optional[float] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    num_points: int = Query(100, ge=2, le=500)
+):
+    """Extracts a 2D vertical cross-section along a geographic transect."""
+    return get_ocean_vertical_slice(
+        variable=variable,
+        time=time,
+        start_lat=start_lat,
+        start_lon=start_lon,
+        end_lat=end_lat,
+        end_lon=end_lon,
+        latitude=latitude,
+        longitude=longitude,
+        num_points=num_points
+    )
 
 @router.get('/time')
 def ocean_time():

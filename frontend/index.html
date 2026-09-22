@@ -258,9 +258,20 @@
         <!-- Progressive Disclosure: Horizontal Slice -->
         <div id="horizontalSliceControls" class="slice-disclosure-box hidden">
           <div class="slice-input-group">
-            <label for="horizDepthInput">Slice Depth</label>
+            <div class="slice-label-row">
+              <label for="horizDepthInput">Target Depth</label>
+              <span id="horizDepthValue" class="slice-depth-badge mono">100m</span>
+            </div>
+            <div class="slider-box" style="margin: 6px 0;">
+              <input id="horizDepthSlider" type="range" min="0" max="541" value="100" step="1" class="sci-slider">
+              <div id="horizSliderTicks" class="slider-ticks">
+                <span>0m</span>
+                <span id="sliderTickMid">270m</span>
+                <span id="sliderTickMax">541m</span>
+              </div>
+            </div>
             <div class="input-with-unit">
-              <input type="number" id="horizDepthInput" value="100" min="0" max="5500" step="10">
+              <input type="number" id="horizDepthInput" value="100" min="0" max="5500" step="1">
               <span class="unit">meters</span>
             </div>
           </div>
@@ -270,22 +281,38 @@
 
         <!-- Progressive Disclosure: Vertical Slice -->
         <div id="verticalSliceControls" class="slice-disclosure-box hidden">
-          <div class="slice-coord-grid">
+          <div class="transect-mode-pills">
+            <button class="pill-btn active" data-transect-mode="custom">Custom Line</button>
+            <button class="pill-btn" data-transect-mode="lat">Const. Lat</button>
+            <button class="pill-btn" data-transect-mode="lon">Const. Lon</button>
+          </div>
+
+          <div id="transectCustomInputs" class="slice-coord-grid">
             <div class="coord-pair">
               <span class="coord-tag">Start</span>
-              <input type="number" id="vertStartLat" placeholder="Lat °N" step="0.1">
-              <input type="number" id="vertStartLon" placeholder="Lon °E" step="0.1">
+              <input type="number" id="vertStartLat" placeholder="Lat °N" step="0.1" value="17.0">
+              <input type="number" id="vertStartLon" placeholder="Lon °E" step="0.1" value="85.0">
             </div>
             <div class="coord-pair">
               <span class="coord-tag">End</span>
-              <input type="number" id="vertEndLat" placeholder="Lat °N" step="0.1">
-              <input type="number" id="vertEndLon" placeholder="Lon °E" step="0.1">
+              <input type="number" id="vertEndLat" placeholder="Lat °N" step="0.1" value="21.5">
+              <input type="number" id="vertEndLon" placeholder="Lon °E" step="0.1" value="91.5">
             </div>
           </div>
+
+          <div id="transectSingleInput" class="slice-input-group hidden" style="margin-bottom: 6px;">
+            <label id="transectSingleLabel" for="transectSingleVal">Latitude (°N)</label>
+            <div class="input-with-unit">
+              <input type="number" id="transectSingleVal" step="0.1" value="18.5">
+              <span id="transectSingleUnit" class="unit">°N</span>
+            </div>
+          </div>
+
           <div class="slice-btn-row">
             <button id="applyVertSliceBtn" class="slice-apply-btn">APPLY VERTICAL SLICE</button>
             <button id="clearVertSliceBtn" class="slice-clear-btn">CLEAR</button>
           </div>
+          <div id="vertSliceInfo" class="slice-info"></div>
         </div>
       </section>
 

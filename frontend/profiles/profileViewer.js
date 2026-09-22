@@ -311,34 +311,62 @@ export class ProfileViewer {
         }
     }
 
-    async renderComparison() {
+    async renderComparison(variable = 'temperature') {
         const compareBox = document.getElementById('pvCompareContainer');
         if (!compareBox || !this.currentProfile) return;
 
+        const floatId = this.currentProfile.id || this.currentProfile.wmo;
+        const unit = variable === 'salinity' ? 'PSU' : '°C';
+
         compareBox.innerHTML = `
             <div style="padding: 24px; text-align: center; color: var(--ink-muted);">
-                <div style="margin-bottom: 8px;">Collocating float profile with numerical model analysis…</div>
-                <div class="mono" style="font-size: 11px;">Comparing Float #${this.currentProfile.wmo || this.currentProfile.id}</div>
+                <div style="margin-bottom: 8px;">Collocating ${variable} profile with Copernicus NEMO 1/12° numerical model…</div>
+                <div class="mono" style="font-size: 11px;">Spatial Bilinear + Vertical 1D Interpolation</div>
             </div>
         `;
 
         try {
             const { ApiClient } = await import('../api/apiClient.js');
-            const cmp = await ApiClient.compareObservation(this.currentProfile.id);
+            let cmp;
+            try {
+                cmp = await ApiClient.getFloatComparison(floatId, variable);
+            } catch (_) {
+                cmp = await ApiClient.compareObservation(floatId);
+            }
 
-            const rmseStr = cmp.rmse != null ? `${cmp.rmse.toFixed(3)} °C` : '—';
-            const biasStr = cmp.bias != null ? `${cmp.bias.toFixed(3)} °C` : '—';
+            const rmseStr = cmp.rmse != null ? `${cmp.rmse.toFixed(3)} ${unit}` : '—';
+            const biasStr = cmp.bias != null ? `${cmp.bias.toFixed(3)} ${unit}` : '—';
+            const maeStr = cmp.mae != null ? `${cmp.mae.toFixed(3)} ${unit}` : '—';
+            const maxDiffStr = cmp.max_diff != null ? `${cmp.max_diff.toFixed(3)} ${unit}` : '—';
             const compRows = Array.isArray(cmp.comparison) ? cmp.comparison : [];
 
             compareBox.innerHTML = `
-                <div style="display: flex; gap: 12px; margin-bottom: 14px;">
-                    <div style="flex: 1; background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px;">
-                        <div style="font-size: 10px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;">Root Mean Squared Error (RMSE)</div>
-                        <div style="font-size: 16px; font-weight: 700; color: var(--accent); font-family: var(--font-mono);">${rmseStr}</div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="font-size: 11px; color: var(--ink-muted);">
+                        Numerical Model: <b style="color: var(--accent);">${cmp.model_source || 'Copernicus NEMO Global Analysis'}</b>
                     </div>
-                    <div style="flex: 1; background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px;">
-                        <div style="font-size: 10px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;">Mean Model Bias</div>
-                        <div style="font-size: 16px; font-weight: 700; color: #38bdf8; font-family: var(--font-mono);">${biasStr}</div>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="pvCmpTempBtn" class="pv-tab ${variable === 'temperature' ? 'active' : ''}" style="padding: 4px 8px; font-size: 10px;">Temp (°C)</button>
+                        <button id="pvCmpSalBtn" class="pv-tab ${variable === 'salinity' ? 'active' : ''}" style="padding: 4px 8px; font-size: 10px;">Salinity (PSU)</button>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;">
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
+                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">RMSE</div>
+                        <div style="font-size: 14px; font-weight: 700; color: var(--accent); font-family: var(--font-mono);">${rmseStr}</div>
+                    </div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
+                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Mean Bias</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #38bdf8; font-family: var(--font-mono);">${biasStr}</div>
+                    </div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
+                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">MAE</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #34d399; font-family: var(--font-mono);">${maeStr}</div>
+                    </div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
+                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Max Diff</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #fbbf24; font-family: var(--font-mono);">${maxDiffStr}</div>
                     </div>
                 </div>
 
@@ -347,23 +375,28 @@ export class ProfileViewer {
                         <thead>
                             <tr>
                                 <th>Depth (m)</th>
-                                <th>Observed (°C)</th>
-                                <th>Model (°C)</th>
-                                <th>Difference (°C)</th>
+                                <th>Observed (${unit})</th>
+                                <th>Model (${unit})</th>
+                                <th>Diff (Obs - Mod)</th>
+                                <th>Abs Diff</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${compRows.map(row => {
-                                const diff = row.diff != null ? row.diff : (row.model_temp - row.observed_temp);
+                                const obs = row.observed != null ? row.observed : row.observed_temp;
+                                const mod = row.model != null ? row.model : row.model_temp;
+                                const diff = row.diff != null ? row.diff : (obs - mod);
+                                const absDiff = row.abs_diff != null ? row.abs_diff : Math.abs(diff);
                                 const diffColor = Math.abs(diff) < 0.5 ? '#10b981' : (diff > 0 ? '#f59e0b' : '#38bdf8');
                                 return `
                                     <tr>
                                         <td class="mono font-bold">${row.depth}</td>
-                                        <td class="mono">${row.observed_temp.toFixed(2)}</td>
-                                        <td class="mono">${row.model_temp.toFixed(2)}</td>
+                                        <td class="mono">${obs != null ? obs.toFixed(2) : '—'}</td>
+                                        <td class="mono">${mod != null ? mod.toFixed(2) : '—'}</td>
                                         <td class="mono font-bold" style="color: ${diffColor};">
                                             ${diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}
                                         </td>
+                                        <td class="mono">${absDiff != null ? absDiff.toFixed(2) : '—'}</td>
                                     </tr>
                                 `;
                             }).join('')}
@@ -371,6 +404,9 @@ export class ProfileViewer {
                     </table>
                 </div>
             `;
+
+            document.getElementById('pvCmpTempBtn')?.addEventListener('click', () => this.renderComparison('temperature'));
+            document.getElementById('pvCmpSalBtn')?.addEventListener('click', () => this.renderComparison('salinity'));
         } catch (err) {
             compareBox.innerHTML = `
                 <div style="padding: 20px; text-align: center; color: var(--danger);">

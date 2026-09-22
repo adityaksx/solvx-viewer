@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from .api import region, geography, bathymetry, ocean, observations, data, download, ml
+from .api import region, geography, bathymetry, ocean, observations, data, download, ml, analysis
 from .services.ocean_data_service import (
     get_nc_files,
     find_file,
@@ -42,6 +42,7 @@ app.include_router(bathymetry.router)
 app.include_router(ocean.router)
 app.include_router(ml.router)
 app.include_router(observations.router)
+app.include_router(analysis.router)
 
 @app.get('/')
 def root():
@@ -56,6 +57,7 @@ def root():
             'bathymetry': '/api/bathymetry',
             'ocean': '/api/ocean',
             'observations': '/api/observations',
+            'analysis': '/api/analysis',
             'docs': '/docs'
         }
     }

@@ -508,6 +508,67 @@ export const ApiClient = {
 
     async getArgoFloat(floatId) {
         return request(`/api/observations/argo/${encodeURIComponent(floatId)}`);
+    },
+
+    // =========================================================================
+    // Stage 4: Oceanographic Analysis Engine (Model vs Argo, Coverage, Gaps)
+    // =========================================================================
+
+    async getModelVsArgo(params = {}) {
+        const q = new URLSearchParams();
+        if (params.min_lat != null) q.set('min_lat', String(params.min_lat));
+        if (params.max_lat != null) q.set('max_lat', String(params.max_lat));
+        if (params.min_lon != null) q.set('min_lon', String(params.min_lon));
+        if (params.max_lon != null) q.set('max_lon', String(params.max_lon));
+        if (params.variable) q.set('variable', params.variable);
+        if (params.time) q.set('time', params.time);
+        const qs = q.toString();
+        return request(`/api/analysis/model-vs-argo${qs ? `?${qs}` : ''}`);
+    },
+
+    async getFloatComparison(floatId, variable = 'temperature', time = null) {
+        const q = new URLSearchParams({ variable });
+        if (time) q.set('time', time);
+        return request(`/api/analysis/model-vs-argo/${encodeURIComponent(floatId)}?${q.toString()}`);
+    },
+
+    async getObservationCoverage(params = {}) {
+        const q = new URLSearchParams();
+        if (params.min_lat != null) q.set('min_lat', String(params.min_lat));
+        if (params.max_lat != null) q.set('max_lat', String(params.max_lat));
+        if (params.min_lon != null) q.set('min_lon', String(params.min_lon));
+        if (params.max_lon != null) q.set('max_lon', String(params.max_lon));
+        if (params.grid_res_deg != null) q.set('grid_res_deg', String(params.grid_res_deg));
+        if (params.thresh_high != null) q.set('thresh_high', String(params.thresh_high));
+        if (params.thresh_med != null) q.set('thresh_med', String(params.thresh_med));
+        if (params.thresh_low != null) q.set('thresh_low', String(params.thresh_low));
+        const qs = q.toString();
+        return request(`/api/analysis/coverage${qs ? `?${qs}` : ''}`);
+    },
+
+    async getDataGaps(params = {}) {
+        const q = new URLSearchParams();
+        if (params.min_lat != null) q.set('min_lat', String(params.min_lat));
+        if (params.max_lat != null) q.set('max_lat', String(params.max_lat));
+        if (params.min_lon != null) q.set('min_lon', String(params.min_lon));
+        if (params.max_lon != null) q.set('max_lon', String(params.max_lon));
+        if (params.grid_res_deg != null) q.set('grid_res_deg', String(params.grid_res_deg));
+        if (params.thresh_high != null) q.set('thresh_high', String(params.thresh_high));
+        if (params.thresh_med != null) q.set('thresh_med', String(params.thresh_med));
+        if (params.thresh_low != null) q.set('thresh_low', String(params.thresh_low));
+        const qs = q.toString();
+        return request(`/api/analysis/gaps${qs ? `?${qs}` : ''}`);
+    },
+
+    async getAnalysisSummary(params = {}) {
+        const q = new URLSearchParams();
+        if (params.min_lat != null) q.set('min_lat', String(params.min_lat));
+        if (params.max_lat != null) q.set('max_lat', String(params.max_lat));
+        if (params.min_lon != null) q.set('min_lon', String(params.min_lon));
+        if (params.max_lon != null) q.set('max_lon', String(params.max_lon));
+        if (params.variable) q.set('variable', params.variable);
+        const qs = q.toString();
+        return request(`/api/analysis/summary${qs ? `?${qs}` : ''}`);
     }
 };
 

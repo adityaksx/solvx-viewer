@@ -202,4 +202,69 @@ export class ViewerController {
             }
         }
     }
+
+    // =========================================================================
+    // Stage 4: Oceanographic Analysis Engine Interface
+    // =========================================================================
+
+    /**
+     * Executes an analytical assessment: 'model-vs-argo', 'coverage', 'gaps', or 'summary'.
+     * @param {string} type
+     * @param {Object} [params]
+     */
+    async runAnalysis(type = 'summary', params = {}) {
+        const bbox = params.bbox || this.app?.currentBBox || {};
+        const queryParams = {
+            min_lat: params.min_lat ?? bbox.min_lat,
+            max_lat: params.max_lat ?? bbox.max_lat,
+            min_lon: params.min_lon ?? bbox.min_lon,
+            max_lon: params.max_lon ?? bbox.max_lon,
+            variable: params.variable || this.app?.activeVar || 'temperature',
+            ...params
+        };
+
+        const { ApiClient } = await import('../api/apiClient.js');
+
+        switch (type.toLowerCase()) {
+            case 'model-vs-argo':
+            case 'model_vs_argo':
+                return ApiClient.getModelVsArgo(queryParams);
+            case 'coverage':
+                return ApiClient.getObservationCoverage(queryParams);
+            case 'gaps':
+            case 'data_gaps':
+                return ApiClient.getDataGaps(queryParams);
+            case 'summary':
+            default:
+                return ApiClient.getAnalysisSummary(queryParams);
+        }
+    }
+
+    /**
+     * Retrieves basin-wide Model vs Argo comparison metrics.
+     */
+    async getModelVsArgo(params = {}) {
+        return this.runAnalysis('model-vs-argo', params);
+    }
+
+    /**
+     * Retrieves observation coverage metrics.
+     */
+    async getObservationCoverage(params = {}) {
+        return this.runAnalysis('coverage', params);
+    }
+
+    /**
+     * Retrieves observation gap sectors and depth gaps.
+     */
+    async getDataGaps(params = {}) {
+        return this.runAnalysis('gaps', params);
+    }
+
+    /**
+     * Retrieves consolidated executive analysis summary.
+     */
+    async getAnalysisSummary(params = {}) {
+        return this.runAnalysis('summary', params);
+    }
 }

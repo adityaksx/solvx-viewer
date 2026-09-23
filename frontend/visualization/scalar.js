@@ -237,8 +237,25 @@ export class ScalarVisualizer {
         if (mode === 'volume') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+
+            // Keep the selected scientific field on the visible ocean surface while
+            // retaining the volumetric cell coloring underneath. Previously volume
+            // mode cleared the data texture, so the surface fell back to a static,
+            // temperature-only base color and did not react to timeline changes.
+            const depthLevels = this.currentData?.metadata?.depth_levels;
+            const surfaceIndex = findDepthIndex(depthLevels, 0);
+            const surface2d = extractSlice2D(this.currentData, surfaceIndex);
+            const surfaceTexture = surface2d
+                ? createDataTexture2D(
+                    { values: surface2d },
+                    this.variable,
+                    this.range.lo,
+                    this.range.hi
+                  )
+                : null;
+
             if (this.water) {
-                this.water.setDataTexture(null, 0.0);
+                this.water.setDataTexture(surfaceTexture, surfaceTexture ? 1.0 : 0.0);
                 this.water.setOpacity(0.35);
             }
             return;

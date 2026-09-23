@@ -17,6 +17,7 @@ class ComparisonPoint(BaseModel):
     diff: float = Field(..., description="Observation minus Model (diff = observed - model)")
     abs_diff: float = Field(..., description="Absolute difference |observed - model|")
     qc: int = Field(1, description="Quality control flag (1=good)")
+    unit: str = Field("°C", description="Measurement unit (°C or PSU)")
 
 
 class ProfileComparisonResponse(BaseModel):
@@ -24,10 +25,12 @@ class ProfileComparisonResponse(BaseModel):
     float_id: str
     wmo: int
     variable: str
+    unit: str = Field("°C", description="Measurement unit (°C or PSU)")
     latitude: float
     longitude: float
     timestamp: str
     model_source: str = "Copernicus Global Ocean Analysis (NEMO 1/12°)"
+    is_climatology_fallback: bool = Field(False, description="True if reference climatology was used because model data was unavailable")
     points_count: int
     rmse: Optional[float] = Field(None, description="Root Mean Squared Error")
     bias: Optional[float] = Field(None, description="Mean Model Bias (observed - model)")
@@ -35,6 +38,7 @@ class ProfileComparisonResponse(BaseModel):
     max_diff: Optional[float] = Field(None, description="Maximum absolute difference")
     min_diff: Optional[float] = Field(None, description="Minimum absolute difference")
     comparison: List[ComparisonPoint]
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata including units and data quality")
 
 
 class RegionalDiscrepancyRank(BaseModel):
@@ -46,11 +50,13 @@ class RegionalDiscrepancyRank(BaseModel):
     rmse: float
     bias: float
     max_diff: float
+    unit: str = Field("°C", description="Measurement unit")
 
 
 class RegionalModelVsArgoResponse(BaseModel):
     """Basin-wide or region-wide aggregate Model vs Argo evaluation."""
     variable: str
+    unit: str = Field("°C", description="Measurement unit")
     floats_compared: int
     total_sounding_points: int
     overall_rmse: Optional[float]
@@ -58,6 +64,7 @@ class RegionalModelVsArgoResponse(BaseModel):
     overall_mae: Optional[float]
     float_comparisons: List[ProfileComparisonResponse]
     discrepancy_ranking: List[RegionalDiscrepancyRank]
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Basin evaluation metadata")
 
 
 class GridCellDensity(BaseModel):
@@ -136,6 +143,7 @@ class AnalysisSummaryResponse(BaseModel):
 class AnomalyRecord(BaseModel):
     """A single flagged anomalous depth-level observation from an Argo float profile."""
     variable: str = Field(..., description="Oceanographic variable (temperature / salinity)")
+    unit: str = Field("°C", description="Measurement unit (°C or PSU)")
     float_id: str
     wmo: int
     latitude: float
@@ -154,6 +162,7 @@ class AnomalyRecord(BaseModel):
 class AnomalyDetectionResponse(BaseModel):
     """Full anomaly detection run result across all Argo float profiles."""
     variable: str
+    unit: str = Field("°C", description="Measurement unit")
     method: str
     threshold_sigma: float
     threshold_abs: float
@@ -161,6 +170,7 @@ class AnomalyDetectionResponse(BaseModel):
     total_depth_levels: int
     anomaly_count: int
     anomalies: List[AnomalyRecord]
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Anomaly scan metadata")
 
 
 class FocusCommand(BaseModel):
@@ -183,6 +193,7 @@ class AbnormalRegion(BaseModel):
     anomaly_magnitude_mean: float
     anomaly_magnitude_max: float
     variable: str
+    unit: str = Field("°C", description="Measurement unit")
     severity: str = Field(..., description="CRITICAL | MODERATE | LOW")
     focus_command: FocusCommand
 
@@ -190,6 +201,44 @@ class AbnormalRegion(BaseModel):
 class AbnormalRegionResponse(BaseModel):
     """Complete spatial extraction of anomalous clusters with 3D navigation commands."""
     variable: str
+    unit: str = Field("°C", description="Measurement unit")
     method: str
     region_count: int
     regions: List[AbnormalRegion]
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Clustering metadata")
+
+
+# ==============================================================================
+# Metric Definitions Catalog (Plan.md Section 19)
+# ==============================================================================
+
+METRIC_DEFINITIONS: Dict[str, Dict[str, str]] = {
+    "rmse": {
+        "name": "Root Mean Squared Error",
+        "description": "Typical size of the model's error against in-situ observations. Lower values mean closer agreement.",
+        "temperature_unit": "°C",
+        "salinity_unit": "PSU"
+    },
+    "bias": {
+        "name": "Mean Model Bias",
+        "description": "Average difference (observed - model). Positive means observations exceed model; negative means model overestimates.",
+        "temperature_unit": "°C",
+        "salinity_unit": "PSU"
+    },
+    "mae": {
+        "name": "Mean Absolute Error",
+        "description": "Average magnitude of error across all sounding depths regardless of sign.",
+        "temperature_unit": "°C",
+        "salinity_unit": "PSU"
+    },
+    "z_score": {
+        "name": "Statistical Anomaly (Z-score)",
+        "description": "Number of standard deviations a measurement deviates from the local or regional baseline.",
+        "unit": "σ"
+    },
+    "spatial_coverage": {
+        "name": "Spatial Observation Coverage",
+        "description": "Percentage of 1°x1° ocean cells containing active observational profiles.",
+        "unit": "%"
+    }
+}

@@ -12,5 +12,10 @@ netCDF4
 geopandas
 shapely
 
+# Machine Learning
+scikit-learn>=1.9.0
+joblib>=1.4.0
+
 # AI / LLM
 google-genai>=1.0.0
+

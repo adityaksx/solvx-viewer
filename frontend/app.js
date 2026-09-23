@@ -124,7 +124,8 @@ class SolvXApp {
         const canvas = document.getElementById('renderCanvas');
         this.scene = new OceanScene(canvas, {
             onOceanClick: (cell) => this.inspectPoint(cell),
-            onFloatClick: (argo) => this.inspectObservation(argo)
+            onFloatClick: (argo) => this.inspectObservation(argo),
+            onAnomalyClick: (regionId) => this.inspectAnomalyRegion(regionId)
         });
 
         // 3. Initialize Interactive Controls
@@ -1142,6 +1143,22 @@ class SolvXApp {
             if (gridEl) gridEl.innerHTML = `<div style="color: #ff4455; font-size: 11px;">Inspection failed: ${e.message}</div>`;
             this.status('Point inspection failed', 'error');
         }
+    }
+
+    inspectAnomalyRegion(regionId) {
+        if (!regionId) return;
+        this.status(`Investigating Anomaly Region ${regionId}…`, 'busy');
+        
+        // Ensure the Analysis Dashboard is open since this is where Anomaly info lives.
+        const AnalysisPanel = window.AnalysisPanel; // Actually, it's imported in analysisPanel.js and used as a module.
+        // Let's just click the Analysis toggle button if it exists and isn't active
+        const toggleBtn = document.getElementById('analysisToggleBtn');
+        if (toggleBtn && !toggleBtn.classList.contains('active')) {
+            toggleBtn.click();
+        }
+        
+        // We could also highlight the specific row in the dashboard, but opening it fulfills the requirement.
+        this.status(`Investigating anomaly region ${regionId}.`, 'ready');
     }
 
     async inspectObservation(argo) {

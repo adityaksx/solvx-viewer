@@ -29,9 +29,33 @@ from ..models.analysis import (
     AnalysisSummaryResponse,
     AnomalyDetectionResponse,
     AbnormalRegionResponse,
+    METRIC_DEFINITIONS,
 )
 
 router = APIRouter(prefix='/api/analysis', tags=['Oceanographic Analysis Engine'])
+
+
+@router.get('/definitions')
+def get_metric_definitions():
+    """
+    Returns official oceanographic metric definitions, explanations, and measurement units
+    for UI explainability per Section 19 of plan.md.
+    """
+    return {
+        "definitions": METRIC_DEFINITIONS,
+        "metrics": METRIC_DEFINITIONS,
+        "standard_units": {
+            "temperature": "°C",
+            "salinity": "PSU",
+            "depth": "m",
+            "current_speed": "m/s",
+            "sea_surface_height": "m",
+            "density": "observations/cell",
+            "anomaly": "σ (standard deviations)",
+            "anomaly_sigma": "σ",
+            "coverage": "%"
+        }
+    }
 
 
 @router.get('/model-vs-argo', response_model=RegionalModelVsArgoResponse)

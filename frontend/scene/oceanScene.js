@@ -193,13 +193,26 @@ export class OceanScene {
         const interactiveTargets = [];
         if (this.layers.water?.group) interactiveTargets.push(this.layers.water.group);
         if (this.layers.observations?.group) interactiveTargets.push(this.layers.observations.group);
+        
+        // Include dynamically added anomaly highlight meshes
+        this.scene.children.forEach(c => {
+            if (c.userData?.isAnomalyHighlight) interactiveTargets.push(c);
+        });
 
         const hits = this.raycaster.intersectObjects(interactiveTargets.length ? interactiveTargets : this.root.children, true);
+
+        // Check for Anomaly Regions first (highest priority if clicked)
+        for (const hit of hits) {
+            if (hit.object.userData?.isAnomalyHighlight) {
+                if (this.onAnomalyClick) this.onAnomalyClick(hit.object.userData.anomalyRegionId);
+                return;
+            }
+        }
 
         // Check for Argo floats
         for (const hit of hits) {
             if (hit.object.userData?.isArgoFloat) {
-                this.onFloatClick(hit.object.userData.float);
+                if (this.onFloatClick) this.onFloatClick(hit.object.userData.float);
                 return;
             }
         }
@@ -209,7 +222,7 @@ export class OceanScene {
             if (hit.object.userData?.isWater && hit.instanceId != null) {
                 const cell = hit.object.userData.cells?.[hit.instanceId];
                 if (cell) {
-                    this.onOceanClick(cell);
+                    if (this.onOceanClick) this.onOceanClick(cell);
                     return;
                 }
             }

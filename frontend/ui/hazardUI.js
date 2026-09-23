@@ -13,10 +13,47 @@ export class HazardUI {
         this.status = document.getElementById('hazardStatus');
         this.statusText = document.getElementById('hazardStatusText');
         this.eventsList = document.getElementById('hazardEventsList');
+
+        this.demoBadge = document.getElementById('demoBadge');
+        this.disableDemoBtn = document.getElementById('disableDemoBtn');
+        if (this.disableDemoBtn) {
+            this.disableDemoBtn.addEventListener('click', async () => {
+                try {
+                    await this.api.disableDemo();
+                    this.setDemoMode(false);
+                    if (this.app?.loadTimelineBundle) {
+                        this.app.loadTimelineBundle(this.app.activeTime);
+                    }
+                    if (window.AnalysisPanel) {
+                        window.AnalysisPanel.refresh();
+                    }
+                } catch (e) {
+                    console.error('Failed to disable demo mode:', e);
+                }
+            });
+        }
+        this.checkDemoStatus();
+    }
+
+    async checkDemoStatus() {
+        try {
+            const res = await this.api.getDemoStatus();
+            this.setDemoMode(Boolean(res?.is_demo));
+        } catch (_) {}
+    }
+
+    setDemoMode(isDemo) {
+        if (this.demoBadge) {
+            this.demoBadge.classList.toggle('hidden', !isDemo);
+        }
     }
 
     updateHazards(data) {
         if (!this.panel) return;
+
+        if (data && 'is_demo' in data) {
+            this.setDemoMode(Boolean(data.is_demo));
+        }
 
         const hazards = data?.hazards || [];
         // Filter for active/meaningful hazards
@@ -45,7 +82,8 @@ export class HazardUI {
             this.status.className = `hazard-status ${levelClass}`;
         }
         if (this.statusText) {
-            this.statusText.textContent = `${topHazard.hazard_type || 'Marine Hazard'} Detected`;
+            const prefix = data?.is_demo ? '[DEMO] ' : '';
+            this.statusText.textContent = `${prefix}${topHazard.hazard_type || 'Marine Hazard'} Detected`;
         }
 
         // Add visual pulsing alert state to panel
@@ -59,10 +97,11 @@ export class HazardUI {
                 const cardClass = isCardSevere ? 'severe' : 'warning';
                 const latStr = `${Number(loc.latitude).toFixed(2)}°N`;
                 const lonStr = `${Number(loc.longitude).toFixed(2)}°E`;
+                const demoChip = data?.is_demo ? '<span class="demo-chip">SYNTHETIC SCENARIO</span>' : '';
 
                 return `
                     <div class="hazard-card ${cardClass}">
-                        <div class="hazard-card-title">${h.hazard_type || 'Ocean Hazard'}</div>
+                        <div class="hazard-card-title">${h.hazard_type || 'Ocean Hazard'} ${demoChip}</div>
                         <div class="hazard-metrics-grid">
                             <span class="hazard-k">Risk Score</span>
                             <span class="hazard-v">${Number(h.risk_score || 0).toFixed(1)} / 100</span>

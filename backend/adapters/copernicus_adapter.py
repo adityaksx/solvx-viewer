@@ -329,8 +329,10 @@ class CopernicusAdapter:
                             os.replace(tmp_path, out_nc)
                     except Exception as dl_err:
                         if os.path.exists(tmp_path):
-                            try: os.remove(tmp_path)
-                            except Exception: pass
+                            try:
+                                os.remove(tmp_path)
+                            except OSError as rm_err:
+                                logger.debug("Failed cleaning up tmp_path %s: %s", tmp_path, rm_err)
                         raise dl_err
 
         # 3. Read dataset from local file & slice requested time lazily without loading full dataset

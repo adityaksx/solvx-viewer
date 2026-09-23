@@ -1,0 +1,144 @@
+{
+  "model_name": "Ocean Hazard Risk Model",
+  "version": "v0.1",
+  "algorithm": "Gradient Boosted Trees (HistGradientBoostingClassifier)",
+  "status": "Trained and Active",
+  "trained_at": "2026-09-23T07:23:28.475714+00:00",
+  "dataset_summary": {
+    "total_samples": 28392,
+    "features": [
+      "sst",
+      "sst_anomaly",
+      "salinity",
+      "sea_surface_height",
+      "current_speed",
+      "current_direction",
+      "thermal_gradient",
+      "wind_speed",
+      "wind_direction",
+      "sea_level_pressure",
+      "relative_humidity",
+      "sst_change_6h",
+      "pressure_change_6h",
+      "wind_speed_change_6h",
+      "sst_rolling_std_3d"
+    ],
+    "horizons": [
+      6,
+      12,
+      24
+    ],
+    "train_samples": 19656,
+    "val_samples": 4368,
+    "test_samples": 4368,
+    "train_period": "2026-08-01 to 2026-08-27",
+    "val_period": "2026-08-28 to 2026-09-02",
+    "test_period": "2026-09-03 to 2026-09-08",
+    "positive_rates_train": [
+      0.07203907203907203,
+      0.07193732193732194,
+      0.07610907610907611
+    ],
+    "positive_rates_test": [
+      0.11515567765567765,
+      0.12683150183150182,
+      0.14354395604395603
+    ]
+  },
+  "test_metrics": {
+    "overall": {
+      "mean_f1": 0.8613,
+      "mean_roc_auc": 0.9926,
+      "mean_pr_auc": 0.9617,
+      "mean_brier_score": 0.0253,
+      "test_samples": 4368
+    },
+    "by_horizon": {
+      "6h": {
+        "total_samples": 4368,
+        "positive_samples": 503,
+        "positive_rate": 0.1152,
+        "precision": 0.989,
+        "recall": 0.8966,
+        "f1": 0.9406,
+        "roc_auc": 0.9991,
+        "pr_auc": 0.9933,
+        "brier_score": 0.0097,
+        "confusion_matrix": {
+          "true_negatives": 3860,
+          "false_positives": 5,
+          "false_negatives": 52,
+          "true_positives": 451
+        }
+      },
+      "12h": {
+        "total_samples": 4368,
+        "positive_samples": 554,
+        "positive_rate": 0.1268,
+        "precision": 0.9716,
+        "recall": 0.8014,
+        "f1": 0.8783,
+        "roc_auc": 0.9957,
+        "pr_auc": 0.9733,
+        "brier_score": 0.0225,
+        "confusion_matrix": {
+          "true_negatives": 3801,
+          "false_positives": 13,
+          "false_negatives": 110,
+          "true_positives": 444
+        }
+      },
+      "24h": {
+        "total_samples": 4368,
+        "positive_samples": 627,
+        "positive_rate": 0.1435,
+        "precision": 0.9481,
+        "recall": 0.6411,
+        "f1": 0.765,
+        "roc_auc": 0.983,
+        "pr_auc": 0.9185,
+        "brier_score": 0.0437,
+        "confusion_matrix": {
+          "true_negatives": 3719,
+          "false_positives": 22,
+          "false_negatives": 225,
+          "true_positives": 402
+        }
+      }
+    }
+  },
+  "feature_importances": {
+    "sst_anomaly": 1.0,
+    "sst": 0.0,
+    "salinity": 0.0,
+    "sea_surface_height": 0.0,
+    "current_speed": 0.0,
+    "current_direction": 0.0,
+    "thermal_gradient": 0.0,
+    "wind_speed": 0.0,
+    "wind_direction": 0.0,
+    "sea_level_pressure": 0.0,
+    "relative_humidity": 0.0,
+    "sst_change_6h": 0.0,
+    "pressure_change_6h": 0.0,
+    "wind_speed_change_6h": 0.0,
+    "sst_rolling_std_3d": 0.0
+  },
+  "input_features": [
+    "sst",
+    "sst_anomaly",
+    "salinity",
+    "sea_surface_height",
+    "current_speed",
+    "current_direction",
+    "thermal_gradient",
+    "wind_speed",
+    "wind_direction",
+    "sea_level_pressure",
+    "relative_humidity",
+    "sst_change_6h",
+    "pressure_change_6h",
+    "wind_speed_change_6h",
+    "sst_rolling_std_3d"
+  ]
+}

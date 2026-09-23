@@ -1,5 +1,8 @@
+import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
+
+logger = logging.getLogger("solvx.ocean_api")
 from ..models.requests import RegionRequest, PointQuery
 from ..services.ocean_data_service import (
     get_ocean_catalog,
@@ -111,8 +114,8 @@ def ocean_point(latitude: float = Query(...), longitude: float = Query(...), tim
             from ..adapters.open_meteo_adapter import OpenMeteoAdapter
             oma = OpenMeteoAdapter()
             atmos_data = oma.fetch_atmospheric_point(latitude, longitude, time, time)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.info("Atmospheric data fetch skipped or failed at (%.2f, %.2f): %s", latitude, longitude, e)
 
         ocean_temp = val_map.get('temperature')
         salinity = val_map.get('salinity')

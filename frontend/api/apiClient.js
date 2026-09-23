@@ -403,6 +403,31 @@ export const ApiClient = {
     // ML Hazard & Anomaly Endpoints
     // =========================================================================
 
+    async getMlModelInfo() {
+        return request('/api/ml/model-info');
+    },
+
+    async getDemoStatus() {
+        return request('/api/ml/demo/status', { noCache: true });
+    },
+
+    async triggerDemo() {
+        return request('/api/ml/demo', { method: 'POST', noCache: true });
+    },
+
+    async disableDemo() {
+        return request('/api/ml/demo/disable', { method: 'POST', noCache: true });
+    },
+
+    async predictHazardRisk(lat, lon, time = null) {
+        const q = new URLSearchParams({
+            lat: String(lat),
+            lon: String(lon)
+        });
+        if (time) q.set('time', time);
+        return request(`/api/ml/predict?${q.toString()}`);
+    },
+
     async getMLAnomalies(bbox, time = null, depth = null) {
         const q = new URLSearchParams({
             min_lon: String(bbox.min_lon),
@@ -569,6 +594,10 @@ export const ApiClient = {
         if (params.variable) q.set('variable', params.variable);
         const qs = q.toString();
         return request(`/api/analysis/summary${qs ? `?${qs}` : ''}`);
+    },
+
+    async getAnalysisDefinitions() {
+        return request('/api/analysis/definitions');
     },
 
     // =========================================================================

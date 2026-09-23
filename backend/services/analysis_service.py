@@ -6,9 +6,12 @@ Provides deterministic statistical evaluation for Model vs Argo comparison
 observation spatial & depth coverage analysis, and configurable grid gap detection.
 """
 
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 import datetime
 import numpy as np
+
+logger = logging.getLogger('solvx.analysis_service')
 
 from .observation_service import get_argo_observations, get_argo_float, ARGO_OBSERVATIONS
 from .ocean_data_service import find_logical, safe_open_dataset, select_time, sanitize
@@ -36,11 +39,14 @@ def extract_model_vertical_column(
     longitude: float,
     variable: str = 'temperature',
     time_iso: Optional[str] = None
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, bool, str]:
     """
     Extracts a 1D vertical column (depths, values) from 3D/4D numerical model NetCDF datasets
     using spatial bilinear interpolation to the exact coordinates (latitude, longitude).
     Falls back to physically consistent oceanographic profiles if NetCDF is unavailable.
+
+    Returns:
+        Tuple of (depths, values, is_climatology_fallback, model_source_description)
     """
     matches = find_logical(variable)
     if matches:
@@ -107,9 +113,10 @@ def extract_model_vertical_column(
 
                             if not np.all(np.isnan(col)):
                                 valid_mask = ~np.isnan(col)
-                                return grid_depths[valid_mask], col[valid_mask]
+                                model_src = f"Copernicus Global Ocean Analysis (NEMO 1/12°) - {f.name}"
+                                return grid_depths[valid_mask], col[valid_mask], False, model_src
         except Exception as e:
-            pass
+            logger.warning("Failed extracting column from NetCDF for %s at (%.2f, %.2f): %s; falling back to climatology", variable, latitude, longitude, e)
 
     # Standard physical climatology profile for the Bay of Bengal / Northern Indian Ocean
     # calibrated to Copernicus NEMO reanalysis reference
@@ -121,7 +128,7 @@ def extract_model_vertical_column(
         # Typical tropical ocean thermocline decay (°C)
         ref_vals = np.array([29.2, 29.1, 28.9, 28.3, 25.8, 23.1, 20.4, 16.8, 14.1, 11.5, 8.7, 7.1, 5.9, 4.2, 3.1], dtype=float)
 
-    return ref_depths, ref_vals
+    return ref_depths, ref_vals, True, "Physical Climatology Reference (Northern Indian Ocean / Bay of Bengal)"
 
 
 def compare_float_profile(
@@ -142,13 +149,16 @@ def compare_float_profile(
     profile_points = float_data.get('profile', [])
 
     # Extract model vertical column
-    model_depths, model_vals = extract_model_vertical_column(lat, lon, variable=variable, time_iso=time_iso)
+    model_depths, model_vals, is_fallback, model_source = extract_model_vertical_column(
+        lat, lon, variable=variable, time_iso=time_iso
+    )
 
     # Sort model depths monotonically for interpolation
     sort_idx = np.argsort(model_depths)
     m_depths = model_depths[sort_idx]
     m_vals = model_vals[sort_idx]
 
+    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
     comparison_points: List[ComparisonPoint] = []
     diffs = []
     abs_diffs = []
@@ -184,7 +194,8 @@ def compare_float_profile(
             model=round(mod_val, 3),
             diff=round(diff, 3),
             abs_diff=round(abs_diff, 3),
-            qc=int(pt.get('qc', 1))
+            qc=int(pt.get('qc', 1)),
+            unit=unit
         ))
 
     rmse = float(np.sqrt(np.mean(np.square(diffs)))) if diffs else None
@@ -197,17 +208,25 @@ def compare_float_profile(
         float_id=str(float_data['float_id']),
         wmo=int(float_data['wmo']),
         variable=variable,
+        unit=unit,
         latitude=lat,
         longitude=lon,
         timestamp=float_data['timestamp'],
-        model_source="Copernicus Global Ocean Analysis (NEMO 1/12°)",
+        model_source=model_source,
+        is_climatology_fallback=is_fallback,
         points_count=len(comparison_points),
         rmse=round(rmse, 4) if rmse is not None else None,
         bias=round(bias, 4) if bias is not None else None,
         mae=round(mae, 4) if mae is not None else None,
         max_diff=round(max_d, 4) if max_d is not None else None,
         min_diff=round(min_d, 4) if min_d is not None else None,
-        comparison=comparison_points
+        comparison=comparison_points,
+        metadata={
+            "unit": unit,
+            "is_climatology_fallback": is_fallback,
+            "model_source": model_source,
+            "points_count": len(comparison_points)
+        }
     )
 
 
@@ -230,6 +249,7 @@ def compare_regional_floats(
     all_abs_diffs = []
     ranking: List[RegionalDiscrepancyRank] = []
 
+    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
     for f in floats:
         try:
             comp = compare_float_profile(str(f['float_id']), variable=variable, time_iso=time_iso)
@@ -247,9 +267,11 @@ def compare_regional_floats(
                         longitude=comp.longitude,
                         rmse=comp.rmse,
                         bias=comp.bias or 0.0,
-                        max_diff=comp.max_diff or 0.0
+                        max_diff=comp.max_diff or 0.0,
+                        unit=unit
                     ))
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed evaluating Argo float %s against model: %s", f.get('float_id'), e)
             continue
 
     # Sort ranking by RMSE descending (largest discrepancies first)
@@ -261,13 +283,19 @@ def compare_regional_floats(
 
     return RegionalModelVsArgoResponse(
         variable=variable,
+        unit=unit,
         floats_compared=len(comparisons),
         total_sounding_points=len(all_diffs),
         overall_rmse=round(overall_rmse, 4) if overall_rmse is not None else None,
         overall_bias=round(overall_bias, 4) if overall_bias is not None else None,
         overall_mae=round(overall_mae, 4) if overall_mae is not None else None,
         float_comparisons=comparisons,
-        discrepancy_ranking=ranking
+        discrepancy_ranking=ranking,
+        metadata={
+            "unit": unit,
+            "floats_compared": len(comparisons),
+            "total_sounding_points": len(all_diffs)
+        }
     )
 
 
@@ -650,6 +678,7 @@ def detect_anomalies(
     if basin_std == 0.0:
         basin_std = 1.0
 
+    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
     # ── Pass 2: flag anomalies per float ──
     anomalies: List[AnomalyRecord] = []
     total_depth_levels = 0
@@ -662,7 +691,7 @@ def detect_anomalies(
         timestamp = str(obs.get('timestamp', ''))
 
         # Pre-fetch model column for this float's position
-        m_depths, m_vals = extract_model_vertical_column(lat, lon, variable=variable, time_iso=time_iso)
+        m_depths, m_vals, is_fallback, m_source = extract_model_vertical_column(lat, lon, variable=variable, time_iso=time_iso)
         sort_idx = np.argsort(m_depths)
         m_depths_s = m_depths[sort_idx]
         m_vals_s   = m_vals[sort_idx]
@@ -731,6 +760,7 @@ def detect_anomalies(
                        else _severity_from_abs(abs_diff, threshold_abs))
                 anomalies.append(AnomalyRecord(
                     variable=variable,
+                    unit=unit,
                     float_id=float_id,
                     wmo=wmo,
                     latitude=round(lat, 4),
@@ -748,6 +778,7 @@ def detect_anomalies(
 
     return AnomalyDetectionResponse(
         variable=variable,
+        unit=unit,
         method=method,
         threshold_sigma=threshold_sigma,
         threshold_abs=threshold_abs,
@@ -755,6 +786,12 @@ def detect_anomalies(
         total_depth_levels=total_depth_levels,
         anomaly_count=len(anomalies),
         anomalies=anomalies,
+        metadata={
+            "unit": unit,
+            "method": method,
+            "basin_mean": round(basin_mean, 4),
+            "basin_std": round(basin_std, 4),
+        }
     )
 
 
@@ -794,12 +831,15 @@ def extract_abnormal_regions(
         time_iso=time_iso,
     )
 
+    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
     if not det.anomalies:
         return AbnormalRegionResponse(
             variable=variable,
+            unit=unit,
             method=method,
             region_count=0,
             regions=[],
+            metadata={"unit": unit, "method": method, "grid_res_deg": grid_res_deg}
         )
 
     # Cluster anomaly records into 1° spatial grid cells
@@ -849,6 +889,7 @@ def extract_abnormal_regions(
             anomaly_magnitude_mean=round(mag_mean, 4),
             anomaly_magnitude_max=round(mag_max, 4),
             variable=variable,
+            unit=unit,
             severity=region_severity,
             focus_command=FocusCommand(
                 action="FOCUS_REGION",
@@ -866,7 +907,14 @@ def extract_abnormal_regions(
 
     return AbnormalRegionResponse(
         variable=variable,
+        unit=unit,
         method=method,
         region_count=len(regions),
         regions=regions,
+        metadata={
+            "unit": unit,
+            "method": method,
+            "grid_res_deg": grid_res_deg,
+            "region_count": len(regions)
+        }
     )

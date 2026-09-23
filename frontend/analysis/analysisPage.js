@@ -30,6 +30,9 @@ class AnalysisPage {
   async init(){
     this.renderShell(); this.bindUI(); this.setStatus('Loading analysis dataset…');
     await Promise.all([this.loadTerrain(),this.loadObservations(),this.loadTimeline()]);
+    if (this.water && this.observations.length) {
+      this.buildObservationMarkers(this.observations, this.water.bounds);
+    }
     await this.selectTime(this.index,false);
     this.setStatus('Analysis ready');
   }
@@ -74,8 +77,9 @@ class AnalysisPage {
     this.scene.fitCamera();
   }
   async loadObservations(){
-    const res=await ApiClient.getArgoObservations(this.bbox).catch(()=>({observations:[]}));this.observations=res.observations||[];
-    this.renderObservationCounts();this.buildObservationMarkers(this.observations,this.water?.bounds||[this.bbox.min_lon,this.bbox.max_lon,this.bbox.min_lat,this.bbox.max_lat]);
+    const res=await ApiClient.getArgoObservations(this.bbox).catch(()=>({observations:[]}));
+    this.observations=res.observations||[];
+    this.renderObservationCounts();
   }
   renderObservationCounts(){
     const argo=this.observations.filter(o=>!gliderRegex.test(o.platform||'')), gl=this.observations.filter(o=>gliderRegex.test(o.platform||''));
@@ -111,13 +115,37 @@ class AnalysisPage {
   }
   flattenFinite(v){const out=[];const walk=x=>Array.isArray(x)?x.forEach(walk):Number.isFinite(Number(x))?out.push(Number(x)):null;walk(v);return out;}
   async updateAnalysis(time){
-    const variable=['ocean_temperature','temperature'].includes(this.activeVar)?'temperature':this.activeVar,params={min_lat:this.bbox.min_lat,max_lat:this.bbox.max_lat,min_lon:this.bbox.min_lon,max_lon:this.bbox.max_lon,time};
-    const [summary,an]=await Promise.allSettled([ApiClient.getModelVsArgo({...params,variable}),ApiClient.getAnomalies({...params,variable})]);
-    const ma=summary.value?.model_accuracy||{};document.getElementById('rmse').textContent=ma.overall_rmse!=null?Number(ma.overall_rmse).toFixed(3):'—';document.getElementById('bias').textContent=ma.overall_bias!=null?Number(ma.overall_bias).toFixed(3):'—';document.getElementById('mae').textContent=ma.overall_mae!=null?Number(ma.overall_mae).toFixed(3):'—';document.getElementById('soundings').textContent=ma.total_sounding_points??'—';document.getElementById('anomalyText').textContent=an.value?.count?(`${an.value.count} anomalous depth observations detected for this timestamp.`):'No anomalous depth observations reported for this timestamp.';
+    const supported = new Set(['ocean_temperature','temperature','salinity']);
+    if (!supported.has(this.activeVar)) {
+      document.getElementById('rmse').textContent='—';
+      document.getElementById('bias').textContent='—';
+      document.getElementById('mae').textContent='—';
+      document.getElementById('soundings').textContent='—';
+      document.getElementById('anomalyText').textContent='Date-synced model/Argo analysis is available for temperature and salinity.';
+      return;
+    }
+    const variable=this.activeVar==='ocean_temperature'?'temperature':this.activeVar;
+    const params={min_lat:this.bbox.min_lat,max_lat:this.bbox.max_lat,min_lon:this.bbox.min_lon,max_lon:this.bbox.max_lon,time};
+    const [summary,an]=await Promise.allSettled([
+      ApiClient.getModelVsArgo({...params,variable}),
+      ApiClient.getAnomalies({...params,variable})
+    ]);
+    const ma=summary.value?.model_accuracy||{};
+    document.getElementById('rmse').textContent=ma.overall_rmse!=null?Number(ma.overall_rmse).toFixed(3):'—';
+    document.getElementById('bias').textContent=ma.overall_bias!=null?Number(ma.overall_bias).toFixed(3):'—';
+    document.getElementById('mae').textContent=ma.overall_mae!=null?Number(ma.overall_mae).toFixed(3):'—';
+    document.getElementById('soundings').textContent=ma.total_sounding_points??'—';
+    document.getElementById('anomalyText').textContent=an.value?.count?(`${an.value.count} anomalous depth observations detected for this timestamp.`):'No anomalous depth observations reported for this timestamp.';
   }
   prettyVar(v){return ({ocean_temperature:'Temperature',temperature:'Temperature',salinity:'Salinity',temperature_anomaly:'Temperature anomaly',chlorophyll:'Chlorophyll',sea_level:'Sea level',currents:'Currents'})[v]||v.replaceAll('_',' ');}
   setView(v){document.querySelectorAll('.analysis-actions button').forEach(b=>b.classList.toggle('active',b.dataset.view===v));this.scene?.setView(v);}
   setStatus(t){const e=document.getElementById('analysisStatus');if(e)e.textContent=t;}
-  togglePlay(){const b=document.getElementById('timelinePlay');if(this.playTimer){clearInterval(this.playTimer);this.playTimer=null;b.textContent='PLAY';return;}b.textContent='PAUSE';this.playTimer=setInterval(()=>this.selectTime((this.index+1)%this.timeline.length),1200);}
+  togglePlay(){
+    const b=document.getElementById('timelinePlay');
+    if(this.playTimer){clearInterval(this.playTimer);this.playTimer=null;b.textContent='PLAY';return;}
+    if(!this.timeline.length)return;
+    b.textContent='PAUSE';
+    this.playTimer=setInterval(()=>this.selectTime((this.index+1)%this.timeline.length),1200);
+  }
 }
 new AnalysisPage().init().catch(e=>{console.error(e);document.body.innerHTML=`<pre style="padding:24px;color:#ffb4b4;background:#061018">Analysis page failed: ${e.message}</pre>`;});

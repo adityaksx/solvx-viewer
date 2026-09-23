@@ -119,10 +119,38 @@ class AnalysisPage {
   }
   resolveVar(vars,id){if(vars[id]&&!vars[id].error)return vars[id];for(const k of(alias[id]||[])){if(vars[k]&&!vars[k].error)return vars[k];}return null;}
   updateDataMetrics(data){
-    const values=this.flattenFinite(data?.values),fmt=v=>v==null?'—':Number(v).toFixed(3),min=values.length?Math.min(...values):null,max=values.length?Math.max(...values):null,mean=values.length?values.reduce((a,b)=>a+b,0)/values.length:null;
-    document.getElementById('metricVar').textContent=this.prettyVar(this.activeVar);document.getElementById('metricMin').textContent=fmt(min);document.getElementById('metricMax').textContent=fmt(max);document.getElementById('metricMean').textContent=fmt(mean);document.getElementById('metricUnits').textContent=data?.units||'—';document.getElementById('legendVariable').textContent=this.prettyVar(this.activeVar);document.getElementById('legendUnits').textContent=data?.units||'—';document.getElementById('legendRange').textContent=`${fmt(min)} → ${fmt(max)}`;
+    const values=this.flattenFinite(data?.values);
+    const fmt=v=>v==null?'—':Number(v).toFixed(3);
+    let min=null,max=null,sum=0;
+    for(const value of values){
+      if(min===null || value<min) min=value;
+      if(max===null || value>max) max=value;
+      sum+=value;
+    }
+    const mean=values.length?sum/values.length:null;
+    document.getElementById('metricVar').textContent=this.prettyVar(this.activeVar);
+    document.getElementById('metricMin').textContent=fmt(min);
+    document.getElementById('metricMax').textContent=fmt(max);
+    document.getElementById('metricMean').textContent=fmt(mean);
+    document.getElementById('metricUnits').textContent=data?.units||'—';
+    document.getElementById('legendVariable').textContent=this.prettyVar(this.activeVar);
+    document.getElementById('legendUnits').textContent=data?.units||'—';
+    document.getElementById('legendRange').textContent=`${fmt(min)} → ${fmt(max)}`;
   }
-  flattenFinite(v){const out=[];const walk=x=>Array.isArray(x)?x.forEach(walk):Number.isFinite(Number(x))?out.push(Number(x)):null;walk(v);return out;}
+  flattenFinite(v){
+    const out=[];
+    const stack=[v];
+    while(stack.length){
+      const x=stack.pop();
+      if(Array.isArray(x)){
+        for(let i=x.length-1;i>=0;i--) stack.push(x[i]);
+      }else{
+        const n=Number(x);
+        if(Number.isFinite(n)) out.push(n);
+      }
+    }
+    return out;
+  }
   async updateAnalysis(time){
     const supported = new Set(['ocean_temperature','temperature','salinity']);
     if (!supported.has(this.activeVar)) {

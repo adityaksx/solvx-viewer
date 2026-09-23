@@ -70,11 +70,20 @@ class AnalysisPage {
   async loadTerrain(){
     const [geo,bathy,eez]=await Promise.all([ApiClient.getDataGeometry(this.bbox),ApiClient.getDataBathymetry(this.bbox,'medium'),ApiClient.getDataEEZ(this.bbox).catch(()=>({features:[],lines3d:[]}))]);
     this.scene=new OceanScene(document.getElementById('analysisCanvas'),{onOceanClick:cell=>this.setStatus(`Point ${Number(cell.lat).toFixed(3)}°, ${Number(cell.lon).toFixed(3)}°`),onFloatClick:obs=>this.setStatus(`${gliderRegex.test(obs?.platform||'')?'Glider':'Argo'} ${obs?.wmo||obs?.id} selected`)});
+    this.scene.onUpdate(() => this.updateObservationScale());
     this.scene.setLayer('land',buildLand(geo,this.scene));this.scene.setLayer('coastline',buildCoastline(geo));this.scene.setLayer('islands',buildIslands(geo,this.scene));this.scene.setLayer('eez',buildEEZ(geo,eez));
     const seabed=buildSeabed(bathy,this.scene);if(seabed)this.scene.setLayer('seabed',seabed);
     const veg=buildVegetation(bathy,this.scene);if(veg)this.scene.root.add(veg);
     this.water=new DynamicWater(bathy,this.scene);this.scene.setLayer('water',this.water.group);this.scalarViz=new ScalarVisualizer(this.water);
     this.scene.fitCamera();
+  }
+  updateObservationScale(){
+    const group=this.scene?.layers?.observations?.group;
+    const camera=this.scene?.camera;
+    if(!group || !camera)return;
+    const distance=Math.max(120,camera.position.distanceTo(this.scene.controls?.target || new THREE.Vector3()));
+    const scale=THREE.MathUtils.clamp(distance/900,0.85,2.8);
+    group.children.forEach(marker=>marker.scale.setScalar(scale));
   }
   async loadObservations(){
     const res=await ApiClient.getArgoObservations(this.bbox).catch(()=>({observations:[]}));

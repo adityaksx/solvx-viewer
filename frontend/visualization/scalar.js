@@ -264,7 +264,10 @@ export class ScalarVisualizer {
         if (mode === 'vertical' || mode === 'vertical_custom') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = true;
-            if (this.water) this.water.setDataTexture(null, 0.0);
+            if (this.water) {
+                this.water.setDataTexture(null, 0.0);
+                this.water.setOpacity(0.0);
+            }
             
             import('./verticalSlice.js').then(module => {
                 const dataSource = (this.customVerticalCoords && this.customVerticalCoords.transectData)
@@ -341,11 +344,13 @@ export class ScalarVisualizer {
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water) {
                 this.water.setDataTexture(texture, 1.0);
+                this.water.setOpacity(0.35); // restore volume
             }
         } else {
             // Subsurface depth slice: position underwater mesh at actual depth
             if (this.water) {
                 this.water.setDataTexture(null, 0.0);
+                this.water.setOpacity(0.0); // hide volume to see cutaway clearly
             }
             if (this.sliceMesh) this.sliceMesh.visible = true;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;

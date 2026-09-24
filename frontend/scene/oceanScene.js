@@ -37,8 +37,9 @@ export class OceanScene {
     }
 
     init() {
-        const width = window.innerWidth;
-        const height = window.innerHeight;
+        const parent = this.canvas.parentElement;
+        const width = parent ? parent.clientWidth : window.innerWidth;
+        const height = parent ? parent.clientHeight : window.innerHeight;
 
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0xb9dfe9);
@@ -231,8 +232,9 @@ export class OceanScene {
 
     onResize() {
         if (!this.renderer || !this.camera) return;
-        const width = window.innerWidth;
-        const height = window.innerHeight;
+        const parent = this.canvas.parentElement;
+        const width = parent ? parent.clientWidth : window.innerWidth;
+        const height = parent ? parent.clientHeight : window.innerHeight;
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(width, height);

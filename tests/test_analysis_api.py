@@ -140,3 +140,42 @@ def test_executive_analysis_summary():
     assert 'observation_coverage' in data
     assert 'data_gaps' in data
     assert data['data_gaps']['gap_percentage'] > 0
+
+
+def test_metric_definitions():
+    """Verify metric definitions endpoint returns clear descriptions and units."""
+    resp = client.get('/api/analysis/definitions')
+    assert resp.status_code == 200
+    data = resp.json()
+    assert 'definitions' in data
+    assert 'rmse' in data['definitions']
+    assert 'bias' in data['definitions']
+    assert 'z_score' in data['definitions']
+    assert 'standard_units' in data
+    assert data['standard_units']['temperature'] == '°C'
+    assert data['standard_units']['salinity'] == 'PSU'
+
+
+def test_analysis_units_and_metadata():
+    """Verify units and metadata are present across comparison and anomaly endpoints."""
+    # 1. Model vs Argo
+    resp_argo = client.get('/api/analysis/model-vs-argo?variable=temperature')
+    assert resp_argo.status_code == 200
+    d_argo = resp_argo.json()
+    assert d_argo['unit'] == '°C'
+    assert 'metadata' in d_argo
+    assert d_argo['float_comparisons'][0]['unit'] == '°C'
+
+    # 2. Anomalies
+    resp_anom = client.get('/api/analysis/anomalies?variable=temperature&method=zscore')
+    assert resp_anom.status_code == 200
+    d_anom = resp_anom.json()
+    assert d_anom['unit'] == '°C'
+    assert 'metadata' in d_anom
+
+    # 3. Abnormal regions
+    resp_reg = client.get('/api/analysis/abnormal-regions?variable=temperature')
+    assert resp_reg.status_code == 200
+    d_reg = resp_reg.json()
+    assert d_reg['unit'] == '°C'
+    assert 'metadata' in d_reg

@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SOLVX — Ocean Analysis</title>
+  <title>SOLVX — Ocean Intelligence</title>
   <link rel="stylesheet" href="analysis/analysisPage.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="importmap">
   {
     "imports": {
@@ -18,6 +19,210 @@
   </script>
 </head>
 <body>
+  <div class="analysis-page">
+    <header class="analysis-topbar">
+      <div class="analysis-brand">SOLVX / OCEAN INTELLIGENCE</div>
+      <nav class="top-nav">
+        <a href="/">VIEWER</a>
+        <a href="#">2D MAP</a>
+        <a href="/analysis.html" class="active">ANALYSIS</a>
+        <a href="/download.html">DOWNLOADER</a>
+      </nav>
+      <div class="provenance-indicator" id="provenanceData">
+        DATA SOURCES: Auto | Updated: —
+      </div>
+    </header>
+    
+    <section class="analysis-toolbar">
+      <label>REGION 
+        <select id="analysisRegion">
+          <option value="bengal">Bay of Bengal</option>
+          <option value="arabian">Arabian Sea</option>
+        </select>
+      </label>
+      <label>VARIABLE 
+        <select id="analysisVariable">
+          <option value="ocean_temperature">Temperature</option>
+          <option value="salinity">Salinity</option>
+          <option value="chlorophyll">Chlorophyll</option>
+          <option value="sea_level">Sea level</option>
+          <option value="currents">Currents</option>
+        </select>
+      </label>
+      <label>TIME 
+        <select id="analysisTimeMode">
+          <option value="current">Current</option>
+        </select>
+      </label>
+      <label>SOURCE 
+        <select id="analysisSource">
+          <option value="auto">Auto</option>
+        </select>
+      </label>
+      <label>SCENARIO 
+        <select id="analysisScenario">
+          <option value="general">General Ocean</option>
+          <option value="cyclone">Cyclone</option>
+          <option value="oilspill">Oil Spill</option>
+          <option value="sar">Search & Rescue</option>
+          <option value="research">Marine Research</option>
+        </select>
+      </label>
+      <div class="analysis-actions">
+        <button id="btnReset">RESET</button>
+      </div>
+    </section>
+    
+    <main class="analysis-main-scrollable">
+      <div class="analysis-grid-container">
+        
+        <!-- Top Section: 3D Ocean and Investigation Sidebar -->
+        <div class="analysis-top-row">
+          <section class="analysis-stage-container">
+            <div class="analysis-stage" style="flex-grow: 1;">
+              <canvas id="analysisCanvas"></canvas>
+              
+              <div class="analysis-overlay analysis-field">
+                <div class="eyebrow">ACTIVE FIELD</div>
+                <strong id="legendVariable">Analysis</strong>
+                <div id="legendUnits">—</div>
+                <div id="legendRange">—</div>
+                <div id="legendBar" class="analysis-gradient"></div>
+              </div>
+
+              <div class="analysis-overlay analysis-view-controls">
+                <button data-view="3d" class="active">3D</button>
+                <button data-view="top">TOP</button>
+                <button data-view="cut">CUT</button>
+              </div>
+              
+              <div class="analysis-overlay analysis-layer-controls">
+                <div class="eyebrow">LAYERS</div>
+                <label><input type="checkbox" id="layerArgo" checked> Argo</label>
+                <label><input type="checkbox" id="layerAnomalies" checked> Anomalies</label>
+                <label><input type="checkbox" id="layerAbnormal" checked> Abnormal Regions</label>
+              </div>
+              
+              <div class="analysis-overlay analysis-obs-key">
+                <div><span class="legend-dot argo"></span>ARGO</div>
+                <div><span class="legend-dot glider"></span>GLIDER</div>
+              </div>
+            </div>
+            <!-- Vertical Depth Slider Beside 3D Scene -->
+            <div class="depth-slider-container">
+              <div class="eyebrow" style="text-align:center;margin-bottom:10px;">DEPTH</div>
+              <input type="range" id="analysisDepthSlider" class="vertical-slider" min="0" max="6" value="2" step="1" orient="vertical">
+              <div id="currentDepthLabel" class="depth-slider-label">100 m</div>
+            </div>
+          </section>
+          
+          <aside class="investigation-sidebar" id="investigationSidebar">
+            <div class="sidebar-title">INVESTIGATION</div>
+            <div class="sidebar-content" id="investigationContent">
+              <div class="empty-state">Select an anomaly, observation, or region to investigate.</div>
+            </div>
+          </aside>
+        </div>
+
+        <!-- KPI Strip -->
+        <div class="kpi-strip">
+          <div class="kpi-card" data-target="rmse">
+            <div class="eyebrow">MODEL RMSE</div>
+            <div class="kpi-value" id="kpi-rmse">—</div>
+          </div>
+          <div class="kpi-card" data-target="bias">
+            <div class="eyebrow">MODEL BIAS</div>
+            <div class="kpi-value" id="kpi-bias">—</div>
+          </div>
+          <div class="kpi-card" data-target="mae">
+            <div class="eyebrow">MAE</div>
+            <div class="kpi-value" id="kpi-mae">—</div>
+          </div>
+          <div class="kpi-card" data-target="observations">
+            <div class="eyebrow">OBSERVATIONS</div>
+            <div class="kpi-value" id="kpi-observations">—</div>
+          </div>
+          <div class="kpi-card" data-target="coverage">
+            <div class="eyebrow">COVERAGE</div>
+            <div class="kpi-value" id="kpi-coverage">—</div>
+          </div>
+          <div class="kpi-card" data-target="anomalies">
+            <div class="eyebrow">ANOMALIES</div>
+            <div class="kpi-value" id="kpi-anomalies">—</div>
+          </div>
+        </div>
+
+        <!-- Graphs Row 1 -->
+        <div class="graphs-row">
+          <div class="graph-panel">
+            <div class="panel-header">MODEL VS ARGO VERTICAL PROFILE</div>
+            <div class="graph-container">
+              <canvas id="chartModelVsArgo"></canvas>
+            </div>
+          </div>
+          <div class="graph-panel">
+            <div class="panel-header">MODEL ERROR / ANOMALY MAP</div>
+            <div class="graph-container">
+              <canvas id="chartErrorMap"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Graphs Row 2 -->
+        <div class="graphs-row">
+          <div class="graph-panel">
+            <div class="panel-header">OBSERVATION COVERAGE & GAPS</div>
+            <div class="graph-container coverage-container">
+              <div id="coverageContent">
+                <div class="empty-state">Loading coverage...</div>
+              </div>
+            </div>
+          </div>
+          <div class="graph-panel">
+            <div class="panel-header">SELECTED REGION TIME SERIES</div>
+            <div class="graph-container">
+              <canvas id="chartTimeSeries"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scientific Insight -->
+        <div class="insight-panel">
+          <div class="panel-header">SCIENTIFIC INSIGHT</div>
+          <div class="insight-content" id="scientificInsightContent">
+             <div class="empty-state">Select a region or observation to view insights.</div>
+          </div>
+        </div>
+        
+      </div>
+    </main>
+    
+    <footer class="analysis-timeline">
+      <div class="timeline-head">
+        <div>
+          <div class="eyebrow">TIME</div>
+          <strong id="timelineLabel" style="font-family:'JetBrains Mono',monospace;">—</strong>
+        </div>
+        <div class="timeline-controls">
+          <button id="timelinePrev">PREV</button>
+          <button id="timelinePlay">PLAY</button>
+          <button id="timelineNext">NEXT</button>
+          <select id="timelineSpeed" class="speed-select">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="5">5×</option>
+          </select>
+        </div>
+      </div>
+      <input id="analysisSlider" type="range" min="0" max="0" value="0">
+      <div class="timeline-scale">
+        <span id="timelineStart">—</span>
+        <span id="timelineEnd">—</span>
+      </div>
+    </footer>
+  </div>
+  
   <script type="module" src="analysis/analysisPage.js"></script>
 </body>
 </html>

@@ -657,15 +657,16 @@ class AnalysisDashboard {
       el.className = 'kpi-value ' + (colorClass || '');
     };
 
-    const acc = this.summaryData.accuracy || {};
-    const cov = this.summaryData.density || {};
+    const acc = this.summaryData.model_accuracy || this.summaryData.accuracy || {};
+    const cov = this.summaryData.observation_coverage || this.summaryData.density || {};
+    const anomalyCount = this.anomaliesCache[this.activeTime]?.length ?? this.summaryData.anomalies_detected ?? 0;
 
     setVal('kpi-rmse', acc.overall_rmse, v => v.toFixed(2) + ' °C');
-    setVal('kpi-bias', acc.overall_bias, v => (v>0?'+':'') + v.toFixed(2) + ' °C', acc.overall_bias > 0.5 ? 'critical' : '');
+    setVal('kpi-bias', acc.overall_bias, v => (v > 0 ? '+' : '') + v.toFixed(2) + ' °C', Math.abs(v) > 0.5 ? 'critical' : '');
     setVal('kpi-mae', acc.overall_mae, v => v.toFixed(2) + ' °C');
     setVal('kpi-observations', cov.total_observations);
-    setVal('kpi-coverage', cov.spatial_coverage_percent, v => v.toFixed(1) + ' %', cov.spatial_coverage_percent < 50 ? 'critical' : 'positive');
-    setVal('kpi-anomalies', this.summaryData.anomalies_detected, null, this.summaryData.anomalies_detected > 0 ? 'critical' : 'positive');
+    setVal('kpi-coverage', cov.spatial_coverage_pct, v => v.toFixed(1) + ' %', cov.spatial_coverage_pct < 50 ? 'critical' : 'positive');
+    setVal('kpi-anomalies', anomalyCount, null, anomalyCount > 0 ? 'critical' : 'positive');
   }
 
   updateInvestigationSidebar() {

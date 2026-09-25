@@ -597,6 +597,7 @@ class AnalysisDashboard {
       box.position.set(cx, 0, cz);
       box.userData = { isRegion: true, customData: { isRegion: true, item: reg } };
       this.regionsGroup.add(box);
+    this.scene.layers.regions = { group: this.regionsGroup };
     });
   }
 

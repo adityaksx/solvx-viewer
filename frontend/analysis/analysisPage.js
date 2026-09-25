@@ -560,7 +560,7 @@ class AnalysisDashboard {
       const x = (obs.latitude-midLat)*111.32;
       const z = (obs.longitude-midLon)*klon;
       
-      const isSelected = this.selectedObservation && this.selectedObservation.id === obs.id;
+      const isSelected = this.selectedObservation && String(this.selectedObservation.float_id ?? this.selectedObservation.id) === String(obs.float_id ?? obs.id);
       
       const marker = new THREE.Mesh(
           new THREE.SphereGeometry(isSelected ? 2.5 : 1.5, 16, 16),
@@ -741,7 +741,7 @@ class AnalysisDashboard {
         <div class="sidebar-row"><label>Platform</label><span>${o.wmo || o.id}</span></div>
         <div class="sidebar-row"><label>Type</label><span>${o.platform || 'Argo Float'}</span></div>
         <div class="sidebar-row"><label>Location</label><span>${o.latitude.toFixed(2)}°N, ${o.longitude.toFixed(2)}°E</span></div>
-        <button class="action-btn" onclick="window.fetchFloatProfile('${o.id}')">LOAD PROFILE</button>
+        <button class="action-btn" onclick="window.fetchFloatProfile('${o.float_id || o.id}')">LOAD PROFILE</button>
       `;
       window.fetchFloatProfile = async (id) => {
          const btn = document.querySelector('.action-btn');

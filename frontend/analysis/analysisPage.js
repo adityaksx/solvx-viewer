@@ -115,6 +115,22 @@ class AnalysisDashboard {
 
     document.getElementById('analysisSource').addEventListener('change', async e => {
       this.activeSource = e.target.value;
+      if (this.activeSource === 'model') {
+        this.layerArgo = false;
+        this.layerAnomalies = false;
+        this.layerAbnormal = false;
+      } else if (this.activeSource === 'observations') {
+        this.layerArgo = true;
+        this.layerAnomalies = false;
+        this.layerAbnormal = false;
+      } else {
+        this.layerArgo = true;
+        this.layerAnomalies = true;
+        this.layerAbnormal = true;
+      }
+      document.getElementById('layerArgo').checked = this.layerArgo;
+      document.getElementById('layerAnomalies').checked = this.layerAnomalies;
+      document.getElementById('layerAbnormal').checked = this.layerAbnormal;
       await this.selectTime(this.index);
     });
 

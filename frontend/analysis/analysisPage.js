@@ -520,6 +520,9 @@ class AnalysisDashboard {
     else if (this.activeDepth === 0) sliceMode = 'volume';
     
     this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);
+    if (this.activeSource === 'observations') {
+      this.water?.setOpacity(0);
+    }
     
     this.clearMarkers();
     

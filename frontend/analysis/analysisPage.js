@@ -437,6 +437,7 @@ class AnalysisDashboard {
     this.updateKPIStrip();
     this.updateErrorMap();
     this.updateCoveragePanel();
+    this.updateInvestigationSidebar();
     this.updateCharts();
   }
 

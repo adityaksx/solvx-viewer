@@ -766,24 +766,24 @@ class AnalysisDashboard {
      }
      
      let html = `
-       <div class="sidebar-row"><label>Spatial Coverage</label><span>${(cov.spatial_coverage_percent || 0).toFixed(1)} %</span></div>
+       <div class="sidebar-row"><label>Spatial Coverage</label><span>${(cov.spatial_coverage_pct || 0).toFixed(1)} %</span></div>
        <div class="sidebar-row"><label>Total Observations</label><span>${cov.total_observations || 0}</span></div>
        <div style="margin-top:10px;" class="eyebrow">DENSITY CLASSIFICATION</div>
        <div class="coverage-row">
-         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>High Density (>15)</span><span>${cov.cell_classifications?.high || 0} cells</span></div>
-         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.cell_classifications?.high || 0)/(cov.active_cells || 1))*100}%"></div></div>
+         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>High Density (>15)</span><span>${cov.density_summary?.HIGH || 0} cells</span></div>
+         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.density_summary?.HIGH || 0)/(cov.grid_cells?.length || 1))*100}%"></div></div>
        </div>
        <div class="coverage-row">
-         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Moderate (5-15)</span><span>${cov.cell_classifications?.medium || 0} cells</span></div>
-         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.cell_classifications?.medium || 0)/(cov.active_cells || 1))*100}%; background:#f59e0b;"></div></div>
+         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Moderate (5-15)</span><span>${cov.density_summary?.MEDIUM || 0} cells</span></div>
+         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.density_summary?.MEDIUM || 0)/(cov.grid_cells?.length || 1))*100}%; background:#f59e0b;"></div></div>
        </div>
        <div class="coverage-row">
-         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Sparse (1-4)</span><span>${cov.cell_classifications?.low || 0} cells</span></div>
-         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.cell_classifications?.low || 0)/(cov.active_cells || 1))*100}%; background:#22d3ee;"></div></div>
+         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Sparse (1-4)</span><span>${cov.density_summary?.LOW || 0} cells</span></div>
+         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.density_summary?.LOW || 0)/(cov.grid_cells?.length || 1))*100}%; background:#22d3ee;"></div></div>
        </div>
        <div class="coverage-row">
-         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>No Data</span><span>${cov.cell_classifications?.none || 0} cells</span></div>
-         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.cell_classifications?.none || 0)/(cov.total_grid_cells || 1))*100}%; background:#ef4444;"></div></div>
+         <div style="display:flex;justify-content:space-between;font-size:10px;"><span>No Data</span><span>${cov.density_summary?.NONE || 0} cells</span></div>
+         <div class="coverage-bar"><div class="coverage-fill" style="width:${((cov.density_summary?.NONE || 0)/(cov.grid_cells?.length || 1))*100}%; background:#ef4444;"></div></div>
        </div>
      `;
      

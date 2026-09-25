@@ -458,13 +458,17 @@ class AnalysisDashboard {
            ApiClient.getObservationCoverage({ ...this.bbox, grid_res_deg: 1.0 }),
            ApiClient.getDataGaps({ ...this.bbox })
         ]);
-        this.summaryData = summary;
+        // Normalize the current backend response shape for the UI.
+        // Backend fields are model_accuracy and observation_coverage.
+        this.summaryData = {
+          ...summary,
+          accuracy: summary.model_accuracy || {},
+          density: summary.observation_coverage || {},
+          anomalies_detected: (this.anomaliesCache[time] || []).length
+        };
         this.coverageData = cov;
         this.gapsData = gaps;
-        
-        if (summary.accuracy) {
-           this.modelVsArgoCache[time] = summary.accuracy;
-        }
+        this.modelVsArgoCache[time] = summary.model_accuracy || {};
      } catch (e) {
         console.error("Failed to load summary", e);
      }

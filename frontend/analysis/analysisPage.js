@@ -798,18 +798,20 @@ class AnalysisDashboard {
   }
 
   async updateCharts() {
-     if (this.selectedAnomaly) {
-         try {
-             const profile = await ApiClient.getFloatComparison(this.selectedAnomaly.float_id, this.getBaseVar(this.activeVar), this.activeTime);
-             this.renderProfileChart(profile);
-         } catch(e) {
-             this.clearProfileChart();
-         }
-     } else if (!this.selectedObservation) {
+     const selectedFloat = this.selectedAnomaly?.float_id || this.selectedObservation?.float_id || this.selectedObservation?.id;
+     if (selectedFloat) {
+       try {
+         const profile = await ApiClient.getFloatComparison(String(selectedFloat), this.getBaseVar(this.activeVar), this.activeTime);
+         this.renderProfileChart(profile);
+       } catch (e) {
+         console.error('Profile load failed', e);
          this.clearProfileChart();
+       }
+     } else {
+       this.clearProfileChart();
      }
-     
-     this.updateTimeSeriesChart();
+
+     await this.updateTimeSeriesChart(selectedFloat);
   }
 
   renderProfileChart(profileData) {

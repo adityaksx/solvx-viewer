@@ -840,33 +840,47 @@ class AnalysisDashboard {
      ];
      this.modelArgoChart.update();
   }
-  updateTimeSeriesChart() {
+  async updateTimeSeriesChart(floatId = null) {
      if (!this.timeSeriesChart || !this.timeline.length) return;
-     
-     const labels = this.timeline.map(t => t.slice(5, 10)); // MM-DD
-     
-     let base = 25;
-     if (this.selectedAnomaly) base = this.selectedAnomaly.baseline;
-     
-     const data = labels.map((l, i) => {
-         return base + Math.sin(i * 0.5) * 1.5;
-     });
-     
-     this.timeSeriesChart.data.labels = labels;
+
+     // Never fabricate a time series. Only show values returned by the API.
+     if (!floatId) {
+       this.timeSeriesChart.data.labels = [];
+       this.timeSeriesChart.data.datasets = [];
+       this.timeSeriesChart.update();
+       return;
+     }
+
+     const key = `${floatId}:${this.getBaseVar(this.activeVar)}`;
+     if (!this.timeSeriesCache) this.timeSeriesCache = {};
+     if (!this.timeSeriesCache[key]) {
+       const maxPoints = 24;
+       const indices = this.timeline.length <= maxPoints
+         ? this.timeline.map((_, i) => i)
+         : Array.from({length: maxPoints}, (_, i) => Math.round(i * (this.timeline.length - 1) / (maxPoints - 1)));
+       const responses = await Promise.all(indices.map(i =>
+         ApiClient.getFloatComparison(String(floatId), this.getBaseVar(this.activeVar), this.timeline[i]).catch(() => null)
+       ));
+       this.timeSeriesCache[key] = responses.map((r, k) => {
+         if (!r || !Array.isArray(r.comparison) || !r.comparison.length) return null;
+         const obs = r.comparison.map(p => Number(p.observed)).filter(Number.isFinite);
+         const model = r.comparison.map(p => Number(p.model)).filter(Number.isFinite);
+         return {
+           label: this.timeline[indices[k]].slice(5, 10),
+           observed: obs.length ? obs.reduce((a,b) => a+b, 0) / obs.length : null,
+           model: model.length ? model.reduce((a,b) => a+b, 0) / model.length : null
+         };
+       }).filter(Boolean);
+     }
+
+     const rows = this.timeSeriesCache[key];
+     this.timeSeriesChart.data.labels = rows.map(r => r.label);
      this.timeSeriesChart.data.datasets = [
-        {
-           label: this.prettyVar(this.activeVar),
-           data: data,
-           borderColor: '#62d5ee',
-           backgroundColor: 'rgba(98, 213, 238, 0.1)',
-           fill: true,
-           borderWidth: 2,
-           pointRadius: 0
-        }
+       { label: 'Model', data: rows.map(r => r.model), borderColor: '#62d5ee', borderWidth: 2, pointRadius: 2, fill: false },
+       { label: 'Argo Observation', data: rows.map(r => r.observed), borderColor: '#f59e0b', borderWidth: 2, pointRadius: 2, fill: false }
      ];
      this.timeSeriesChart.update();
   }
-
   resolveVar(vars, id) {
     if (vars[id] && !vars[id].error) return vars[id];
     for (const k of (alias[id] || [])) {

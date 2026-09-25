@@ -196,8 +196,6 @@ export class OceanScene {
         const interactiveTargets = [];
         if (this.layers.water?.group) interactiveTargets.push(this.layers.water.group);
         if (this.layers.observations?.group) interactiveTargets.push(this.layers.observations.group);
-        if (this.layers.regions?.group) interactiveTargets.push(this.layers.regions.group);
-        
         // Regions are stored in the analysis scene layer and are clickable.
         if (this.layers.regions?.group) interactiveTargets.push(this.layers.regions.group);
 

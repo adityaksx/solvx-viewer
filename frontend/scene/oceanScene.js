@@ -198,24 +198,26 @@ export class OceanScene {
         if (this.layers.observations?.group) interactiveTargets.push(this.layers.observations.group);
         if (this.layers.regions?.group) interactiveTargets.push(this.layers.regions.group);
         
-        // Include dynamically added anomaly highlight meshes
-        this.scene.children.forEach(c => {
-            if (c.userData?.isAnomalyHighlight) interactiveTargets.push(c);
-        });
+        // Regions are stored in the analysis scene layer and are clickable.
+        if (this.layers.regions?.group) interactiveTargets.push(this.layers.regions.group);
 
         const hits = this.raycaster.intersectObjects(interactiveTargets.length ? interactiveTargets : this.root.children, true);
 
         // Check for Anomaly Regions first (highest priority if clicked)
         for (const hit of hits) {
-            if (hit.object.userData?.isAnomalyHighlight) {
-                if (this.onAnomalyClick) this.onAnomalyClick(hit.object.userData.anomalyRegionId);
+            if (hit.object.userData?.isAnomaly || hit.object.userData?.customData?.isAnomaly) {
+                if (this.onAnomalyClick) this.onAnomalyClick({ isAnomaly: true, item: hit.object.userData.item || hit.object.userData.customData.item });
+                return;
+            }
+            if (hit.object.userData?.isRegion || hit.object.userData?.customData?.isRegion) {
+                if (this.onAnomalyClick) this.onAnomalyClick({ isRegion: true, item: hit.object.userData.item || hit.object.userData.customData.item });
                 return;
             }
         }
 
         // Check for Argo floats
         for (const hit of hits) {
-            if (hit.object.userData?.isArgoFloat) {
+            if (hit.object.userData?.isArgoFloat || hit.object.userData?.float) {
                 if (this.onFloatClick) this.onFloatClick(hit.object.userData.float);
                 return;
             }

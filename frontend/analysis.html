@@ -36,8 +36,21 @@
     <section class="analysis-toolbar">
       <label>REGION 
         <select id="analysisRegion">
-          <option value="bengal">Bay of Bengal</option>
-          <option value="arabian">Arabian Sea</option>
+          <option value="bay_of_bengal">Bay of Bengal</option>
+          <option value="arabian_sea">Arabian Sea</option>
+          <option value="south_china_sea">South China Sea</option>
+          <option value="gulf_of_mexico">Gulf of Mexico</option>
+          <option value="mediterranean_sea">Mediterranean Sea</option>
+        </select>
+      </label>
+      <label>DEPTH EXAGGERATION 
+        <select id="analysisDepthExaggeration">
+          <option value="1">1×</option>
+          <option value="5">5×</option>
+          <option value="10">10×</option>
+          <option value="25">25×</option>
+          <option value="50">50×</option>
+          <option value="70" selected>70×</option>
         </select>
       </label>
       <label>VARIABLE 
@@ -123,7 +136,7 @@
           <aside class="investigation-sidebar" id="investigationSidebar">
             <div class="sidebar-title">INVESTIGATION</div>
             <div class="sidebar-content" id="investigationContent">
-              <div class="empty-state">Select an anomaly, observation, or region to investigate.</div>
+              <div class="empty-state">Select an ocean cell, observation, anomaly or region.</div>
             </div>
           </aside>
         </div>

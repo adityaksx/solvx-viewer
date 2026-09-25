@@ -171,6 +171,8 @@ export class OceanScene {
 
         if (viewName === 'top') {
             this.camera.position.set(center.x, center.y + radius * 1.65, center.z + 0.001);
+        } else if (viewName === 'cut') {
+            this.camera.position.set(center.x + radius * 1.3, center.y * 0.1, center.z + radius * 0.1);
         } else if (viewName === 'profile') {
             this.camera.position.set(center.x + radius * 1.55, center.y, center.z);
         } else if (viewName === 'under') {
@@ -183,7 +185,25 @@ export class OceanScene {
     }
 
     setExaggeration(ex) {
-        this.depthEx = Number(ex);
+        this.setExaggerationFactor(ex);
+    }
+
+    setExaggerationFactor(factor) {
+        this.depthEx = Number(factor);
+        if (this.root) {
+            this.root.scale.y = this.depthEx / 70.0;
+        }
+        this.controls.update();
+    }
+
+    focusPosition(targetVec, distance = null) {
+        if (!targetVec) return;
+        this.controls.target.copy(targetVec);
+        if (distance) {
+            const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+            this.camera.position.copy(targetVec).add(dir.multiplyScalar(distance));
+        }
+        this.controls.update();
     }
 
     onClick(e) {

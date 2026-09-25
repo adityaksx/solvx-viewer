@@ -1582,6 +1582,31 @@ html, body, #app {
 }
 
 /* ==============================================================================
+   3D Ocean Scene View & Canvas
+   ============================================================================== */
+
+#sceneView {
+  position: absolute;
+  top: 56px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: calc(100vh - 56px);
+  overflow: hidden;
+  background: #050d15;
+}
+
+#renderCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ==============================================================================
    Interactive 2D World Map Region Selector View
    ============================================================================== */
 

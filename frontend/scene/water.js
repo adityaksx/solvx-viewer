@@ -24,7 +24,7 @@ export class DynamicWater {
             uTime: { value: 0 },
             uWaveHeight: { value: this.waveHeight },
             uBaseColor: { value: new THREE.Color(0x0c659e) },
-            uSkyColor: { value: new THREE.Color(0xb9dfe9) },
+            uSkyColor: { value: new THREE.Color(0x0a2838) },
             uBathyTex: { value: this.bathyTex },
             uHasBathyTex: { value: this.bathyTex ? 1.0 : 0.0 },
             uDataTex: { value: null },
@@ -200,9 +200,19 @@ export class DynamicWater {
     }
 
     setOpacity(opacity) {
-        this.opacity = opacity;
+        this.opacity = Number(opacity);
         if (this.instancedVolume?.material) {
-            this.instancedVolume.material.opacity = opacity;
+            this.instancedVolume.material.opacity = this.opacity;
+            this.instancedVolume.visible = this.opacity > 0.01;
+        }
+        if (this.surfaceMesh) {
+            this.surfaceMesh.visible = this.opacity > 0.01;
+        }
+    }
+
+    setSurfaceVisible(visible) {
+        if (this.surfaceMesh) {
+            this.surfaceMesh.visible = !!visible;
         }
     }
 

@@ -36,6 +36,7 @@ class AnalysisDashboard {
     this.activeDepth = 100;
     this.activeView = '3d';
     this.activeScenario = 'general';
+    this.activeSource = 'auto';
     this.layerArgo = true;
     this.layerAnomalies = true;
     this.layerAbnormal = true;
@@ -110,6 +111,16 @@ class AnalysisDashboard {
     document.getElementById('analysisScenario').addEventListener('change', e => {
       this.activeScenario = e.target.value;
       this.applyScenario();
+    });
+
+    document.getElementById('analysisSource').addEventListener('change', async e => {
+      this.activeSource = e.target.value;
+      await this.selectTime(this.index);
+    });
+
+    document.getElementById('analysisTimeMode').addEventListener('change', e => {
+      const idx = Number(e.target.value);
+      if (Number.isFinite(idx)) this.selectTime(idx);
     });
     
     document.getElementById('btnReset').addEventListener('click', () => {
@@ -292,7 +303,24 @@ class AnalysisDashboard {
     
     if (!this.scene) {
       this.scene = new OceanScene(document.getElementById('analysisCanvas'), {
-        onOceanClick: cell => {},
+        onOceanClick: cell => {
+          if (!cell) return;
+          this.selectedRegion = {
+            id: `cell_${Number(cell.lat).toFixed(3)}_${Number(cell.lon).toFixed(3)}`,
+            name: 'Selected ocean cell',
+            bbox: { min_lat: Number(cell.lat) - 0.5, max_lat: Number(cell.lat) + 0.5, min_lon: Number(cell.lon) - 0.5, max_lon: Number(cell.lon) + 0.5 },
+            depth_range_m: [Number(cell.depthM || 0), Number(cell.depthM || 0)],
+            anomaly_count: 0, anomaly_magnitude_mean: 0, anomaly_magnitude_max: 0,
+            variable: this.getBaseVar(this.activeVar),
+            unit: this.activeVar === 'salinity' ? 'PSU' : '°C', severity: 'INFO',
+            center_lat: Number(cell.lat), center_lon: Number(cell.lon), cell
+          };
+          this.selectedObservation = null;
+          this.selectedAnomaly = null;
+          this.focus3D();
+          this.updateInvestigationSidebar();
+          this.updateCharts();
+        },
         onFloatClick: obs => {
           this.selectedObservation = obs;
           this.selectedAnomaly = null;
@@ -338,6 +366,17 @@ class AnalysisDashboard {
   async loadTimeline() {
     const res = await ApiClient.getDataTimeline({ variable: this.activeVar, bbox: this.bbox }).catch(() => ({available_timestamps:[]}));
     this.timeline = res.available_timestamps || [];
+    const timeSelect = document.getElementById('analysisTimeMode');
+    if (timeSelect) {
+      timeSelect.innerHTML = '';
+      this.timeline.forEach((ts, i) => {
+        const option = document.createElement('option');
+        option.value = String(i);
+        const d = new Date(ts);
+        option.textContent = Number.isNaN(d.getTime()) ? ts : d.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'UTC' }) + ' UTC';
+        timeSelect.appendChild(option);
+      });
+    }
     const slider = document.getElementById('analysisSlider');
     slider.max = String(Math.max(0, this.timeline.length - 1));
     if(this.timeline.length) {
@@ -351,6 +390,8 @@ class AnalysisDashboard {
     this.index = Math.max(0, Math.min(idx, this.timeline.length - 1));
     this.activeTime = this.timeline[this.index];
     document.getElementById('analysisSlider').value = String(this.index);
+    const timeSelect = document.getElementById('analysisTimeMode');
+    if (timeSelect) timeSelect.value = String(this.index);
     
     const d = new Date(this.activeTime);
     const dateText = `${d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})} ${d.toISOString().slice(11,16)} UTC`;
@@ -375,7 +416,7 @@ class AnalysisDashboard {
   async fetchBundleData(time) {
     if (this.bundleCache[time]) return;
     try {
-      const bundle = await ApiClient.getOceanBundle({ provider: 'auto', bbox: this.bbox, time, stride: 1 });
+      const bundle = await ApiClient.getOceanBundle({ provider: 'auto', bbox: this.bbox, time, depth: null, stride: 1 });
       this.bundleCache[time] = bundle?.variables || {};
     } catch (e) {
       this.bundleCache[time] = {};
@@ -495,7 +536,7 @@ class AnalysisDashboard {
           })
       );
       marker.position.set(x, 2, z);
-      marker.userData = { float: obs }; 
+      marker.userData = { isArgoFloat: true, float: obs };
       this.markersGroup.add(marker);
     });
     this.scene.layers.observations = { group: this.markersGroup };
@@ -521,7 +562,7 @@ class AnalysisDashboard {
       );
       marker.position.set(x, this.scene.sceneManager.depthY(an.depth) + 1, z);
       
-      marker.userData = { customData: { isAnomaly: true, item: an } };
+      marker.userData = { isAnomaly: true, customData: { isAnomaly: true, item: an } };
       this.markersGroup.add(marker);
     });
   }
@@ -554,7 +595,7 @@ class AnalysisDashboard {
           })
       );
       box.position.set(cx, 0, cz);
-      box.userData = { customData: { isRegion: true, item: reg } };
+      box.userData = { isRegion: true, customData: { isRegion: true, item: reg } };
       this.regionsGroup.add(box);
     });
   }

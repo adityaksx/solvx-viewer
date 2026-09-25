@@ -824,10 +824,11 @@ class AnalysisDashboard {
        </div>
      `;
      
-     if (gaps && gaps.critical_gaps && gaps.critical_gaps.length > 0) {
-        html += `<div style="margin-top:15px;" class="eyebrow">CRITICAL GAPS</div>`;
-        gaps.critical_gaps.slice(0, 3).forEach(g => {
-           html += `<div style="font-size:11px; margin-bottom:4px; color:#ef4444;">${g.description}</div>`;
+     const gapRegions = gaps?.gap_regions || [];
+     if (gapRegions.length > 0) {
+        html += `<div style="margin-top:15px;" class="eyebrow">OBSERVATION GAPS</div>`;
+        gapRegions.slice(0, 3).forEach(g => {
+           html += `<div style="font-size:11px; margin-bottom:7px;"><strong style="color:#ef4444;">${g.name}</strong><br><span>${g.recommendation || 'Coverage gap detected.'}</span></div>`;
         });
      }
      

@@ -878,6 +878,14 @@ class AnalysisDashboard {
      ];
      this.modelArgoChart.update();
   }
+
+  clearProfileChart() {
+     if (!this.modelArgoChart) return;
+     this.modelArgoChart.data.labels = [];
+     this.modelArgoChart.data.datasets = [];
+     this.modelArgoChart.update();
+  }
+
   async updateTimeSeriesChart(floatId = null) {
      if (!this.timeSeriesChart || !this.timeline.length) return;
 

@@ -88,6 +88,18 @@ class AnalysisDashboard {
   bindUI() {
     document.getElementById('analysisRegion').addEventListener('change', async e => {
       this.bbox = { ...BBOXES[e.target.value] };
+      this.bundleCache = {};
+      this.anomaliesCache = {};
+      this.abnormalCache = {};
+      this.modelVsArgoCache = {};
+      this.argoData = [];
+      this.coverageData = null;
+      this.gapsData = null;
+      this.summaryData = null;
+      this.selectedObservation = null;
+      this.selectedRegion = null;
+      this.selectedAnomaly = null;
+      this.timeSeriesCache = {};
       await this.loadTerrain();
       await this.loadTimeline();
       if (this.timeline.length > 0) await this.selectTime(0);
@@ -95,6 +107,17 @@ class AnalysisDashboard {
     
     document.getElementById('analysisVariable').addEventListener('change', async e => {
       this.activeVar = e.target.value;
+      this.bundleCache = {};
+      this.anomaliesCache = {};
+      this.abnormalCache = {};
+      this.modelVsArgoCache = {};
+      this.summaryData = null;
+      this.coverageData = null;
+      this.gapsData = null;
+      this.selectedObservation = null;
+      this.selectedRegion = null;
+      this.selectedAnomaly = null;
+      this.timeSeriesCache = {};
       await this.loadTimeline();
       if (this.timeline.length > 0) await this.selectTime(0);
     });

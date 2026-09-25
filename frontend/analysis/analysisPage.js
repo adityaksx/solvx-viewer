@@ -421,6 +421,17 @@ class AnalysisDashboard {
       this.fetchArgoData(),
       this.fetchSummaryAndCoverage(this.activeTime)
     ]);
+
+    // Select the highest-discrepancy real Argo float on first load so the
+    // analytical panels contain real data instead of empty placeholders.
+    if (!this.selectedObservation && !this.selectedAnomaly && !this.selectedRegion) {
+      const top = this.summaryData?.model_accuracy?.top_discrepancy;
+      const targetId = top?.float_id != null ? String(top.float_id) : null;
+      const target = targetId
+        ? this.argoData.find(o => String(o.float_id ?? o.id) === targetId)
+        : this.argoData[0];
+      if (target) this.selectedObservation = target;
+    }
     
     this.updateAnalysisView();
     this.updateKPIStrip();

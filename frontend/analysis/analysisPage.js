@@ -950,7 +950,12 @@ class AnalysisDashboard {
 
   updateProvenance() {
      const d = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
-     document.getElementById('provenanceData').textContent = `DATA SOURCES: Model (Copernicus), Obs (Argo) | Updated: ${d}`;
+     const bundleVars = Object.keys(this.bundleCache[this.activeTime] || {}).length;
+     const argoCount = this.argoData?.length || 0;
+     const anomalyCount = this.anomaliesCache[this.activeTime]?.length || 0;
+     const modelState = bundleVars > 0 ? 'OK' : 'NO DATA';
+     document.getElementById('provenanceData').textContent =
+       `MODEL: ${modelState} | ARGO: ${argoCount} | ANOMALIES: ${anomalyCount} | ${d}`;
   }
 
   togglePlay() {

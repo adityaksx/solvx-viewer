@@ -22,6 +22,8 @@ export class OceanScene {
         this.mouse = new THREE.Vector2();
 
         this.layers = {
+            observations: null,
+            regions: null,
             land: null,
             coastline: null,
             islands: null,
@@ -42,7 +44,7 @@ export class OceanScene {
         const height = parent ? parent.clientHeight : window.innerHeight;
 
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0xb9dfe9);
+        this.scene.background = new THREE.Color(0x06121a);
 
         this.camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100000);
         this.camera.position.set(250, 180, 350);
@@ -194,6 +196,7 @@ export class OceanScene {
         const interactiveTargets = [];
         if (this.layers.water?.group) interactiveTargets.push(this.layers.water.group);
         if (this.layers.observations?.group) interactiveTargets.push(this.layers.observations.group);
+        if (this.layers.regions?.group) interactiveTargets.push(this.layers.regions.group);
         
         // Include dynamically added anomaly highlight meshes
         this.scene.children.forEach(c => {

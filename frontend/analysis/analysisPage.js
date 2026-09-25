@@ -37,6 +37,7 @@ class AnalysisDashboard {
     this.activeView = '3d';
     this.activeScenario = 'general';
     this.activeSource = 'auto';
+    this.layerModel = true;
     this.layerArgo = true;
     this.layerAnomalies = true;
     this.layerAbnormal = true;
@@ -157,7 +158,7 @@ class AnalysisDashboard {
       });
     });
     
-    ['layerArgo', 'layerAnomalies', 'layerAbnormal'].forEach(id => {
+    ['layerModel', 'layerArgo', 'layerAnomalies', 'layerAbnormal'].forEach(id => {
       document.getElementById(id).addEventListener('change', e => {
         this[id] = e.target.checked;
         this.updateAnalysisView();
@@ -520,7 +521,7 @@ class AnalysisDashboard {
     else if (this.activeDepth === 0) sliceMode = 'volume';
     
     this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);
-    if (this.activeSource === 'observations') {
+    if (!this.layerModel || this.activeSource === 'observations') {
       this.water?.setOpacity(0);
     }
     

@@ -813,21 +813,22 @@ class AnalysisDashboard {
   }
 
   renderProfileChart(profileData) {
-     if (!this.modelArgoChart || !profileData || !profileData.depths) return;
-     
-     this.modelArgoChart.data.labels = profileData.depths;
+     if (!this.modelArgoChart || !profileData || !Array.isArray(profileData.comparison)) return;
+
+     const points = profileData.comparison;
+     this.modelArgoChart.data.labels = points.map(p => Number(p.depth));
      this.modelArgoChart.data.datasets = [
         {
            label: 'Model',
-           data: profileData.model_values,
+           data: points.map(p => Number(p.model)),
            borderColor: '#62d5ee',
            backgroundColor: 'transparent',
            borderWidth: 2,
            pointRadius: 3
         },
         {
-           label: 'Observation',
-           data: profileData.observation_values,
+           label: 'Argo Observation',
+           data: points.map(p => Number(p.observed)),
            borderColor: '#f59e0b',
            backgroundColor: 'transparent',
            borderWidth: 2,
@@ -837,14 +838,6 @@ class AnalysisDashboard {
      ];
      this.modelArgoChart.update();
   }
-  
-  clearProfileChart() {
-     if (!this.modelArgoChart) return;
-     this.modelArgoChart.data.labels = [];
-     this.modelArgoChart.data.datasets = [];
-     this.modelArgoChart.update();
-  }
-
   updateTimeSeriesChart() {
      if (!this.timeSeriesChart || !this.timeline.length) return;
      

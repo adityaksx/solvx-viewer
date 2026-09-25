@@ -609,6 +609,7 @@ class AnalysisDashboard {
     const midLon = (bounds[0]+bounds[1])/2;
     const klon = 111.32 * Math.cos(midLat*Math.PI/180);
     
+    this.scene.layers.regions = { group: this.regionsGroup };
     regions.forEach(reg => {
       const minX = (reg.bbox.min_lat - midLat) * 111.32;
       const maxX = (reg.bbox.max_lat - midLat) * 111.32;
@@ -632,7 +633,6 @@ class AnalysisDashboard {
       box.position.set(cx, 0, cz);
       box.userData = { isRegion: true, customData: { isRegion: true, item: reg } };
       this.regionsGroup.add(box);
-    this.scene.layers.regions = { group: this.regionsGroup };
     });
   }
 
@@ -724,16 +724,17 @@ class AnalysisDashboard {
       `;
     } else if (this.selectedRegion) {
       const r = this.selectedRegion;
+      const isCell = !!r.cell;
       sb.innerHTML = `
-        <div class="sidebar-row"><label>Region</label><span>${r.name || r.id}</span></div>
+        <div class="sidebar-row"><label>Selection</label><span>${isCell ? 'Ocean Cell' : 'Abnormal Region'}</span></div>
+        <div class="sidebar-row"><label>Location</label><span>${(r.center_lat ?? 0).toFixed(2)}°N, ${(r.center_lon ?? 0).toFixed(2)}°E</span></div>
         <div class="sidebar-row"><label>Variable</label><span>${this.prettyVar(r.variable)}</span></div>
-        <div class="sidebar-row"><label>Depth Range</label><span>${r.depth_range_m[0]}m - ${r.depth_range_m[1]}m</span></div>
-        <div class="sidebar-row"><label>Severity</label><span class="critical">${r.severity}</span></div>
+        <div class="sidebar-row"><label>Depth</label><span>${r.depth_range_m?.[0] ?? this.activeDepth} m</span></div>
+        <div class="sidebar-row"><label>Status</label><span class="${isCell ? 'positive' : 'critical'}">${isCell ? 'SELECTED' : (r.severity || 'UNKNOWN')}</span></div>
       `;
-      ins.innerHTML = `
-        Abnormal region spans depths from ${r.depth_range_m[0]}m to ${r.depth_range_m[1]}m. 
-        Model shows systemic discrepancies within this bounding volume.
-      `;
+      ins.innerHTML = isCell
+        ? `Selected ocean cell at ${(r.center_lat ?? 0).toFixed(2)}°N, ${(r.center_lon ?? 0).toFixed(2)}°E. Use the depth and time controls to inspect the model field at this location.`
+        : `Abnormal region spans depths from ${r.depth_range_m[0]}m to ${r.depth_range_m[1]}m with ${r.anomaly_count ?? 0} detected anomalies.`;
     } else if (this.selectedObservation) {
       const o = this.selectedObservation;
       sb.innerHTML = `

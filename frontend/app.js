@@ -22,7 +22,7 @@ import { DepthControl } from './controls/depthControl.js';
 import { VariableControl } from './controls/variableControl.js';
 import { TimelineControl } from './controls/timelineControl.js';
 import { OpacityControl } from './controls/opacityControl.js';
-import { HazardUI } from './ui/hazardUI.js';
+import { SelectionContext } from './context/selectionContext.js';
 import { ViewerController } from './viewer/viewerController.js';
 import { ProfileViewer } from './profiles/profileViewer.js';
 
@@ -31,7 +31,8 @@ class SolvXApp {
         this.viewerController = new ViewerController(this);
         this.profileViewer = new ProfileViewer(this);
         this.currentMode = '3d'; // 'map' or '3d'
-        this.currentBBox = {
+        const ctxArea = SelectionContext.getArea();
+        this.currentBBox = ctxArea?.bbox ? { ...ctxArea.bbox } : {
             min_lon: 84.10,
             max_lon: 93.00,
             min_lat: 16.07,
@@ -128,7 +129,6 @@ class SolvXApp {
         });
 
         // 3. Initialize Interactive Controls
-        this.hazardUI = new HazardUI(this);
 
         this.varControl = new VariableControl('vars', {
             initialVariable: this.activeVar,
@@ -211,12 +211,18 @@ class SolvXApp {
         };
         this.setViewMode = setViewMode;
 
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('mode') === 'map') {
+            setViewMode('map');
+        }
+
         switchBtn?.addEventListener('click', () => {
             setViewMode(this.currentMode === 'map' ? '3d' : 'map');
         });
 
         document.getElementById('exploreRegionBtn')?.addEventListener('click', () => {
             const bbox = this.regionDrawer?.currentBBox || this.currentBBox;
+            SelectionContext.setArea({ bbox });
             this.loadRegion(bbox);
             setViewMode('3d');
         });
@@ -1034,9 +1040,7 @@ class SolvXApp {
     }
     
     updateHazardUI(hazardData) {
-        if (this.hazardUI) {
-            this.hazardUI.updateHazards(hazardData);
-        }
+        // Analytical warnings owned by Analysis page per plan.md specification
     }
 
     async inspectPoint(cell) {
@@ -1253,9 +1257,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // --- ML Hazard Early Warning Extension ---
 SolvXApp.prototype.initMLControls = function() {
-    if (!this.hazardUI) {
-        this.hazardUI = new HazardUI(this);
-    }
+    // Warnings owned by Analysis page
 };
 
 SolvXApp.prototype.refreshMLAnomalies = async function() {

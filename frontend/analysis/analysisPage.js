@@ -1,4 +1,8 @@
-// SolvX — Ocean Analysis Dashboard
+// SolvX — Ocean Intelligence & Model Validation Dashboard
+// Core scientific analysis workspace: Variable != Analysis Separation,
+// Shared Geographic Context, Grounded Model vs Observation Validation,
+// Synchronized Evidence Graphs, and Data-Driven Warning System.
+
 import * as THREE from 'three';
 import { ApiClient } from '../api/apiClient.js';
 import { OceanScene } from '../scene/oceanScene.js';
@@ -7,17 +11,13 @@ import { buildCoastline, buildEEZ } from '../scene/coastline.js';
 import { buildSeabed } from '../scene/seabed.js';
 import { DynamicWater } from '../scene/water.js';
 import { ScalarVisualizer } from '../visualization/scalar.js';
-
-const PRESET_REGIONS = {
-  bay_of_bengal: { id: 'bay_of_bengal', name: 'Bay of Bengal', bbox: { min_lon: 84.10, max_lon: 93.00, min_lat: 16.07, max_lat: 23.52 } },
-  arabian_sea: { id: 'arabian_sea', name: 'Arabian Sea', bbox: { min_lon: 60.00, max_lon: 74.00, min_lat: 12.00, max_lat: 24.00 } },
-  south_china_sea: { id: 'south_china_sea', name: 'South China Sea', bbox: { min_lon: 105.00, max_lon: 120.00, min_lat: 8.00, max_lat: 22.00 } },
-  gulf_of_mexico: { id: 'gulf_of_mexico', name: 'Gulf of Mexico', bbox: { min_lon: -97.00, max_lon: -82.00, min_lat: 20.00, max_lat: 30.00 } },
-  mediterranean_sea: { id: 'mediterranean_sea', name: 'Mediterranean Sea', bbox: { min_lon: 5.00, max_lon: 25.00, min_lat: 32.00, max_lat: 42.00 } }
-};
+import { buildCurrentVectors } from '../visualization/currents.js';
+import { SelectionContext } from '../context/selectionContext.js';
+import { AiChat } from './aiChat.js';
 
 const alias = {
   ocean_temperature: ['temperature', 'thetao', 'temp', 'sst'],
+  temperature: ['temperature', 'thetao', 'temp', 'sst'],
   salinity: ['salinity', 'so', 'salt', 'vosaline'],
   temperature_anomaly: ['temperature_anomaly', 'sst_anomaly', 'ssta', 'temp_anomaly'],
   chlorophyll: ['chlorophyll', 'chl', 'chlor_a'],
@@ -27,35 +27,36 @@ const alias = {
 
 class AnalysisDashboard {
   constructor() {
-    this.regions = { ...PRESET_REGIONS };
-    this.activeRegionId = 'bay_of_bengal';
-    this.bbox = { ...this.regions.bay_of_bengal.bbox };
-    
+    const ctxArea = SelectionContext.getArea();
+    this.activeRegionId = ctxArea?.id || 'bay_of_bengal';
+    this.bbox = ctxArea?.bbox ? { ...ctxArea.bbox } : { min_lon: 84.10, max_lon: 93.00, min_lat: 16.07, max_lat: 23.52 };
+
     this.scene = null;
     this.water = null;
     this.scalarViz = null;
-    
-    // UI State
-    this.activeVar = 'ocean_temperature';
+
+    // Separate Variable from Analysis Mode (Section 1 & 2)
+    this.activeVar = SelectionContext.getVariable().id || 'ocean_temperature';
+    this.analysisMode = SelectionContext.getAnalysisMode() || 'obs_vs_model';
+
     this.activeDepth = 0;
     this.depthLevels = [0];
     this.activeView = '3d';
-    this.activeScenario = 'general';
     this.activeSource = 'auto';
-    this.depthExaggeration = 70.0;
-    
+    this.depthExaggeration = 70.0; // Renderer vertical scaling (Section 10)
+
     this.layerModel = true;
     this.layerArgo = true;
     this.layerAnomalies = true;
     this.layerAbnormal = true;
-    
+
     // Time State
     this.timeline = [];
     this.index = 0;
     this.activeTime = null;
-    this.playTimer = null;
-    this.playbackSpeed = 1;
-    
+    this.rangeStart = null;
+    this.rangeEnd = null;
+
     // Caches
     this.bundleCache = {};
     this.anomaliesCache = {};
@@ -66,116 +67,122 @@ class AnalysisDashboard {
     this.coverageData = null;
     this.gapsData = null;
     this.summaryData = null;
-    
+    this.currentGrid = null;
+    this.warnings = [];
+
     // Selections
     this.selectedCell = null;
     this.selectedObservation = null;
     this.selectedRegion = null;
     this.selectedAnomaly = null;
-    
+
     // 3D Groups
     this.markersGroup = new THREE.Group();
     this.regionsGroup = new THREE.Group();
-    
-    // Charts
+    this.currentVectorsGroup = new THREE.Group();
+
+    // Chart instances
     this.modelArgoChart = null;
+    this.errorDepthChart = null;
     this.timeSeriesChart = null;
     this.errorMapChart = null;
   }
 
   async init() {
+    this.updateAreaHeader();
     this.bindUI();
     this.initCharts();
-    await this.loadPresets();
+
+    await this.loadTerrain();
+    await this.loadDepths();
+    await this.loadTimeline();
+
+    if (this.timeline.length > 0) {
+      await this.selectTime(0);
+    }
+    this.updateProvenance();
+    this.initAIAssistant();
+
+    // Subscribe to shared selection context changes
+    SelectionContext.subscribe((eventType, detail) => {
+      if (eventType === 'solvx:areaChange') {
+        this.onAreaChanged(detail);
+      } else if (eventType === 'solvx:variableChange') {
+        if (detail.id !== this.activeVar) {
+          this.setVariable(detail.id);
+        }
+      }
+    });
+  }
+
+  updateAreaHeader() {
+    const area = SelectionContext.getArea();
+    const nameEl = document.getElementById('displayAreaName');
+    if (nameEl) {
+      nameEl.textContent = area?.name || 'Selected Basin';
+    }
+  }
+
+  async onAreaChanged(area) {
+    if (!area || !area.bbox) return;
+    this.activeRegionId = area.id || 'custom';
+    this.bbox = { ...area.bbox };
+    this.updateAreaHeader();
+
+    this.clearAllCaches();
+    this.clearSelections();
+    this.updateInvestigationSidebar();
+
     await this.loadTerrain();
     await this.loadDepths();
     await this.loadTimeline();
     if (this.timeline.length > 0) {
       await this.selectTime(0);
     }
-    this.updateProvenance();
-  }
-
-  async loadPresets() {
-    try {
-      const res = await ApiClient.getPresets();
-      if (res && Array.isArray(res.presets) && res.presets.length) {
-        const sel = document.getElementById('analysisRegion');
-        if (sel) sel.innerHTML = '';
-        res.presets.forEach(p => {
-          this.regions[p.id] = p;
-          if (sel) {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = p.name;
-            if (p.id === this.activeRegionId) opt.selected = true;
-            sel.appendChild(opt);
-          }
-        });
-      }
-    } catch (_) {}
+    if (this.scene) this.scene.fitCamera();
   }
 
   bindUI() {
-    // Region selector
-    document.getElementById('analysisRegion')?.addEventListener('change', async e => {
-      this.activeRegionId = e.target.value;
-      const target = this.regions[this.activeRegionId];
-      if (target && target.bbox) {
-        this.bbox = { ...target.bbox };
-      }
-      this.clearAllCaches();
-      this.clearSelections();
-      this.updateInvestigationSidebar();
-      
-      await this.loadTerrain();
-      await this.loadDepths();
-      await this.loadTimeline();
-      if (this.timeline.length > 0) await this.selectTime(0);
-      if (this.scene) this.scene.fitCamera();
-    });
-    
     // Variable selector
-    document.getElementById('analysisVariable')?.addEventListener('change', async e => {
-      this.activeVar = e.target.value;
-      this.clearAllCaches();
-      this.clearSelections();
-      this.updateInvestigationSidebar();
-      
-      await this.loadDepths();
-      await this.loadTimeline();
-      if (this.timeline.length > 0) await this.selectTime(0);
-    });
-    
-    // Depth slider
-    const depthSlider = document.getElementById('analysisDepthSlider');
-    const depthLabel = document.getElementById('currentDepthLabel');
-    depthSlider?.addEventListener('input', e => {
+    const varSelect = document.getElementById('analysisVariable');
+    if (varSelect) {
+      varSelect.value = this.activeVar;
+      varSelect.addEventListener('change', async e => {
+        await this.setVariable(e.target.value);
+      });
+    }
+
+    // Analysis Mode selector (Section 2)
+    const modeSelect = document.getElementById('analysisModeSelect');
+    if (modeSelect) {
+      modeSelect.value = this.analysisMode;
+      modeSelect.addEventListener('change', e => {
+        this.setAnalysisMode(e.target.value);
+      });
+    }
+
+    // Time Dropdown selector
+    document.getElementById('analysisTimeMode')?.addEventListener('change', e => {
       const idx = Number(e.target.value);
-      this.activeDepth = this.depthLevels[idx] != null ? this.depthLevels[idx] : 0;
-      if (depthLabel) depthLabel.textContent = `${this.activeDepth} m`;
-      this.updateAnalysisView();
-      if (this.selectedAnomaly || this.selectedObservation || this.selectedCell) {
-        this.updateInvestigationSidebar();
-      }
-    });
-    
-    // Depth Exaggeration control
-    document.getElementById('analysisDepthExaggeration')?.addEventListener('change', e => {
-      this.depthExaggeration = Number(e.target.value);
-      if (this.scene) {
-        this.scene.setExaggerationFactor(this.depthExaggeration);
+      if (Number.isFinite(idx) && idx >= 0 && idx < this.timeline.length) {
+        this.selectTime(idx);
       }
     });
 
-    // Scenario selector
-    document.getElementById('analysisScenario')?.addEventListener('change', e => {
-      this.activeScenario = e.target.value;
-      this.applyScenario();
+    // Depth Select dropdown
+    document.getElementById('analysisDepthSelect')?.addEventListener('change', e => {
+      this.setDepth(Number(e.target.value));
+    });
+
+    // Depth vertical slider beside 3D scene
+    document.getElementById('analysisDepthSlider')?.addEventListener('input', e => {
+      const idx = Number(e.target.value);
+      const depth = this.depthLevels[idx] != null ? this.depthLevels[idx] : 0;
+      this.setDepth(depth);
     });
 
     // Data Source selector
-    document.getElementById('analysisSource')?.addEventListener('change', async e => {
+    document.getElementById('analysisSource')?.addEventListener('change', e => {
       this.activeSource = e.target.value;
       if (this.activeSource === 'model') {
         this.layerModel = true;
@@ -187,36 +194,14 @@ class AnalysisDashboard {
         this.layerArgo = true;
         this.layerAnomalies = false;
         this.layerAbnormal = false;
-      } else if (this.activeSource === 'comparison') {
-        this.layerModel = true;
-        this.layerArgo = true;
-        this.layerAnomalies = true;
-        this.layerAbnormal = true;
       } else {
-        // Auto
         this.layerModel = true;
         this.layerArgo = true;
         this.layerAnomalies = true;
         this.layerAbnormal = true;
       }
-      const chkModel = document.getElementById('layerModel');
-      const chkArgo = document.getElementById('layerArgo');
-      const chkAnom = document.getElementById('layerAnomalies');
-      const chkAbn = document.getElementById('layerAbnormal');
-      if (chkModel) chkModel.checked = this.layerModel;
-      if (chkArgo) chkArgo.checked = this.layerArgo;
-      if (chkAnom) chkAnom.checked = this.layerAnomalies;
-      if (chkAbn) chkAbn.checked = this.layerAbnormal;
-      
+      this._syncLayerCheckboxes();
       this.updateAnalysisView();
-    });
-
-    // Time Dropdown selector
-    document.getElementById('analysisTimeMode')?.addEventListener('change', e => {
-      const idx = Number(e.target.value);
-      if (Number.isFinite(idx) && idx >= 0 && idx < this.timeline.length) {
-        this.selectTime(idx);
-      }
     });
 
     // Reset button
@@ -224,11 +209,12 @@ class AnalysisDashboard {
       this.clearSelections();
       this.updateInvestigationSidebar();
       this.clearProfileChart();
+      this.clearErrorDepthChart();
       this.clearTimeSeriesChart();
       if (this.scene) this.scene.fitCamera();
     });
 
-    // View mode buttons (3D, TOP, CUT)
+    // 3D View mode buttons (3D, TOP, CUT)
     document.querySelectorAll('.analysis-view-controls button').forEach(b => {
       b.addEventListener('click', () => {
         document.querySelectorAll('.analysis-view-controls button').forEach(btn => btn.classList.remove('active'));
@@ -250,18 +236,107 @@ class AnalysisDashboard {
       }
     });
 
-    // Timeline bottom controls
-    document.getElementById('analysisSlider')?.addEventListener('input', e => this.selectTime(Number(e.target.value)));
-    document.getElementById('timelinePrev')?.addEventListener('click', () => this.selectTime(Math.max(0, this.index - 1)));
-    document.getElementById('timelineNext')?.addEventListener('click', () => this.selectTime(Math.min(this.timeline.length - 1, this.index + 1)));
-    document.getElementById('timelinePlay')?.addEventListener('click', () => this.togglePlay());
-    document.getElementById('timelineSpeed')?.addEventListener('change', e => {
-      this.playbackSpeed = parseFloat(e.target.value);
-      if (this.playTimer) {
-        this.togglePlay();
-        this.togglePlay();
+    // Section 9: Compact Analysis-Selection Strip controls
+    document.getElementById('btnSelectPoint')?.addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('manualLat')?.value);
+      const lon = parseFloat(document.getElementById('manualLon')?.value);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        this.inspectPoint({ lat, lon, depthM: this.activeDepth });
       }
     });
+
+    document.getElementById('selectArgo')?.addEventListener('change', e => {
+      const floatId = e.target.value;
+      if (!floatId) return;
+      const obs = this.argoData.find(o => String(o.id) === floatId || String(o.wmo) === floatId || String(o.float_id) === floatId);
+      if (obs) {
+        this.selectObservation(obs);
+      }
+    });
+
+    document.getElementById('rangeStartDate')?.addEventListener('change', e => {
+      this.rangeStart = e.target.value;
+      this.updateCharts();
+      this.updateKPIStrip();
+    });
+
+    document.getElementById('rangeEndDate')?.addEventListener('change', e => {
+      this.rangeEnd = e.target.value;
+      this.updateCharts();
+      this.updateKPIStrip();
+    });
+  }
+
+  _syncLayerCheckboxes() {
+    const chkModel = document.getElementById('layerModel');
+    const chkArgo = document.getElementById('layerArgo');
+    const chkAnom = document.getElementById('layerAnomalies');
+    const chkAbn = document.getElementById('layerAbnormal');
+    if (chkModel) chkModel.checked = this.layerModel;
+    if (chkArgo) chkArgo.checked = this.layerArgo;
+    if (chkAnom) chkAnom.checked = this.layerAnomalies;
+    if (chkAbn) chkAbn.checked = this.layerAbnormal;
+  }
+
+  async setVariable(v) {
+    this.activeVar = v;
+    SelectionContext.setVariable(v);
+    const sel = document.getElementById('analysisVariable');
+    if (sel && sel.value !== v) sel.value = v;
+
+    this.clearAllCaches();
+    this.clearSelections();
+    this.updateInvestigationSidebar();
+
+    await this.loadDepths();
+    await this.loadTimeline();
+    if (this.timeline.length > 0) {
+      await this.selectTime(0);
+    }
+  }
+
+  setAnalysisMode(mode) {
+    this.analysisMode = mode;
+    SelectionContext.setAnalysisMode(mode);
+    const sel = document.getElementById('analysisModeSelect');
+    if (sel && sel.value !== mode) sel.value = mode;
+
+    this.updateAnalysisView();
+    this.updateKPIStrip();
+    this.updateInvestigationSidebar();
+    this.updateWarningEngine();
+  }
+
+  setDepth(depthM) {
+    this.activeDepth = Number(depthM);
+    SelectionContext.setDepth(this.activeDepth);
+
+    // Sync select dropdown
+    const depthSelect = document.getElementById('analysisDepthSelect');
+    if (depthSelect) depthSelect.value = String(this.activeDepth);
+
+    // Sync vertical slider
+    const depthSlider = document.getElementById('analysisDepthSlider');
+    if (depthSlider) {
+      let closestIdx = 0;
+      let minDiff = Infinity;
+      this.depthLevels.forEach((dl, i) => {
+        const diff = Math.abs(dl - this.activeDepth);
+        if (diff < minDiff) { minDiff = diff; closestIdx = i; }
+      });
+      depthSlider.value = String(closestIdx);
+    }
+
+    // Sync labels
+    const label = document.getElementById('currentDepthLabel');
+    if (label) label.textContent = `${this.activeDepth} m`;
+    const readout = document.getElementById('readoutDepth');
+    if (readout) readout.textContent = `${this.activeDepth} m`;
+
+    this.updateAnalysisView();
+    if (this.selectedAnomaly || this.selectedObservation || this.selectedCell) {
+      this.updateInvestigationSidebar();
+    }
   }
 
   clearAllCaches() {
@@ -281,6 +356,7 @@ class AnalysisDashboard {
     this.selectedObservation = null;
     this.selectedAnomaly = null;
     this.selectedRegion = null;
+    SelectionContext.clearSelection();
   }
 
   async loadDepths() {
@@ -293,27 +369,40 @@ class AnalysisDashboard {
       this.depthLevels = [0, 5, 10, 25, 50, 100, 200, 500];
     }
 
+    SelectionContext.setDepthLevels(this.depthLevels);
+
+    // Populate depth select dropdown
+    const depthSelect = document.getElementById('analysisDepthSelect');
+    if (depthSelect) {
+      depthSelect.innerHTML = '';
+      this.depthLevels.forEach(dl => {
+        const opt = document.createElement('option');
+        opt.value = String(dl);
+        opt.textContent = `${dl} m${dl === 0 ? ' (Surface)' : ''}`;
+        depthSelect.appendChild(opt);
+      });
+    }
+
+    // Configure vertical slider
     const slider = document.getElementById('analysisDepthSlider');
-    const label = document.getElementById('currentDepthLabel');
     if (slider) {
       slider.min = "0";
       slider.max = String(Math.max(0, this.depthLevels.length - 1));
       slider.step = "1";
-      
-      let closestIdx = 0;
-      let minDiff = Infinity;
-      this.depthLevels.forEach((dl, i) => {
-        const diff = Math.abs(dl - this.activeDepth);
-        if (diff < minDiff) { minDiff = diff; closestIdx = i; }
-      });
-      slider.value = String(closestIdx);
-      this.activeDepth = this.depthLevels[closestIdx];
-      if (label) label.textContent = `${this.activeDepth} m`;
     }
+
+    // Set nearest available depth
+    let closestIdx = 0;
+    let minDiff = Infinity;
+    this.depthLevels.forEach((dl, i) => {
+      const diff = Math.abs(dl - this.activeDepth);
+      if (diff < minDiff) { minDiff = diff; closestIdx = i; }
+    });
+    this.setDepth(this.depthLevels[closestIdx]);
   }
 
   initCharts() {
-    // 1. Model vs Argo Vertical Profile
+    // 1. Model vs Observation Vertical Profile (Section 15.1)
     const ctxModel = document.getElementById('chartModelVsArgo')?.getContext('2d');
     if (ctxModel) {
       this.modelArgoChart = new Chart(ctxModel, {
@@ -346,17 +435,7 @@ class AnalysisDashboard {
               const idx = elements[0].index;
               const depth = this.modelArgoChart.data.labels[idx];
               if (depth != null) {
-                let closestIdx = 0;
-                let minDiff = Infinity;
-                this.depthLevels.forEach((dl, i) => {
-                  const diff = Math.abs(dl - depth);
-                  if (diff < minDiff) { minDiff = diff; closestIdx = i; }
-                });
-                const slider = document.getElementById('analysisDepthSlider');
-                if (slider) {
-                  slider.value = String(closestIdx);
-                  slider.dispatchEvent(new Event('input'));
-                }
+                this.setDepth(depth);
               }
             }
           }
@@ -364,7 +443,48 @@ class AnalysisDashboard {
       });
     }
 
-    // 2. Model Error / Anomaly Map (Scatter plot with real geographic axes)
+    // 2. Error vs Depth (Section 15.2: Difference = Model - Observation)
+    const ctxErrorDepth = document.getElementById('chartErrorVsDepth')?.getContext('2d');
+    if (ctxErrorDepth) {
+      this.errorDepthChart = new Chart(ctxErrorDepth, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: 'y',
+          scales: {
+            x: {
+              position: 'top',
+              grid: { color: '#17343f' },
+              ticks: { color: '#6d99a7' },
+              title: { display: true, text: 'Difference (Model − Obs)', color: '#6d99a7' }
+            },
+            y: {
+              reverse: true,
+              grid: { color: '#17343f' },
+              ticks: { color: '#6d99a7' },
+              title: { display: true, text: 'Depth (m)', color: '#6d99a7' }
+            }
+          },
+          plugins: {
+            legend: { labels: { color: '#dceff5' } },
+            tooltip: { mode: 'index', intersect: false }
+          },
+          onClick: (e, elements) => {
+            if (elements.length > 0) {
+              const idx = elements[0].index;
+              const depth = this.errorDepthChart.data.labels[idx];
+              if (depth != null) {
+                this.setDepth(depth);
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // 3. Model Error / Anomaly Map (Section 15.4: Scatter bounded by regional bbox)
     const ctxError = document.getElementById('chartErrorMap')?.getContext('2d');
     if (ctxError) {
       this.errorMapChart = new Chart(ctxError, {
@@ -420,7 +540,7 @@ class AnalysisDashboard {
       });
     }
 
-    // 3. Selected Region Time Series
+    // 4. Selected Region / Float Time Series (Section 15.3: Real data only)
     const ctxTime = document.getElementById('chartTimeSeries')?.getContext('2d');
     if (ctxTime) {
       this.timeSeriesChart = new Chart(ctxTime, {
@@ -441,37 +561,13 @@ class AnalysisDashboard {
     }
   }
 
-  applyScenario() {
-    if (this.activeScenario === 'cyclone') {
-      this.layerAnomalies = true;
-      this.layerAbnormal = true;
-    } else if (this.activeScenario === 'oilspill' || this.activeScenario === 'sar') {
-      this.layerAnomalies = false;
-      this.layerAbnormal = false;
-      const slider = document.getElementById('analysisDepthSlider');
-      if (slider) {
-        slider.value = "0";
-        slider.dispatchEvent(new Event('input'));
-      }
-    } else {
-      this.layerAnomalies = true;
-      this.layerAbnormal = true;
-    }
-    
-    const chkAnom = document.getElementById('layerAnomalies');
-    const chkAbn = document.getElementById('layerAbnormal');
-    if (chkAnom) chkAnom.checked = this.layerAnomalies;
-    if (chkAbn) chkAbn.checked = this.layerAbnormal;
-    this.updateAnalysisView();
-  }
-
   async loadTerrain() {
     const [geo, bathy, eez] = await Promise.all([
       ApiClient.getDataGeometry(this.bbox).catch(() => null),
       ApiClient.getDataBathymetry(this.bbox, 'medium').catch(() => null),
       ApiClient.getDataEEZ(this.bbox).catch(() => ({ features: [], lines3d: [] }))
     ]);
-    
+
     if (!bathy || !bathy.terrain) {
       console.warn("Bathymetry unavailable for bounding box", this.bbox);
       return;
@@ -481,20 +577,10 @@ class AnalysisDashboard {
       this.scene = new OceanScene(document.getElementById('analysisCanvas'), {
         depthEx: this.depthExaggeration,
         onOceanClick: cell => {
-          this.selectedCell = cell;
-          this.selectedObservation = null;
-          this.selectedAnomaly = null;
-          this.selectedRegion = null;
-          this.updateInvestigationSidebar();
-          this.updateCharts();
+          this.inspectPoint({ lat: cell.lat, lon: cell.lon, depthM: cell.depthM });
         },
         onFloatClick: obs => {
-          this.selectedObservation = obs;
-          this.selectedAnomaly = null;
-          this.selectedRegion = null;
-          this.selectedCell = null;
-          this.updateInvestigationSidebar();
-          this.updateCharts();
+          this.selectObservation(obs);
         },
         onAnomalyClick: data => {
           if (data.isAnomaly) {
@@ -518,32 +604,34 @@ class AnalysisDashboard {
     this.scene.clearScene();
     this.markersGroup = new THREE.Group();
     this.regionsGroup = new THREE.Group();
-    
+    this.currentVectorsGroup = new THREE.Group();
+
     if (geo) {
       this.scene.setLayer('land', buildLand(geo, this.scene));
       this.scene.setLayer('coastline', buildCoastline(geo));
       this.scene.setLayer('islands', buildIslands(geo, this.scene));
       this.scene.setLayer('eez', buildEEZ(geo, eez));
     }
-    
+
     const seabed = buildSeabed(bathy, this.scene);
     if (seabed) this.scene.setLayer('seabed', seabed);
-    
+
     this.water = new DynamicWater(bathy, this.scene);
     this.scene.setLayer('water', this.water.group);
-    
+
     this.scene.root.add(this.markersGroup);
     this.scene.root.add(this.regionsGroup);
-    
+    this.scene.root.add(this.currentVectorsGroup);
+
     this.scalarViz = new ScalarVisualizer(this.water);
     this.scene.setExaggerationFactor(this.depthExaggeration);
     this.scene.fitCamera();
   }
 
   async loadTimeline() {
-    const res = await ApiClient.getDataTimeline({ variable: this.activeVar, bbox: this.bbox }).catch(() => ({ available_timestamps: [] }));
+    const res = await ApiClient.getDataTimeline({ variable: this.getBaseVar(this.activeVar), bbox: this.bbox }).catch(() => ({ available_timestamps: [] }));
     this.timeline = res.available_timestamps || [];
-    
+
     const timeSelect = document.getElementById('analysisTimeMode');
     if (timeSelect) {
       timeSelect.innerHTML = '';
@@ -564,17 +652,15 @@ class AnalysisDashboard {
         });
       }
     }
-    
-    const slider = document.getElementById('analysisSlider');
-    if (slider) {
-      slider.max = String(Math.max(0, this.timeline.length - 1));
-      slider.value = "0";
-    }
+
+    // Initialize range start and end dates
     if (this.timeline.length) {
-      const sEl = document.getElementById('timelineStart');
-      const eEl = document.getElementById('timelineEnd');
-      if (sEl) sEl.textContent = this.timeline[0].slice(0, 10);
-      if (eEl) eEl.textContent = this.timeline[this.timeline.length - 1].slice(0, 10);
+      const startDate = this.timeline[0].slice(0, 10);
+      const endDate = this.timeline[this.timeline.length - 1].slice(0, 10);
+      const sInput = document.getElementById('rangeStartDate');
+      const eInput = document.getElementById('rangeEndDate');
+      if (sInput && !this.rangeStart) { sInput.value = startDate; this.rangeStart = startDate; }
+      if (eInput && !this.rangeEnd) { eInput.value = endDate; this.rangeEnd = endDate; }
     }
   }
 
@@ -582,21 +668,19 @@ class AnalysisDashboard {
     if (!this.timeline.length) return;
     this.index = Math.max(0, Math.min(idx, this.timeline.length - 1));
     this.activeTime = this.timeline[this.index];
-    
-    const slider = document.getElementById('analysisSlider');
-    if (slider) slider.value = String(this.index);
-    
+
     const timeSelect = document.getElementById('analysisTimeMode');
     if (timeSelect) timeSelect.value = String(this.index);
-    
+
     const d = new Date(this.activeTime);
     const dateText = Number.isNaN(d.getTime())
       ? this.activeTime
       : `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ${d.toISOString().slice(11, 16)} UTC`;
-    const label = document.getElementById('timelineLabel');
-    if (label) label.textContent = dateText;
-    
-    // Concurrently fetch all real data
+
+    const readout = document.getElementById('readoutCurrentTime');
+    if (readout) readout.textContent = dateText;
+
+    // Concurrently fetch real analysis data
     await Promise.all([
       this.fetchBundleData(this.activeTime),
       this.fetchAnomalyData(this.activeTime),
@@ -604,13 +688,31 @@ class AnalysisDashboard {
       this.fetchArgoData(),
       this.fetchSummaryAndCoverage(this.activeTime)
     ]);
-    
+
+    this.populateArgoPicker();
     this.updateAnalysisView();
     this.updateKPIStrip();
     this.updateErrorMap();
     this.updateCoveragePanel();
     this.updateCharts();
     this.updateInvestigationSidebar();
+    this.updateWarningEngine();
+  }
+
+  populateArgoPicker() {
+    const sel = document.getElementById('selectArgo');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Select Argo float…</option>';
+    this.argoData.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = String(o.id || o.wmo);
+      const soundings = o.profile ? o.profile.length : 0;
+      opt.textContent = `Argo #${o.wmo || o.id} (${o.platform || 'Float'}, ${soundings} soundings)`;
+      if (this.selectedObservation && (String(this.selectedObservation.id) === String(o.id) || String(this.selectedObservation.wmo) === String(o.wmo))) {
+        opt.selected = true;
+      }
+      sel.appendChild(opt);
+    });
   }
 
   async fetchBundleData(time) {
@@ -622,7 +724,7 @@ class AnalysisDashboard {
       this.bundleCache[time] = {};
     }
   }
-  
+
   async fetchAnomalyData(time) {
     if (this.anomaliesCache[time]) return;
     try {
@@ -632,7 +734,7 @@ class AnalysisDashboard {
       this.anomaliesCache[time] = [];
     }
   }
-  
+
   async fetchAbnormalRegions(time) {
     if (this.abnormalCache[time]) return;
     try {
@@ -642,7 +744,7 @@ class AnalysisDashboard {
       this.abnormalCache[time] = [];
     }
   }
-  
+
   async fetchArgoData() {
     if (this.argoData.length) return;
     try {
@@ -652,7 +754,7 @@ class AnalysisDashboard {
       this.argoData = [];
     }
   }
-  
+
   async fetchSummaryAndCoverage(time) {
     try {
       const [summary, cov, gaps] = await Promise.all([
@@ -696,25 +798,23 @@ class AnalysisDashboard {
       ocean_temperature: 'Temperature',
       temperature: 'Temperature',
       salinity: 'Salinity',
-      temperature_anomaly: 'Temperature anomaly',
+      temperature_anomaly: 'Temperature Anomaly',
       chlorophyll: 'Chlorophyll',
-      sea_level: 'Sea level',
+      sea_level: 'Sea Level',
       currents: 'Currents'
     };
-    return map[v] || v.replaceAll('_', ' ');
+    return map[v] || v;
   }
 
+  // Section 7 & 8: Variable != Analysis 3D Water Effect
   updateAnalysisView() {
     if (!this.water || !this.scalarViz) return;
-    
+
     const vars = this.bundleCache[this.activeTime] || {};
     const anomalies = this.anomaliesCache[this.activeTime] || [];
     const regions = this.abnormalCache[this.activeTime] || [];
     const argo = this.argoData || [];
-    
-    let vizData = this.resolveVar(vars, this.activeVar);
-    let vizVar = this.activeVar;
-    
+
     let sliceMode = 'volume';
     if (this.activeView === 'cut') {
       sliceMode = 'vertical';
@@ -725,24 +825,62 @@ class AnalysisDashboard {
     } else {
       sliceMode = 'volume';
     }
-    
-    if (this.layerModel) {
-      this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);
-    } else {
-      this.scalarViz.updateSliceTexture(this.activeDepth, 'none');
+
+    // 1. Variable handling in 3D: Currents vs Scalar
+    while (this.currentVectorsGroup.children.length > 0) {
+      this.currentVectorsGroup.remove(this.currentVectorsGroup.children[0]);
     }
-    
+
+    if (this.activeVar === 'currents') {
+      const curData = this.resolveVar(vars, 'currents');
+      if (curData && (curData.u || curData.values)) {
+        const vectors = buildCurrentVectors(curData, this.scene, this.water.bounds, false);
+        if (vectors) this.currentVectorsGroup.add(vectors);
+      }
+      this.scalarViz.updateSliceTexture(this.activeDepth, 'none');
+    } else {
+      let vizData = this.resolveVar(vars, this.activeVar);
+      let vizVar = this.activeVar;
+
+      if (this.layerModel) {
+        this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);
+      } else {
+        this.scalarViz.updateSliceTexture(this.activeDepth, 'none');
+      }
+    }
+
+    // 2. Analysis Mode handling in 3D (Section 8)
     this.clearMarkers();
-    
-    if (this.layerArgo) this.renderArgoMarkers(argo);
-    if (this.layerAnomalies) this.renderAnomalyMarkers(anomalies);
-    if (this.layerAbnormal) this.renderAbnormalRegions(regions);
-    
+
+    if (this.layerArgo) {
+      this.renderArgoMarkers(argo);
+    }
+    if (this.layerAnomalies && (this.analysisMode === 'anomaly' || this.analysisMode === 'obs_vs_model')) {
+      this.renderAnomalyMarkers(anomalies);
+    }
+    if (this.layerAbnormal && (this.analysisMode === 'anomaly' || this.analysisMode === 'obs_vs_model')) {
+      this.renderAbnormalRegions(regions);
+    }
+
     this.updateViewMode();
+
+    // Update legend
     const legendEl = document.getElementById('legendVariable');
-    if (legendEl) legendEl.textContent = this.prettyVar(this.activeVar).toUpperCase();
+    const legendUnitsEl = document.getElementById('legendUnits');
+    const legendEyebrowEl = document.getElementById('legendEyebrow');
+    if (legendEl) {
+      if (this.analysisMode === 'error') {
+        legendEl.textContent = 'MODEL − OBS ERROR';
+        if (legendUnitsEl) legendUnitsEl.textContent = this.getVariableUnit(this.activeVar);
+        if (legendEyebrowEl) legendEyebrowEl.textContent = 'ANALYSIS FIELD';
+      } else {
+        legendEl.textContent = this.prettyVar(this.activeVar).toUpperCase();
+        if (legendUnitsEl) legendUnitsEl.textContent = this.getVariableUnit(this.activeVar);
+        if (legendEyebrowEl) legendEyebrowEl.textContent = 'ACTIVE FIELD';
+      }
+    }
   }
-  
+
   updateViewMode() {
     if (!this.scene) return;
     if (this.activeView === 'top') {
@@ -753,30 +891,40 @@ class AnalysisDashboard {
       this.scene.setView('3d');
     }
   }
-  
+
   clearMarkers() {
     while (this.markersGroup.children.length > 0) this.markersGroup.remove(this.markersGroup.children[0]);
     while (this.regionsGroup.children.length > 0) this.regionsGroup.remove(this.regionsGroup.children[0]);
   }
-  
+
   renderArgoMarkers(observations) {
     if (!this.water) return;
     const bounds = this.water.bounds;
     const midLat = (bounds[2] + bounds[3]) / 2;
     const midLon = (bounds[0] + bounds[1]) / 2;
     const klon = 111.32 * Math.cos((midLat * Math.PI) / 180);
-    
+
     observations.forEach(obs => {
       const glider = /glider/i.test(obs.platform || '');
       const x = (obs.latitude - midLat) * 111.32;
       const z = (obs.longitude - midLon) * klon;
-      
-      const isSelected = this.selectedObservation && (this.selectedObservation.id === obs.id || this.selectedObservation.float_id === obs.float_id);
-      
+
+      const isSelected = this.selectedObservation && (String(this.selectedObservation.id) === String(obs.id) || String(this.selectedObservation.float_id) === String(obs.float_id));
+
+      let markerColor = glider ? 0x22d3ee : 0xf59e0b;
+
+      // Color convention for ERROR analysis mode (Section 8: negative -> blue, neutral -> white, positive -> red)
+      if (this.analysisMode === 'error') {
+        const floatDiff = obs.metadata?.mean_diff ?? obs.metadata?.bias ?? 0;
+        if (floatDiff > 0.5) markerColor = 0xef4444; // Positive error
+        else if (floatDiff < -0.5) markerColor = 0x22d3ee; // Negative error
+        else markerColor = 0xdceff5; // Neutral
+      }
+
       const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(isSelected ? 2.5 : 1.5, 16, 16),
+        new THREE.SphereGeometry(isSelected ? 2.8 : 1.6, 16, 16),
         new THREE.MeshStandardMaterial({
-          color: glider ? 0x22d3ee : 0xf59e0b,
+          color: markerColor,
           emissive: isSelected ? 0xffffff : 0x000000,
           emissiveIntensity: isSelected ? 0.6 : 0
         })
@@ -787,22 +935,21 @@ class AnalysisDashboard {
     });
     this.scene.layers.observations = { group: this.markersGroup };
   }
-  
+
   renderAnomalyMarkers(anomalies) {
     if (!this.water) return;
     const bounds = this.water.bounds;
     const midLat = (bounds[2] + bounds[3]) / 2;
     const midLon = (bounds[0] + bounds[1]) / 2;
     const klon = 111.32 * Math.cos((midLat * Math.PI) / 180);
-    
+
     anomalies.forEach(an => {
-      // Show anomaly markers within sensible depth window
       if (this.activeDepth > 0 && Math.abs(an.depth - this.activeDepth) > 80) return;
-      
+
       const x = (an.latitude - midLat) * 111.32;
       const z = (an.longitude - midLon) * klon;
       const isSelected = this.selectedAnomaly && this.selectedAnomaly.id === an.id;
-      
+
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(isSelected ? 3.2 : 2.0, 16, 16),
         new THREE.MeshBasicMaterial({ color: an.difference > 0 ? 0xef4444 : 0x22d3ee })
@@ -812,25 +959,25 @@ class AnalysisDashboard {
       this.markersGroup.add(marker);
     });
   }
-  
+
   renderAbnormalRegions(regions) {
     if (!this.water) return;
     const bounds = this.water.bounds;
     const midLat = (bounds[2] + bounds[3]) / 2;
     const midLon = (bounds[0] + bounds[1]) / 2;
     const klon = 111.32 * Math.cos((midLat * Math.PI) / 180);
-    
+
     regions.forEach(reg => {
       const minX = (reg.bbox.min_lat - midLat) * 111.32;
       const maxX = (reg.bbox.max_lat - midLat) * 111.32;
       const minZ = (reg.bbox.min_lon - midLon) * klon;
       const maxZ = (reg.bbox.max_lon - midLon) * klon;
-      
+
       const cx = (minX + maxX) / 2;
       const cz = (minZ + maxZ) / 2;
       const width = Math.abs(maxX - minX);
       const depth = Math.abs(maxZ - minZ);
-      
+
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(width, 10, depth),
         new THREE.MeshBasicMaterial({
@@ -845,6 +992,65 @@ class AnalysisDashboard {
       this.regionsGroup.add(box);
     });
     this.scene.layers.regions = { group: this.regionsGroup };
+  }
+
+  selectObservation(obs) {
+    this.selectedObservation = obs;
+    this.selectedAnomaly = null;
+    this.selectedRegion = null;
+    this.selectedCell = null;
+
+    SelectionContext.setSelection({
+      type: 'argo',
+      id: obs.id || obs.wmo,
+      lat: obs.latitude,
+      lon: obs.longitude,
+      argoId: obs.id || obs.wmo
+    });
+
+    const argoSel = document.getElementById('selectArgo');
+    if (argoSel) argoSel.value = String(obs.id || obs.wmo);
+
+    const latInput = document.getElementById('manualLat');
+    const lonInput = document.getElementById('manualLon');
+    if (latInput) latInput.value = obs.latitude.toFixed(2);
+    if (lonInput) lonInput.value = obs.longitude.toFixed(2);
+
+    this.focus3D();
+    this.updateAnalysisView();
+    this.updateInvestigationSidebar();
+    this.updateCharts();
+  }
+
+  async inspectPoint(cell) {
+    this.selectedCell = cell;
+    this.selectedObservation = null;
+    this.selectedAnomaly = null;
+    this.selectedRegion = null;
+
+    SelectionContext.setSelection({
+      type: 'cell',
+      lat: cell.lat,
+      lon: cell.lon,
+      depth: cell.depthM
+    });
+
+    const latInput = document.getElementById('manualLat');
+    const lonInput = document.getElementById('manualLon');
+    if (latInput) latInput.value = cell.lat.toFixed(2);
+    if (lonInput) lonInput.value = cell.lon.toFixed(2);
+
+    // Fetch point ocean data for value readout
+    try {
+      const ptData = await ApiClient.getOceanPoint(cell.lat, cell.lon, this.activeTime);
+      if (ptData && ptData.variables) {
+        this.selectedCell.pointData = ptData;
+      }
+    } catch (_) {}
+
+    this.focus3D();
+    this.updateInvestigationSidebar();
+    this.updateCharts();
   }
 
   focus3D() {
@@ -866,30 +1072,20 @@ class AnalysisDashboard {
       lon = this.selectedCell.lon;
       depth = this.activeDepth;
     }
-    
+
     if (lat != null && lon != null && this.scene && this.water) {
       const bounds = this.water.bounds;
       const midLat = (bounds[2] + bounds[3]) / 2;
       const midLon = (bounds[0] + bounds[1]) / 2;
       const klon = 111.32 * Math.cos((midLat * Math.PI) / 180);
-      
+
       const tx = (lat - midLat) * 111.32;
       const tz = (lon - midLon) * klon;
-      
+
       this.scene.focusPosition(new THREE.Vector3(tx, this.scene.depthY(depth || 0), tz), 120);
-      
+
       if (depth != null) {
-        let closestIdx = 0;
-        let minDiff = Infinity;
-        this.depthLevels.forEach((dl, i) => {
-          const diff = Math.abs(dl - depth);
-          if (diff < minDiff) { minDiff = diff; closestIdx = i; }
-        });
-        const slider = document.getElementById('analysisDepthSlider');
-        if (slider) {
-          slider.value = String(closestIdx);
-          slider.dispatchEvent(new Event('input'));
-        }
+        this.setDepth(depth);
       }
     }
   }
@@ -928,57 +1124,57 @@ class AnalysisDashboard {
     setVal('kpi-anomalies', anomalyCount, null, v => v > 0 ? 'critical' : 'positive');
   }
 
+  // Section 3 & 14: Dynamic Investigation Panel with Method Labelling
   updateInvestigationSidebar() {
     const sb = document.getElementById('investigationContent');
-    const ins = document.getElementById('scientificInsightContent');
-    if (!sb || !ins) return;
-    
+    if (!sb) return;
+
+    const unit = this.getVariableUnit(this.activeVar);
+
     if (this.selectedAnomaly) {
       const a = this.selectedAnomaly;
-      const unit = a.unit || this.getVariableUnit(a.variable);
+      const anomUnit = a.unit || unit;
       sb.innerHTML = `
         <div class="sidebar-row"><label>Target</label><span class="critical">Anomaly Detected</span></div>
         <div class="sidebar-row"><label>Variable</label><span>${this.prettyVar(a.variable)}</span></div>
         <div class="sidebar-row"><label>Coordinates</label><span>${a.latitude.toFixed(2)}°N, ${a.longitude.toFixed(2)}°E</span></div>
         <div class="sidebar-row"><label>Depth</label><span>${a.depth} m</span></div>
-        <div class="sidebar-row"><label>Model Value</label><span>${a.baseline.toFixed(2)} ${unit}</span></div>
-        <div class="sidebar-row"><label>Observed Value</label><span>${a.value.toFixed(2)} ${unit}</span></div>
-        <div class="sidebar-row"><label>Discrepancy</label><span class="${a.difference > 0 ? 'critical' : 'negative'}">${a.difference > 0 ? '+' : ''}${a.difference.toFixed(2)} ${unit}</span></div>
+        <div class="sidebar-row"><label>Model Value</label><span>${a.baseline.toFixed(2)} ${anomUnit}</span></div>
+        <div class="sidebar-row"><label>Observed Value</label><span>${a.value.toFixed(2)} ${anomUnit}</span></div>
+        <div class="sidebar-row"><label>Difference (Model − Obs)</label><span class="${a.difference > 0 ? 'critical' : 'negative'}">${a.difference > 0 ? '+' : ''}${a.difference.toFixed(2)} ${anomUnit}</span></div>
+        <div class="sidebar-row"><label>Method</label><span>${a.detection_method || 'Z-Score Analysis'}</span></div>
         <div class="sidebar-row"><label>Severity</label><span class="critical">${a.severity}</span></div>
-        <div class="sidebar-row"><label>Method</label><span>${a.detection_method || 'Z-Score'}</span></div>
         <div class="sidebar-actions">
           <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
           <button class="action-btn" id="btnResetItem">RESET</button>
         </div>
       `;
-      document.getElementById('btnFocusItem')?.addEventListener('click', () => this.focus3D());
-      document.getElementById('btnResetItem')?.addEventListener('click', () => {
-        this.clearSelections();
-        this.updateInvestigationSidebar();
-        this.updateCharts();
-      });
-      ins.innerHTML = `Flagged discrepancy at ${a.depth}m depth (${a.latitude.toFixed(2)}°N, ${a.longitude.toFixed(2)}°E). Numerical model deviates from in-situ observation by ${a.difference > 0 ? '+' : ''}${a.difference.toFixed(2)} ${unit}. Inspect profile comparison for full thermocline structure.`;
+      this._wireSidebarButtons();
     } else if (this.selectedObservation) {
       const o = this.selectedObservation;
+      const profile = o.profile || [];
+      const nearestPt = profile.length > 0
+        ? profile.reduce((prev, curr) => Math.abs(curr.depth - this.activeDepth) < Math.abs(prev.depth - this.activeDepth) ? curr : prev)
+        : null;
+
+      const obsVal = nearestPt ? (nearestPt.temp ?? nearestPt.sal ?? nearestPt.value) : null;
+
       sb.innerHTML = `
-        <div class="sidebar-row"><label>Target</label><span class="positive">${o.platform || 'Argo Profiling Float'}</span></div>
-        <div class="sidebar-row"><label>Float ID</label><span>${o.wmo || o.id}</span></div>
+        <div class="sidebar-row"><label>Platform</label><span class="positive">${o.platform || 'Argo Profiling Float'}</span></div>
+        <div class="sidebar-row"><label>Float ID / WMO</label><span>#${o.wmo || o.id}</span></div>
         <div class="sidebar-row"><label>Coordinates</label><span>${o.latitude.toFixed(2)}°N, ${o.longitude.toFixed(2)}°E</span></div>
-        <div class="sidebar-row"><label>Status</label><span class="positive">ACTIVE PROFILER</span></div>
+        <div class="sidebar-row"><label>Soundings</label><span>${profile.length} depth levels</span></div>
+        <div class="sidebar-row"><label>Active Depth</label><span>${this.activeDepth} m</span></div>
+        ${obsVal != null ? `
+          <div class="sidebar-row"><label>In-Situ Observation</label><span>${Number(obsVal).toFixed(2)} ${unit}</span></div>
+        ` : ''}
+        <div class="sidebar-row"><label>Interpolation Method</label><span style="color:#62d5ee;">Bilinear spatial + 1D vertical interpolation</span></div>
         <div class="sidebar-actions">
-          <button class="action-btn" id="btnLoadProfile">RELOAD PROFILE</button>
           <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
           <button class="action-btn" id="btnResetItem">RESET</button>
         </div>
       `;
-      document.getElementById('btnFocusItem')?.addEventListener('click', () => this.focus3D());
-      document.getElementById('btnResetItem')?.addEventListener('click', () => {
-        this.clearSelections();
-        this.updateInvestigationSidebar();
-        this.updateCharts();
-      });
-      document.getElementById('btnLoadProfile')?.addEventListener('click', () => this.updateCharts());
-      ins.innerHTML = `Selected in-situ float ${o.wmo || o.id} located at ${o.latitude.toFixed(2)}°N, ${o.longitude.toFixed(2)}°E. Comparing multi-level vertical soundings with numerical model.`;
+      this._wireSidebarButtons();
     } else if (this.selectedRegion) {
       const r = this.selectedRegion;
       sb.innerHTML = `
@@ -994,46 +1190,46 @@ class AnalysisDashboard {
           <button class="action-btn" id="btnResetItem">RESET</button>
         </div>
       `;
-      document.getElementById('btnFocusItem')?.addEventListener('click', () => this.focus3D());
-      document.getElementById('btnResetItem')?.addEventListener('click', () => {
-        this.clearSelections();
-        this.updateInvestigationSidebar();
-        this.updateCharts();
-      });
-      ins.innerHTML = `Abnormal bounding volume '${r.name || r.id}' exhibits systemic model discrepancies across depth strata ${r.depth_range_m?.[0] ?? 0}m–${r.depth_range_m?.[1] ?? 500}m.`;
+      this._wireSidebarButtons();
     } else if (this.selectedCell) {
       const c = this.selectedCell;
-      const unit = this.getVariableUnit(this.activeVar);
+      const ptVals = c.pointData?.variables || {};
+      const modelVal = ptVals[this.activeVar] ?? ptVals[this.getBaseVar(this.activeVar)];
+
       sb.innerHTML = `
         <div class="sidebar-row"><label>Target</label><span>Ocean Grid Cell</span></div>
         <div class="sidebar-row"><label>Coordinates</label><span>${c.lat.toFixed(3)}°N, ${c.lon.toFixed(3)}°E</span></div>
-        <div class="sidebar-row"><label>Seabed Depth</label><span>${c.depthM.toFixed(1)} m</span></div>
-        <div class="sidebar-row"><label>Selected Depth</label><span>${this.activeDepth} m</span></div>
+        <div class="sidebar-row"><label>Seabed Depth</label><span>${(c.depthM || 0).toFixed(1)} m</span></div>
+        <div class="sidebar-row"><label>Scientific Depth</label><span>${this.activeDepth} m</span></div>
         <div class="sidebar-row"><label>Variable</label><span>${this.prettyVar(this.activeVar)}</span></div>
-        <div class="sidebar-row"><label>Coverage</label><span class="positive">MONITORED</span></div>
+        ${modelVal != null ? `
+          <div class="sidebar-row"><label>Model Value</label><span>${Number(modelVal).toFixed(2)} ${unit}</span></div>
+        ` : ''}
+        <div class="sidebar-row"><label>Model Method</label><span style="color:#62d5ee;">Bilinear horizontal interpolation</span></div>
         <div class="sidebar-actions">
           <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
           <button class="action-btn" id="btnResetItem">RESET</button>
         </div>
       `;
-      document.getElementById('btnFocusItem')?.addEventListener('click', () => this.focus3D());
-      document.getElementById('btnResetItem')?.addEventListener('click', () => {
-        this.clearSelections();
-        this.updateInvestigationSidebar();
-        this.updateCharts();
-      });
-      ins.innerHTML = `Grid cell at ${c.lat.toFixed(2)}°N, ${c.lon.toFixed(2)}°E. Seabed bathymetry reaches ${c.depthM.toFixed(0)}m. Active depth slice: ${this.activeDepth}m.`;
+      this._wireSidebarButtons();
     } else {
-      sb.innerHTML = `<div class="empty-state">Select an ocean cell, observation, anomaly or region.</div>`;
-      ins.innerHTML = `<div class="empty-state">Select an observation or anomaly to view scientific interpretation.</div>`;
+      sb.innerHTML = `<div class="empty-state">Select an ocean cell, Argo, Glider, anomaly or region.</div>`;
     }
+  }
+
+  _wireSidebarButtons() {
+    document.getElementById('btnFocusItem')?.addEventListener('click', () => this.focus3D());
+    document.getElementById('btnResetItem')?.addEventListener('click', () => {
+      this.clearSelections();
+      this.updateInvestigationSidebar();
+      this.updateCharts();
+    });
   }
 
   updateErrorMap() {
     const anomalies = this.anomaliesCache[this.activeTime] || [];
     if (!this.errorMapChart) return;
 
-    // Adapt axes directly to selected region bounding box
     this.errorMapChart.options.scales.x.min = this.bbox.min_lon;
     this.errorMapChart.options.scales.x.max = this.bbox.max_lon;
     this.errorMapChart.options.scales.y.min = this.bbox.min_lat;
@@ -1047,14 +1243,14 @@ class AnalysisDashboard {
 
     this.errorMapChart.data.datasets = [
       {
-        label: 'Positive Error (Obs > Model)',
+        label: 'Positive Discrepancy (Obs > Model)',
         data: pts.filter(p => p.anomaly.difference > 0),
         backgroundColor: '#ef4444',
         borderColor: '#ef4444',
         pointRadius: 5
       },
       {
-        label: 'Negative Error (Obs < Model)',
+        label: 'Negative Discrepancy (Obs < Model)',
         data: pts.filter(p => p.anomaly.difference <= 0),
         backgroundColor: '#22d3ee',
         borderColor: '#22d3ee',
@@ -1069,55 +1265,65 @@ class AnalysisDashboard {
     const gaps = this.gapsData;
     const container = document.getElementById('coverageContent');
     if (!container) return;
-    
+
     if (!cov) {
-      container.innerHTML = `<div class="empty-state">Coverage data unavailable.</div>`;
+      container.innerHTML = `<div class="empty-state">Coverage data unavailable for current selection.</div>`;
       return;
     }
-    
+
     const density = cov.density_summary || {};
     const totalCells = cov.grid_cells?.length || 1;
-    
+
     let html = `
-      <div class="sidebar-row"><label>Spatial Coverage</label><span>${(cov.spatial_coverage_pct || 0).toFixed(1)} %</span></div>
-      <div class="sidebar-row"><label>Total In-Situ Soundings</label><span>${cov.total_observations || 0}</span></div>
-      <div style="margin-top:10px;" class="eyebrow">DENSITY CLASSIFICATION</div>
-      <div class="coverage-row">
-        <div style="display:flex;justify-content:space-between;font-size:10px;"><span>High Density (>15)</span><span>${density.HIGH || 0} cells</span></div>
-        <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.HIGH || 0) / totalCells) * 100}%"></div></div>
-      </div>
-      <div class="coverage-row">
-        <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Moderate (5–15)</span><span>${density.MEDIUM || 0} cells</span></div>
-        <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.MEDIUM || 0) / totalCells) * 100}%; background:#f59e0b;"></div></div>
-      </div>
-      <div class="coverage-row">
-        <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Sparse (1–4)</span><span>${density.LOW || 0} cells</span></div>
-        <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.LOW || 0) / totalCells) * 100}%; background:#22d3ee;"></div></div>
-      </div>
-      <div class="coverage-row">
-        <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Unmonitored (0)</span><span>${density.NONE || 0} cells</span></div>
-        <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.NONE || 0) / totalCells) * 100}%; background:#ef4444;"></div></div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px;">
+        <div>
+          <div class="sidebar-row"><label>Spatial Basin Coverage</label><span class="positive">${(cov.spatial_coverage_pct || 0).toFixed(1)} %</span></div>
+          <div class="sidebar-row"><label>Total In-Situ Soundings</label><span>${cov.total_observations || 0}</span></div>
+          <div class="sidebar-row"><label>Active Profilers in Basin</label><span>${cov.active_floats_count || 0}</span></div>
+        </div>
+
+        <div>
+          <div class="eyebrow" style="margin-bottom:8px;">SPATIAL DENSITY BREAKDOWN</div>
+          <div class="coverage-row">
+            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>High Density (>15 obs/deg²)</span><span>${density.HIGH || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.HIGH || 0) / totalCells) * 100}%"></div></div>
+          </div>
+          <div class="coverage-row">
+            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Moderate (5–15)</span><span>${density.MEDIUM || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.MEDIUM || 0) / totalCells) * 100}%; background:#f59e0b;"></div></div>
+          </div>
+          <div class="coverage-row">
+            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Sparse (1–4)</span><span>${density.LOW || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.LOW || 0) / totalCells) * 100}%; background:#22d3ee;"></div></div>
+          </div>
+          <div class="coverage-row">
+            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Unmonitored (0)</span><span>${density.NONE || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.NONE || 0) / totalCells) * 100}%; background:#ef4444;"></div></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="eyebrow" style="margin-bottom:8px;">IDENTIFIED DATA VOID SECTORS</div>
+          ${(gaps?.gap_regions || []).slice(0, 3).map(g => `
+            <div style="font-size:11px; margin-bottom:8px; background:#0b1f2b; padding:6px 10px; border-radius:4px; border-left:3px solid #ef4444;">
+              <strong style="color:#ef4444;">${g.name}</strong><br>
+              <span style="color:#8bb3c2;">${g.recommendation || 'Unmonitored zone.'}</span>
+            </div>
+          `).join('') || '<div class="empty-state">No critical gap sectors identified.</div>'}
+        </div>
       </div>
     `;
-    
-    const gapRegions = gaps?.gap_regions || [];
-    if (gapRegions.length > 0) {
-      html += `<div style="margin-top:14px;" class="eyebrow">OBSERVATION GAPS</div>`;
-      gapRegions.slice(0, 3).forEach(g => {
-        html += `<div style="font-size:11px; margin-bottom:6px;"><strong style="color:#ef4444;">${g.name}</strong><br><span style="color:#84a6b8;">${g.recommendation || 'Coverage gap detected.'}</span></div>`;
-      });
-    }
-    
+
     container.innerHTML = html;
   }
 
   async updateCharts() {
-    const selectedFloat = this.selectedAnomaly?.float_id || this.selectedObservation?.float_id || this.selectedObservation?.id;
+    const selectedFloat = this.selectedAnomaly?.float_id || this.selectedObservation?.float_id || this.selectedObservation?.id || this.selectedObservation?.wmo;
     const baseVar = this.getBaseVar(this.activeVar);
-    
-    // Only temperature and salinity have Argo profiles
+
     if (baseVar !== 'temperature' && baseVar !== 'salinity') {
       this.clearProfileChart("Argo in-situ vertical profiles only available for Temperature and Salinity.");
+      this.clearErrorDepthChart("Error vs depth profile only available for Temperature and Salinity.");
       this.clearTimeSeriesChart("Time series comparison unavailable for non-Argo variable.");
       return;
     }
@@ -1126,11 +1332,14 @@ class AnalysisDashboard {
       try {
         const profile = await ApiClient.getFloatComparison(String(selectedFloat), baseVar, this.activeTime);
         this.renderProfileChart(profile);
+        this.renderErrorDepthChart(profile);
       } catch (e) {
         this.clearProfileChart("Profile data unavailable for selected float.");
+        this.clearErrorDepthChart("Error profile unavailable.");
       }
     } else {
       this.clearProfileChart("Select an Argo float or anomaly to view vertical profile comparison.");
+      this.clearErrorDepthChart("Select an Argo float or anomaly to view error vs depth.");
     }
 
     await this.updateTimeSeriesChart(selectedFloat);
@@ -1168,7 +1377,32 @@ class AnalysisDashboard {
     ];
     this.modelArgoChart.update();
   }
-  
+
+  renderErrorDepthChart(profileData) {
+    if (!this.errorDepthChart) return;
+    if (!profileData || !Array.isArray(profileData.comparison) || !profileData.comparison.length) {
+      this.clearErrorDepthChart();
+      return;
+    }
+
+    const points = profileData.comparison;
+    const unit = profileData.unit || this.getVariableUnit(this.activeVar);
+    this.errorDepthChart.options.scales.x.title.text = `Model − Observation (${unit})`;
+    this.errorDepthChart.data.labels = points.map(p => Number(p.depth));
+    this.errorDepthChart.data.datasets = [
+      {
+        label: 'Model Discrepancy (Model − Obs)',
+        data: points.map(p => Number(p.model - p.observed)),
+        borderColor: '#f43f5e',
+        backgroundColor: 'rgba(244, 63, 94, 0.1)',
+        borderWidth: 2,
+        pointRadius: 3,
+        fill: true
+      }
+    ];
+    this.errorDepthChart.update();
+  }
+
   clearProfileChart(msg = null) {
     if (!this.modelArgoChart) return;
     this.modelArgoChart.data.labels = [];
@@ -1177,6 +1411,16 @@ class AnalysisDashboard {
       this.modelArgoChart.options.scales.x.title.text = msg;
     }
     this.modelArgoChart.update();
+  }
+
+  clearErrorDepthChart(msg = null) {
+    if (!this.errorDepthChart) return;
+    this.errorDepthChart.data.labels = [];
+    this.errorDepthChart.data.datasets = [];
+    if (msg) {
+      this.errorDepthChart.options.scales.x.title.text = msg;
+    }
+    this.errorDepthChart.update();
   }
 
   async updateTimeSeriesChart(floatId = null) {
@@ -1188,7 +1432,7 @@ class AnalysisDashboard {
 
     const baseVar = this.getBaseVar(this.activeVar);
     const key = `${floatId}:${baseVar}`;
-    
+
     if (!this.timeSeriesCache[key]) {
       const maxPoints = 20;
       const step = Math.max(1, Math.floor(this.timeline.length / maxPoints));
@@ -1196,11 +1440,11 @@ class AnalysisDashboard {
       for (let i = 0; i < this.timeline.length; i += step) {
         sampleIndices.push(i);
       }
-      
+
       const responses = await Promise.all(sampleIndices.map(i =>
         ApiClient.getFloatComparison(String(floatId), baseVar, this.timeline[i]).catch(() => null)
       ));
-      
+
       this.timeSeriesCache[key] = sampleIndices.map((origIdx, k) => {
         const r = responses[k];
         if (!r || !Array.isArray(r.comparison) || !r.comparison.length) return null;
@@ -1255,6 +1499,117 @@ class AnalysisDashboard {
     this.timeSeriesChart.update();
   }
 
+  // Section 17: Data-Driven Warning & Analytical Flag Engine
+  updateWarningEngine() {
+    const container = document.getElementById('scientificInsightContent');
+    if (!container) return;
+
+    this.warnings = [];
+    const acc = this.summaryData?.model_accuracy || {};
+    const cov = this.coverageData || {};
+    const gaps = this.gapsData?.gap_regions || [];
+    const anomalies = this.anomaliesCache[this.activeTime] || [];
+    const unit = this.getVariableUnit(this.activeVar);
+
+    // Rule 1: High Thermocline Discrepancy
+    if (acc.overall_rmse && acc.overall_rmse > 1.5) {
+      this.warnings.push({
+        id: 'flag-discrepancy',
+        severity: acc.overall_rmse > 3.0 ? 'critical' : 'warning',
+        title: 'Elevated Model Discrepancy (RMSE)',
+        evidence: `Overall basin RMSE is ${acc.overall_rmse.toFixed(2)} ${unit} across ${acc.floats_compared || 0} in-situ Argo profiling floats (Mean Bias: ${acc.overall_bias > 0 ? '+' : ''}${(acc.overall_bias || 0).toFixed(2)} ${unit}). Largest disagreement occurs in the thermocline (50–200m).`
+      });
+    }
+
+    // Rule 2: Critical Observation Gap Sector
+    if (cov.spatial_coverage_pct != null && cov.spatial_coverage_pct < 35.0) {
+      this.warnings.push({
+        id: 'flag-coverage-gap',
+        severity: 'warning',
+        title: 'Critical Observation Void Sector',
+        evidence: `Spatial coverage across the active basin is ${cov.spatial_coverage_pct.toFixed(1)}%. ${gaps.length} major unmonitored sectors detected.`
+      });
+    }
+
+    // Rule 3: Subsurface Physical Anomalies
+    const criticalAnoms = anomalies.filter(a => a.severity === 'CRITICAL' || Math.abs(a.z_score || 0) > 2.0);
+    if (criticalAnoms.length > 0) {
+      this.warnings.push({
+        id: 'flag-anomalies',
+        severity: 'critical',
+        title: 'Subsurface Physical Anomaly Cluster',
+        evidence: `${criticalAnoms.length} depth levels exceed 2.0σ z-score deviation. Maximum observed discrepancy is ${criticalAnoms[0].difference > 0 ? '+' : ''}${criticalAnoms[0].difference.toFixed(2)} ${unit} at Float #${criticalAnoms[0].float_id} (${criticalAnoms[0].depth}m depth).`
+      });
+    }
+
+    if (this.warnings.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          No critical analytical flags detected for ${this.prettyVar(this.activeVar)}. Model agreement conforms within typical observational thresholds.
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="analytical-flag-list">
+        ${this.warnings.map(w => `
+          <div class="analytical-flag-card flag-${w.severity}">
+            <div class="flag-header">
+              <span class="flag-badge">ANALYTICAL FLAG</span>
+              <span class="flag-title">${w.title}</span>
+            </div>
+            <div class="flag-evidence">${w.evidence}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  // Section 18: Grounded Scientific AI Assistant
+  initAIAssistant() {
+    const container = document.getElementById('aiAssistantContainer');
+    if (container) {
+      AiChat.init(this, container);
+    }
+  }
+
+  getAnalysisContext() {
+    return {
+      area: SelectionContext.getArea(),
+      variable: SelectionContext.getVariable(),
+      analysisMode: this.analysisMode,
+      time: { current: this.activeTime, available: this.timeline },
+      dataRange: { start: this.rangeStart, end: this.rangeEnd },
+      depth: { current: this.activeDepth, available: this.depthLevels },
+      selectedPoint: this.selectedCell,
+      selectedArgo: this.selectedObservation,
+      selectedGlider: null,
+      metrics: this.summaryData?.model_accuracy || {},
+      anomalies: (this.anomaliesCache[this.activeTime] || []).slice(0, 10),
+      coverage: this.coverageData || {},
+      gaps: this.gapsData?.gap_regions || [],
+      warnings: this.warnings
+    };
+  }
+
+  executeCommand(cmd) {
+    if (!cmd || !this.scene) return;
+    if (cmd.action === 'FOCUS_REGION') {
+      if (cmd.lat != null && cmd.lon != null) {
+        this.inspectPoint({ lat: cmd.lat, lon: cmd.lon, depthM: cmd.depth || 0 });
+      }
+    } else if (cmd.action === 'SET_DEPTH') {
+      if (cmd.depth != null) {
+        this.setDepth(cmd.depth);
+      }
+    } else if (cmd.action === 'SET_VARIABLE') {
+      if (cmd.variable) {
+        this.setVariable(cmd.variable);
+      }
+    }
+  }
+
   resolveVar(vars, id) {
     if (vars[id] && !vars[id].error) return vars[id];
     for (const k of (alias[id] || [])) {
@@ -1266,23 +1621,7 @@ class AnalysisDashboard {
   updateProvenance() {
     const d = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
     const el = document.getElementById('provenanceData');
-    if (el) el.textContent = `DATA: Copernicus NEMO + INCOIS | Obs: Argo Profiling Floats | Updated: ${d}`;
-  }
-
-  togglePlay() {
-    const b = document.getElementById('timelinePlay');
-    if (this.playTimer) {
-      clearInterval(this.playTimer);
-      this.playTimer = null;
-      if (b) b.textContent = 'PLAY';
-    } else {
-      if (!this.timeline.length) return;
-      if (b) b.textContent = 'PAUSE';
-      const interval = 1200 / this.playbackSpeed;
-      this.playTimer = setInterval(() => {
-        this.selectTime((this.index + 1) % this.timeline.length);
-      }, interval);
-    }
+    if (el) el.textContent = `DATA: Copernicus Marine NEMO + WMO Argo | Updated: ${d}`;
   }
 }
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SOLVX — Ocean Intelligence</title>
+  <title>SOLVX — Ocean Intelligence & Model Validation</title>
   <link rel="stylesheet" href="analysis/analysisPage.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,68 +24,67 @@
       <div class="analysis-brand">SOLVX / OCEAN INTELLIGENCE</div>
       <nav class="top-nav">
         <a href="/">VIEWER</a>
-        <a href="#">2D MAP</a>
+        <a href="/?mode=map">2D MAP</a>
         <a href="/analysis.html" class="active">ANALYSIS</a>
         <a href="/download.html">DOWNLOADER</a>
       </nav>
       <div class="provenance-indicator" id="provenanceData">
-        DATA SOURCES: Auto | Updated: —
+        DATA: Copernicus NEMO + WMO Argo | Updated: —
       </div>
     </header>
     
+    <!-- Top Toolbar: Variable != Analysis Separation, Shared Area, Time, Depth, Data -->
     <section class="analysis-toolbar">
-      <label>REGION 
-        <select id="analysisRegion">
-          <option value="bay_of_bengal">Bay of Bengal</option>
-          <option value="arabian_sea">Arabian Sea</option>
-          <option value="south_china_sea">South China Sea</option>
-          <option value="gulf_of_mexico">Gulf of Mexico</option>
-          <option value="mediterranean_sea">Mediterranean Sea</option>
-        </select>
-      </label>
-      <label>DEPTH EXAGGERATION 
-        <select id="analysisDepthExaggeration">
-          <option value="1">1×</option>
-          <option value="5">5×</option>
-          <option value="10">10×</option>
-          <option value="25">25×</option>
-          <option value="50">50×</option>
-          <option value="70" selected>70×</option>
-        </select>
-      </label>
+      <div class="toolbar-area-badge">
+        <span class="toolbar-area-label">AREA</span>
+        <strong id="displayAreaName">Bay of Bengal</strong>
+        <a href="/?mode=map" class="toolbar-change-map-btn" title="Select different ocean region on 2D World Map">CHANGE IN 2D MAP</a>
+      </div>
+
       <label>VARIABLE 
         <select id="analysisVariable">
-          <option value="ocean_temperature">Temperature</option>
-          <option value="salinity">Salinity</option>
-          <option value="chlorophyll">Chlorophyll</option>
-          <option value="sea_level">Sea level</option>
-          <option value="currents">Currents</option>
+          <option value="ocean_temperature">Temperature (°C)</option>
+          <option value="salinity">Salinity (PSU)</option>
+          <option value="chlorophyll">Chlorophyll (mg/m³)</option>
+          <option value="sea_level">Sea Level (m)</option>
+          <option value="currents">Currents (m/s)</option>
         </select>
       </label>
+
+      <label>ANALYSIS 
+        <select id="analysisModeSelect">
+          <option value="obs_vs_model">OBS VS MODEL</option>
+          <option value="error">ERROR</option>
+          <option value="bias">BIAS</option>
+          <option value="rmse">RMSE</option>
+          <option value="anomaly">ANOMALY</option>
+          <option value="observation_gap">OBSERVATION GAP</option>
+        </select>
+      </label>
+
       <label>TIME 
         <select id="analysisTimeMode">
           <option value="0">Loading available times…</option>
         </select>
       </label>
+
+      <label>DEPTH 
+        <select id="analysisDepthSelect">
+          <option value="0">0 m (Surface)</option>
+        </select>
+      </label>
+
       <label>DATA 
         <select id="analysisSource">
           <option value="auto">Auto — Model + Argo</option>
-          <option value="model">Model (Copernicus)</option>
-          <option value="observations">Observations (Argo)</option>
-          <option value="comparison">Model + Observation Comparison</option>
+          <option value="model">Model Only</option>
+          <option value="observations">Observations Only</option>
+          <option value="comparison">Model + Observations</option>
         </select>
       </label>
-      <label>SCENARIO 
-        <select id="analysisScenario">
-          <option value="general">General Ocean</option>
-          <option value="cyclone">Cyclone</option>
-          <option value="oilspill">Oil Spill</option>
-          <option value="sar">Search & Rescue</option>
-          <option value="research">Marine Research</option>
-        </select>
-      </label>
+
       <div class="analysis-actions">
-        <button id="btnReset">RESET</button>
+        <button id="btnReset" title="Reset camera, selections and filters">RESET</button>
       </div>
     </section>
     
@@ -99,9 +98,9 @@
               <canvas id="analysisCanvas"></canvas>
               
               <div class="analysis-overlay analysis-field">
-                <div class="eyebrow">ACTIVE FIELD</div>
-                <strong id="legendVariable">Analysis</strong>
-                <div id="legendUnits">—</div>
+                <div class="eyebrow" id="legendEyebrow">ACTIVE FIELD</div>
+                <strong id="legendVariable">TEMPERATURE</strong>
+                <div id="legendUnits">°C</div>
                 <div id="legendRange">—</div>
                 <div id="legendBar" class="analysis-gradient"></div>
               </div>
@@ -121,25 +120,71 @@
               </div>
               
               <div class="analysis-overlay analysis-obs-key">
-                <div><span class="legend-dot argo"></span>ARGO</div>
+                <div><span class="legend-dot argo"></span>ARGO FLOAT</div>
                 <div><span class="legend-dot glider"></span>GLIDER</div>
               </div>
             </div>
+
             <!-- Vertical Depth Slider Beside 3D Scene -->
             <div class="depth-slider-container">
               <div class="eyebrow" style="text-align:center;margin-bottom:10px;">DEPTH</div>
-              <input type="range" id="analysisDepthSlider" class="vertical-slider" min="0" max="6" value="2" step="1" orient="vertical">
-              <div id="currentDepthLabel" class="depth-slider-label">100 m</div>
+              <input type="range" id="analysisDepthSlider" class="vertical-slider" min="0" max="0" value="0" step="1" orient="vertical">
+              <div id="currentDepthLabel" class="depth-slider-label">0.49 m</div>
             </div>
           </section>
           
           <aside class="investigation-sidebar" id="investigationSidebar">
             <div class="sidebar-title">INVESTIGATION</div>
             <div class="sidebar-content" id="investigationContent">
-              <div class="empty-state">Select an ocean cell, observation, anomaly or region.</div>
+              <div class="empty-state">Select an ocean cell, Argo, Glider, anomaly or region.</div>
             </div>
           </aside>
         </div>
+
+        <!-- Section 9: Compact Analysis-Selection Control Strip -->
+        <section class="compact-selection-strip" id="compactControls">
+          <div class="ctrl-col coord-col">
+            <span class="ctrl-label">COORDINATE</span>
+            <div class="ctrl-row">
+              <input type="number" id="manualLat" placeholder="Lat °N" step="0.1" class="compact-input">
+              <input type="number" id="manualLon" placeholder="Lon °E" step="0.1" class="compact-input">
+              <button id="btnSelectPoint" class="compact-btn">SELECT POINT</button>
+            </div>
+          </div>
+
+          <div class="ctrl-col">
+            <span class="ctrl-label">EXACT ARGO FLOAT</span>
+            <select id="selectArgo" class="compact-select">
+              <option value="">Select Argo float…</option>
+            </select>
+          </div>
+
+          <div class="ctrl-col">
+            <span class="ctrl-label">EXACT GLIDER</span>
+            <select id="selectGlider" class="compact-select">
+              <option value="">No gliders in basin</option>
+            </select>
+          </div>
+
+          <div class="ctrl-col">
+            <span class="ctrl-label">CURRENT TIME</span>
+            <div class="ctrl-readout mono" id="readoutCurrentTime">—</div>
+          </div>
+
+          <div class="ctrl-col">
+            <span class="ctrl-label">DATA RANGE</span>
+            <div class="ctrl-row">
+              <input type="date" id="rangeStartDate" class="compact-date-input" title="Start date for range calculations">
+              <span class="ctrl-sep">→</span>
+              <input type="date" id="rangeEndDate" class="compact-date-input" title="End date for range calculations">
+            </div>
+          </div>
+
+          <div class="ctrl-col">
+            <span class="ctrl-label">SCIENTIFIC DEPTH</span>
+            <div class="ctrl-readout mono" id="readoutDepth">0.49 m</div>
+          </div>
+        </section>
 
         <!-- KPI Strip -->
         <div class="kpi-strip">
@@ -169,75 +214,65 @@
           </div>
         </div>
 
-        <!-- Graphs Row 1 -->
+        <!-- Graphs Row 1: Model vs Obs Profile + Error vs Depth -->
         <div class="graphs-row">
           <div class="graph-panel">
-            <div class="panel-header">MODEL VS ARGO VERTICAL PROFILE</div>
+            <div class="panel-header">MODEL VS OBS VERTICAL PROFILE</div>
             <div class="graph-container">
               <canvas id="chartModelVsArgo"></canvas>
             </div>
           </div>
           <div class="graph-panel">
-            <div class="panel-header">MODEL ERROR / ANOMALY MAP</div>
+            <div class="panel-header">ERROR VS DEPTH (MODEL − OBSERVATION)</div>
             <div class="graph-container">
-              <canvas id="chartErrorMap"></canvas>
+              <canvas id="chartErrorVsDepth"></canvas>
             </div>
           </div>
         </div>
 
-        <!-- Graphs Row 2 -->
+        <!-- Graphs Row 2: Error / Anomaly Map + Time Series -->
         <div class="graphs-row">
           <div class="graph-panel">
-            <div class="panel-header">OBSERVATION COVERAGE & GAPS</div>
-            <div class="graph-container coverage-container">
-              <div id="coverageContent">
-                <div class="empty-state">Loading coverage...</div>
-              </div>
+            <div class="panel-header">MODEL ERROR / ANOMALY SPATIAL MAP</div>
+            <div class="graph-container">
+              <canvas id="chartErrorMap"></canvas>
             </div>
           </div>
           <div class="graph-panel">
-            <div class="panel-header">SELECTED REGION TIME SERIES</div>
+            <div class="panel-header">SELECTED LOCATION / FLOAT TIME SERIES</div>
             <div class="graph-container">
               <canvas id="chartTimeSeries"></canvas>
             </div>
           </div>
         </div>
 
-        <!-- Scientific Insight -->
-        <div class="insight-panel">
-          <div class="panel-header">SCIENTIFIC INSIGHT</div>
-          <div class="insight-content" id="scientificInsightContent">
-             <div class="empty-state">Select a region or observation to view insights.</div>
+        <!-- Row 3: Observation Coverage & Gaps -->
+        <div class="full-width-panel">
+          <div class="panel-header">OBSERVATION COVERAGE & DATA GAPS</div>
+          <div class="coverage-content-wrap" id="coverageContent">
+            <div class="empty-state">Loading observation coverage and data gaps…</div>
+          </div>
+        </div>
+
+        <!-- Row 4: Scientific Insight (Warnings / Flags) + Grounded AI Assistant -->
+        <div class="bottom-dual-row">
+          <div class="insight-panel">
+            <div class="panel-header">SCIENTIFIC INSIGHT & ANALYTICAL FLAGS</div>
+            <div class="insight-content" id="scientificInsightContent">
+               <div class="empty-state">Evaluating observational discrepancies and data-driven flags…</div>
+            </div>
+          </div>
+          
+          <div class="ai-assistant-panel">
+            <div class="panel-header">GROUNDED SCIENTIFIC AI ASSISTANT</div>
+            <div class="ai-assistant-content" id="aiAssistantContainer">
+               <div class="empty-state">Initializing AI assistant…</div>
+            </div>
           </div>
         </div>
         
       </div>
     </main>
-    
-    <footer class="analysis-timeline">
-      <div class="timeline-head">
-        <div>
-          <div class="eyebrow">TIME</div>
-          <strong id="timelineLabel" style="font-family:'JetBrains Mono',monospace;">—</strong>
-        </div>
-        <div class="timeline-controls">
-          <button id="timelinePrev">PREV</button>
-          <button id="timelinePlay">PLAY</button>
-          <button id="timelineNext">NEXT</button>
-          <select id="timelineSpeed" class="speed-select">
-            <option value="0.5">0.5×</option>
-            <option value="1" selected>1×</option>
-            <option value="2">2×</option>
-            <option value="5">5×</option>
-          </select>
-        </div>
-      </div>
-      <input id="analysisSlider" type="range" min="0" max="0" value="0">
-      <div class="timeline-scale">
-        <span id="timelineStart">—</span>
-        <span id="timelineEnd">—</span>
-      </div>
-    </footer>
   </div>
   
   <script type="module" src="analysis/analysisPage.js"></script>

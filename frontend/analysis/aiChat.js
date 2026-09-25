@@ -154,17 +154,19 @@ function _bindEvents() {
 
         const loadingMsg = _appendLoadingMessage(history);
         try {
-            // Distinguish direct viewer commands vs analytical explanations
             const isDirectCommand = /^(set|show|focus|go to|view|slice|display)\b/i.test(query);
+            const curVar = _vc?.activeVar || 'temperature';
+            const curContext = _vc?.getAnalysisContext ? _vc.getAnalysisContext() : null;
 
             if (isDirectCommand) {
-                const cmdRes = await ApiClient.parseNLCommand(query, 'temperature', _sessionApiKey);
+                const cmdRes = await ApiClient.parseNLCommand(query, curVar, _sessionApiKey);
                 loadingMsg.remove();
                 _appendCommandMessage(history, cmdRes);
             } else {
                 const explainRes = await ApiClient.explainAnalysis(query, {
-                    variable: 'temperature',
+                    variable: curVar,
                     method: 'zscore',
+                    context: curContext,
                     apiKey: _sessionApiKey
                 });
                 loadingMsg.remove();

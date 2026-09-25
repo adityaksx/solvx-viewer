@@ -3,6 +3,8 @@
 // real-time area calculation in km², bidirectional sync with manual inputs,
 // and preset basin selection.
 
+import { SelectionContext } from '../context/selectionContext.js';
+
 export class RegionDrawer {
     constructor(worldMap, options = {}) {
         this.worldMap = worldMap;
@@ -12,7 +14,8 @@ export class RegionDrawer {
         this.isDrawing = false;
         this.drawMode = false; // Enabled via button or Shift key
         this.startLngLat = null;
-        this.currentBBox = { ...worldMap.currentBBox };
+        const ctxArea = SelectionContext.getArea();
+        this.currentBBox = ctxArea?.bbox ? { ...ctxArea.bbox } : { ...worldMap.currentBBox };
 
         // DOM elements
         this.inMinLat = document.getElementById('coordMinLat');
@@ -95,6 +98,7 @@ export class RegionDrawer {
                 this.setDrawMode(false);
             }
             this.worldMap.loadEEZForBBox(this.currentBBox);
+            SelectionContext.setArea({ id: 'custom', bbox: this.currentBBox });
         };
 
         this.map.on('mouseup', finishDrawing);
@@ -133,6 +137,7 @@ export class RegionDrawer {
             this.worldMap.setBBox(this.currentBBox, true);
             this.worldMap.loadEEZForBBox(this.currentBBox);
             this.updateAreaDisplay(this.currentBBox);
+            SelectionContext.setArea({ id: 'custom', bbox: this.currentBBox });
         };
 
         [this.inMinLat, this.inMaxLat, this.inMinLon, this.inMaxLon].forEach(input => {
@@ -265,6 +270,7 @@ export class RegionDrawer {
                 this.updateInputs(this.currentBBox);
                 this.worldMap.setBBox(this.currentBBox, true);
                 this.worldMap.loadEEZForBBox(this.currentBBox);
+                SelectionContext.setArea(p);
             });
             this.presetList.appendChild(btn);
         });

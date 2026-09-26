@@ -139,6 +139,8 @@ def compare_float_profile(
     """
     Compares an individual Argo float's vertical sounding profile against collocated
     interpolated numerical model values. Computes RMSE, Mean Model Bias, and MAE.
+    The returned point difference is Model - Observation so the dashboard can use a
+    single signed convention for error / bias visualizations.
     """
     float_data = get_argo_float(float_id)
     if not float_data:
@@ -186,7 +188,7 @@ def compare_float_profile(
 
         # 1D linear vertical interpolation at exact observation depth z
         mod_val = float(np.interp(z, m_depths, m_vals))
-        diff = obs_val - mod_val
+        diff = mod_val - obs_val
         abs_diff = abs(diff)
 
         diffs.append(diff)

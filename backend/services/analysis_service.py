@@ -158,7 +158,7 @@ def compare_float_profile(
     m_depths = model_depths[sort_idx]
     m_vals = model_vals[sort_idx]
 
-    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
+    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else ("mg/m³" if variable == 'chlorophyll' else ("m" if variable == 'sea_level' else ("m/s" if variable == 'currents' else ""))))
     comparison_points: List[ComparisonPoint] = []
     diffs = []
     abs_diffs = []
@@ -174,6 +174,10 @@ def compare_float_profile(
                 obs_val = pt.get('temp')
             elif variable == 'salinity':
                 obs_val = pt.get('sal')
+            elif variable == 'chlorophyll':
+                obs_val = pt.get('chl')
+            elif variable in ('sea_level', 'sea_surface_height'):
+                obs_val = pt.get('sea_level') if pt.get('sea_level') is not None else pt.get('ssh')
 
         if obs_val is None:
             continue

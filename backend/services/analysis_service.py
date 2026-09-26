@@ -905,7 +905,11 @@ def extract_abnormal_regions(
         time_iso=time_iso,
     )
 
-    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
+    unit = {
+        'temperature': '°C',
+        'salinity': 'PSU',
+        'chlorophyll': 'mg/m³',
+    }.get(variable, '')
     if not det.anomalies:
         return AbnormalRegionResponse(
             variable=variable,

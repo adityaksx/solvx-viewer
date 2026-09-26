@@ -1078,7 +1078,18 @@ class AnalysisDashboard {
 
       const vizVar = this.analysisMode === 'observation_gap'
         ? 'observation_gap'
-        : (this.analysisMode === 'anomaly' ? 'temperature_anomaly' : this.activeVar);
+        : (this.analysisMode === 'anomaly'
+          ? 'temperature_anomaly'
+          : (this.analysisMode === 'rmse'
+            ? 'analysis_magnitude'
+            : (['obs_vs_model', 'error', 'bias'].includes(this.analysisMode)
+              ? 'analysis_diverging'
+              : this.activeVar)));
+
+      if (derived?.values) {
+        vizData.metadata.analysis_metric = this.analysisMode;
+        vizData.metadata.analysis_variable = this.activeVar;
+      }
 
       if (this.layerModel && vizData) {
         this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);

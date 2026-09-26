@@ -48,6 +48,18 @@ export const PALETTES = {
         [0xffcc00, 0.75],
         [0xff3300, 1.0]
     ],
+    analysis_diverging: [
+        [0x06349e, 0.0],
+        [0x4b9fe8, 0.25],
+        [0xffffff, 0.50],
+        [0xffa060, 0.75],
+        [0xb60018, 1.0]
+    ],
+    observation_gap: [
+        [0xf8fafc, 0.0],
+        [0xf59e0b, 0.50],
+        [0x7f1d1d, 1.0]
+    ],
     sea_surface_height: [
         [0x102caa, 0.0],
         [0x00a9ff, 0.25],
@@ -119,6 +131,12 @@ export function getPaletteStops(variable) {
     }
     if (v === 'sla' || v === 'sea_level_anomaly') {
         return PALETTES.sea_level_anomaly;
+    }
+    if (v === 'analysis_diverging' || v === 'model_error' || v === 'model_bias' || v === 'rmse') {
+        return PALETTES.analysis_diverging;
+    }
+    if (v === 'observation_gap') {
+        return PALETTES.observation_gap;
     }
     return PALETTES[v] || PALETTES.fallback;
 }

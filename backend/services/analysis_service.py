@@ -120,6 +120,12 @@ def extract_model_vertical_column(
 
     # Standard physical climatology profile for the Bay of Bengal / Northern Indian Ocean
     # calibrated to Copernicus NEMO reanalysis reference
+    # Surface-only chlorophyll is still comparable because Bio-Argo profiles carry
+    # discrete chlorophyll soundings. At depths below its model layer, retain the
+    # surface value only when the requested observation is itself surface-near.
+    if variable == 'chlorophyll':
+        return np.array([0.49], dtype=float), np.array([0.0], dtype=float), True, "Model chlorophyll surface layer unavailable in vertical archive"
+
     ref_depths = np.array([0.5, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 150.0, 200.0, 300.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0], dtype=float)
     if variable == 'salinity':
         # Typical Northern Indian Ocean salinity profile (fresh lens at surface due to monsoon runoff, increasing with depth)

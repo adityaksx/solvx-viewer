@@ -216,7 +216,7 @@ export const ApiClient = {
         return request(`/api/data/ocean/check?${q}`);
     },
 
-    async getOceanBundle({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null, stride = 1, options = {} }) {
+    async getOceanBundle({ provider = 'auto', bbox, depth = null, time = null, start_time = null, end_time = null, stride = 1, variables = null, options = {} }) {
         const q = new URLSearchParams({
             provider,
             min_lon: String(bbox.min_lon),
@@ -229,6 +229,9 @@ export const ApiClient = {
         if (time) q.set('time', time);
         if (start_time) q.set('start_time', start_time);
         if (end_time) q.set('end_time', end_time);
+        if (Array.isArray(variables)) {
+            variables.filter(Boolean).forEach(v => q.append('variables', String(v)));
+        }
         return request(`/api/data/ocean/bundle?${q}`, { category: 'bundle', ...options });
     },
 

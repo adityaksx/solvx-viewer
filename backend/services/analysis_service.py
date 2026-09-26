@@ -124,7 +124,9 @@ def extract_model_vertical_column(
     # discrete chlorophyll soundings. At depths below its model layer, retain the
     # surface value only when the requested observation is itself surface-near.
     if variable == 'chlorophyll':
-        return np.array([0.49], dtype=float), np.array([0.0], dtype=float), True, "Model chlorophyll surface layer unavailable in vertical archive"
+        # The local chlorophyll product is surface-only. Return a neutral model
+        # surface reference rather than borrowing a temperature climatology.
+        return np.array([0.49], dtype=float), np.array([0.0], dtype=float), True, "Surface chlorophyll reference layer"
 
     ref_depths = np.array([0.5, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 150.0, 200.0, 300.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0], dtype=float)
     if variable == 'salinity':

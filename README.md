@@ -840,7 +840,9 @@ docs/data_sources.md
 ## Additional Data(seabed)
 download these data from google drive and put in data folder
 i.e 
+
 solvx-viewer/data/model/*.nc files
+
 solvx-viewer/data/gebco*.nc
 
 https://drive.google.com/drive/folders/1AuA_q24Jisa4CjDO_dcDVmrpT0gWASnZ?usp=sharing

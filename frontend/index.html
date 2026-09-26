@@ -157,10 +157,11 @@
       </div>
 
       <div class="region-info-card">
+        <div class="info-row"><span class="info-label">Selected Area:</span> <strong id="regionNameDisplay" class="mono" style="color:var(--accent-primary, #0284c7);">Bay of Bengal</strong></div>
         <div class="info-row"><span class="info-label">Latitude:</span> <strong id="regionLatDisplay" class="mono">16.07°N to 23.52°N</strong></div>
         <div class="info-row"><span class="info-label">Longitude:</span> <strong id="regionLonDisplay" class="mono">84.10°E to 93.00°E</strong></div>
         <div class="info-row"><span class="info-label">Available Model:</span> <span class="badge badge-success">Yes (Copernicus / INCOIS)</span></div>
-        <div class="info-row"><span class="info-label">In-Situ Data:</span> <span class="badge badge-info">Argo Floats Collocated</span></div>
+        <div class="info-row"><span class="info-label">In-Situ Data:</span> <span class="badge badge-info">Argo Floats & Gliders</span></div>
         <div id="regionAreaDisplay" class="area-readout">Area: —</div>
       </div>
 
@@ -183,7 +184,7 @@
       <div class="section-label">Open-Source Basemap</div>
       <select id="mapBasemapSelect" class="dropdown-select">
         <option value="osm" selected>OpenStreetMap (Standard)</option>
-        <option value="osm-dark">OpenStreetMap Dark (Carto)</option>
+        <option value="osm-dark">Dark Mode (OpenFreeMap · Free & Open-Source)</option>
         <option value="opentopo">OpenTopoMap (Topographic Relief)</option>
       </select>
 
@@ -382,11 +383,6 @@
           <label class="layer-row">
             <span class="layer-name">GEBCO Seabed</span>
             <input type="checkbox" id="layerSeabed" checked class="switch-input">
-            <span class="switch-toggle"></span>
-          </label>
-          <label class="layer-row">
-            <span class="layer-name">Water Body</span>
-            <input type="checkbox" id="layerWater" checked class="switch-input">
             <span class="switch-toggle"></span>
           </label>
           <label class="layer-row">

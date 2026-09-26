@@ -50,32 +50,10 @@ export class WorldMap2D {
         }
 
         if (key === 'osm-dark') {
-            return {
-                version: 8,
-                sources: {
-                    'carto-dark': {
-                        type: 'raster',
-                        tiles: [
-                            'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-                            'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-                            'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-                            'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-                        ],
-                        tileSize: 256,
-                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>'
-                    }
-                },
-                layers: [
-                    {
-                        id: 'carto-dark-layer',
-                        type: 'raster',
-                        source: 'carto-dark',
-                        minzoom: 0,
-                        maxzoom: 19
-                    }
-                ]
-            };
+            // OpenFreeMap Dark Mode — 100% Free, Open-Source & Token-Free Vector Basemap
+            return 'https://tiles.openfreemap.org/styles/dark';
         }
+
 
         // OpenStreetMap Standard (Open-Source Default)
         return {
@@ -126,39 +104,60 @@ export class WorldMap2D {
         this.map.addControl(new window.maplibregl.ScaleControl({ maxWidth: 200, unit: 'metric' }), 'bottom-left');
 
         return new Promise((resolve) => {
-            let done = false;
-            const onReady = () => {
-                if (done) return;
-                done = true;
+            const onMapReady = () => {
                 this.isLoaded = true;
                 try {
                     this._initLayers();
-                    this.setBBox(this.currentBBox, false);
-                    this.loadEEZForBBox(this.currentBBox);
+                    const targetBBox = this.pendingBBox || this.currentBBox;
+                    const fitTarget = this.pendingFit !== undefined ? this.pendingFit : false;
+                    const targetAreaName = this.pendingAreaName || this.currentAreaName || 'Bay of Bengal';
+                    this.setBBox(targetBBox, fitTarget, targetAreaName);
+                    this.pendingBBox = null;
+                    this.pendingFit = null;
+                    this.pendingAreaName = null;
+                    if (this.showEEZ) {
+                        this.loadEEZForBBox(this.currentBBox);
+                    }
                 } catch (e) {
                     console.warn('[WorldMap2D] Layer setup deferred:', e);
                 }
                 resolve(this);
             };
 
-            if (this.map.isStyleLoaded()) {
-                onReady();
-            } else {
-                this.map.once('style.load', onReady);
-                setTimeout(onReady, 400);
+            this.map.on('load', onMapReady);
+            this.map.on('style.load', () => {
+                if (this.isLoaded) {
+                    try {
+                        this._initLayers();
+                        const source = this.map.getSource('selection-box-source');
+                        if (source) {
+                            source.setData(this._createBBoxGeoJSON(this.currentBBox));
+                        }
+                        if (this.showEEZ) {
+                            this.loadEEZForBBox(this.currentBBox);
+                        }
+                    } catch (e) {
+                        console.warn('[WorldMap2D] Style reload layer restore error:', e);
+                    }
+                }
+            });
+
+            if (this.map.loaded() || this.map.isStyleLoaded()) {
+                onMapReady();
             }
         });
     }
 
     setBasemap(styleKey) {
-        if (this.currentBasemap === styleKey || !this.map) return;
+        if (this.currentBasemap === styleKey && this.map) return;
         this.currentBasemap = styleKey;
+        if (!this.map) return;
         const style = this._getBasemapStyle(styleKey);
         this.map.setStyle(style);
         this.map.once('style.load', () => {
             try {
                 this._initLayers();
-                this.setBBox(this.currentBBox, false);
+                this.setBBox(this.currentBBox, false, this.currentAreaName);
                 if (this.showEEZ) {
                     this.loadEEZForBBox(this.currentBBox);
                 }
@@ -170,79 +169,100 @@ export class WorldMap2D {
 
     _initLayers() {
         if (!this.map || !this.map.isStyleLoaded()) return;
-        if (this.map.getSource('eez-source')) return;
 
         // 1. EEZ Boundaries Layer (Real VLIZ / Marine Regions v12)
-        this.map.addSource('eez-source', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
+        if (!this.map.getSource('eez-source')) {
+            this.map.addSource('eez-source', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: [] }
+            });
+        }
 
-        this.map.addLayer({
-            id: 'eez-layer',
-            type: 'line',
-            source: 'eez-source',
-            layout: {
-                'line-join': 'round',
-                'line-cap': 'round',
-                'visibility': this.showEEZ ? 'visible' : 'none'
-            },
-            paint: {
-                'line-color': '#ffb703',
-                'line-width': 1.8,
-                'line-opacity': 0.85,
-                'line-dasharray': [3, 2]
-            }
-        });
+        if (!this.map.getLayer('eez-layer')) {
+            this.map.addLayer({
+                id: 'eez-layer',
+                type: 'line',
+                source: 'eez-source',
+                layout: {
+                    'line-join': 'round',
+                    'line-cap': 'round',
+                    'visibility': this.showEEZ ? 'visible' : 'none'
+                },
+                paint: {
+                    'line-color': '#ffb703',
+                    'line-width': 1.8,
+                    'line-opacity': 0.85,
+                    'line-dasharray': [3, 2]
+                }
+            });
+        }
 
-        // 2. Selection Box Source & Layers
-        this.map.addSource('selection-box-source', {
-            type: 'geojson',
-            data: this._createBBoxGeoJSON(this.currentBBox)
-        });
+        // 2. Selection Box Source & Layers (High-contrast ocean blue rectangle)
+        if (!this.map.getSource('selection-box-source')) {
+            this.map.addSource('selection-box-source', {
+                type: 'geojson',
+                data: this._createBBoxGeoJSON(this.currentBBox)
+            });
+        }
 
-        // Fill
-        this.map.addLayer({
-            id: 'selection-box-fill',
-            type: 'fill',
-            source: 'selection-box-source',
-            filter: ['==', '$type', 'Polygon'],
-            paint: {
-                'fill-color': '#0284C7',
-                'fill-opacity': 0.15
-            }
-        });
+        // Blue Fill
+        if (!this.map.getLayer('selection-box-fill')) {
+            this.map.addLayer({
+                id: 'selection-box-fill',
+                type: 'fill',
+                source: 'selection-box-source',
+                filter: ['==', ['geometry-type'], 'Polygon'],
+                paint: {
+                    'fill-color': '#0284c7',
+                    'fill-opacity': 0.22
+                }
+            });
+        }
 
-        // Outline
-        this.map.addLayer({
-            id: 'selection-box-line',
-            type: 'line',
-            source: 'selection-box-source',
-            filter: ['==', '$type', 'Polygon'],
-            paint: {
-                'line-color': '#0284C7',
-                'line-width': 2.0
-            }
-        });
+        // Blue Outline (High contrast)
+        if (!this.map.getLayer('selection-box-line')) {
+            this.map.addLayer({
+                id: 'selection-box-line',
+                type: 'line',
+                source: 'selection-box-source',
+                filter: ['==', ['geometry-type'], 'Polygon'],
+                paint: {
+                    'line-color': '#0284c7',
+                    'line-width': 3.0,
+                    'line-opacity': 0.95
+                }
+            });
+        }
 
         // Corner handles
-        this.map.addLayer({
-            id: 'selection-box-corners',
-            type: 'circle',
-            source: 'selection-box-source',
-            filter: ['==', '$type', 'Point'],
-            paint: {
-                'circle-radius': 4.5,
-                'circle-color': '#ffffff',
-                'circle-stroke-width': 2,
-                'circle-stroke-color': '#0284C7'
-            }
-        });
+        if (!this.map.getLayer('selection-box-corners')) {
+            this.map.addLayer({
+                id: 'selection-box-corners',
+                type: 'circle',
+                source: 'selection-box-source',
+                filter: ['==', ['geometry-type'], 'Point'],
+                paint: {
+                    'circle-radius': 5.5,
+                    'circle-color': '#ffffff',
+                    'circle-stroke-width': 2.5,
+                    'circle-stroke-color': '#0284c7'
+                }
+            });
+        }
     }
 
     setTheme(themeName) {
         const isDark = themeName === 'dark';
-        this.setBasemap(isDark ? 'osm-dark' : 'osm');
+        const targetBasemap = isDark ? 'osm-dark' : 'osm';
+        const select = document.getElementById('mapBasemapSelect');
+        if (select) {
+            select.value = targetBasemap;
+        }
+        if (!this.map) {
+            this.currentBasemap = targetBasemap;
+            return;
+        }
+        this.setBasemap(targetBasemap);
     }
 
     _createBBoxGeoJSON(bbox) {
@@ -291,14 +311,28 @@ export class WorldMap2D {
         };
     }
 
-    setBBox(bbox, fit = false) {
+    setBBox(bbox, fit = false, areaName = null) {
         this.currentBBox = { ...bbox };
-        if (!this.map || !this.isLoaded) return;
+        if (areaName) {
+            this.currentAreaName = areaName;
+        }
+        if (!this.map || !this.isLoaded) {
+            this.pendingBBox = { ...bbox };
+            this.pendingFit = fit;
+            this.pendingAreaName = areaName;
+            return;
+        }
+
+        if (this.map.isStyleLoaded() && !this.map.getSource('selection-box-source')) {
+            this._initLayers();
+        }
 
         const source = this.map.getSource('selection-box-source');
         if (source) {
             source.setData(this._createBBoxGeoJSON(this.currentBBox));
         }
+
+        this._updateSelectionBadge(this.currentBBox, this.currentAreaName);
 
         if (fit) {
             const container = this.map.getContainer();
@@ -319,6 +353,35 @@ export class WorldMap2D {
             }
         }
     }
+
+    _updateSelectionBadge(bbox, areaName) {
+        if (!this.map || !window.maplibregl) return;
+        const centerLon = (bbox.min_lon + bbox.max_lon) / 2;
+        const topLat = bbox.max_lat;
+        const displayName = areaName || this.currentAreaName || 'Selected Area';
+        const coordsText = `${bbox.min_lat.toFixed(2)}°N–${bbox.max_lat.toFixed(2)}°N, ${bbox.min_lon.toFixed(2)}°E–${bbox.max_lon.toFixed(2)}°E`;
+
+        if (!this.selectionPopup) {
+            this.selectionPopup = new window.maplibregl.Popup({
+                closeButton: false,
+                closeOnClick: false,
+                className: 'solvx-map-badge-popup',
+                offset: [0, -12]
+            });
+        }
+
+        this.selectionPopup
+            .setLngLat([centerLon, topLat])
+            .setHTML(`
+                <div class="map-selection-hud-badge">
+                    <span class="hud-status-dot"></span>
+                    <strong class="hud-badge-title">${displayName}</strong>
+                    <span class="hud-badge-coords">${coordsText}</span>
+                </div>
+            `)
+            .addTo(this.map);
+    }
+
 
     async loadEEZForBBox(bbox) {
         if (!this.map || !this.isLoaded) return;

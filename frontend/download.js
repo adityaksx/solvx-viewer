@@ -4,7 +4,7 @@
 
 import { ApiClient } from './api/apiClient.js';
 import { themeManager } from './context/themeManager.js';
-import { SelectionContext } from './context/selectionContext.js';
+import { SelectionContext, PRESET_REGIONS } from './context/selectionContext.js';
 
 class DownloadManager {
     constructor() {
@@ -303,21 +303,18 @@ class DownloadManager {
         });
 
         // Preset ocean basins
-        const presets = {
-            bob: { min_lat: 16.07, max_lat: 23.52, min_lon: 84.10, max_lon: 93.00 },
-            arabian: { min_lat: 12.00, max_lat: 24.00, min_lon: 60.00, max_lon: 75.00 },
-            eio: { min_lat: -5.00, max_lat: 8.00, min_lon: 70.00, max_lon: 95.00 },
-            scs: { min_lat: 5.00, max_lat: 22.00, min_lon: 105.00, max_lon: 120.00 },
-            gulf: { min_lat: 24.00, max_lat: 30.00, min_lon: 48.00, max_lon: 57.00 }
-        };
-
         document.querySelectorAll('.btn-preset').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const p = presets[e.target.dataset.preset];
-                if (p) {
-                    this.currentBBox = { ...p };
-                    this.updateInputs(p);
-                    this.updateMapBBox(p, true);
+                document.querySelectorAll('.btn-preset').forEach(b => b.classList.remove('active'));
+                const target = e.currentTarget;
+                target.classList.add('active');
+                const presetId = target.dataset.preset;
+                const p = PRESET_REGIONS[presetId];
+                if (p && p.bbox) {
+                    this.currentBBox = { ...p.bbox };
+                    this.updateInputs(this.currentBBox);
+                    this.updateMapBBox(this.currentBBox, true);
+                    SelectionContext.setArea(p);
                     this.scheduleCheckCache();
                 }
             });

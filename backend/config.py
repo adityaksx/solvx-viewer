@@ -19,31 +19,99 @@ PRESET_REGIONS = [
         'id': 'bay_of_bengal',
         'name': 'Bay of Bengal',
         'bbox': {'min_lon': 84.10, 'max_lon': 93.00, 'min_lat': 16.07, 'max_lat': 23.52},
-        'description': 'High-resolution GEBCO + INCOIS ocean model data'
+        'description': 'High-resolution GEBCO + INCOIS ocean model data',
+        'badge': 'Basin'
     },
     {
         'id': 'arabian_sea',
         'name': 'Arabian Sea',
-        'bbox': {'min_lon': 60.00, 'max_lon': 74.00, 'min_lat': 12.00, 'max_lat': 24.00},
-        'description': 'Western Indian Ocean basin'
+        'bbox': {'min_lon': 60.00, 'max_lon': 76.00, 'min_lat': 10.00, 'max_lat': 24.00},
+        'description': 'Western Indian Ocean & Somali Current',
+        'badge': 'Sea'
     },
     {
-        'id': 'south_china_sea',
-        'name': 'South China Sea',
-        'bbox': {'min_lon': 105.00, 'max_lon': 120.00, 'min_lat': 8.00, 'max_lat': 22.00},
-        'description': 'Tropical Indo-Pacific marginal sea'
+        'id': 'indian_ocean',
+        'name': 'Indian Ocean',
+        'bbox': {'min_lon': 55.00, 'max_lon': 95.00, 'min_lat': -15.00, 'max_lat': 15.00},
+        'description': 'Tropical Indian Ocean & monsoon drift basin',
+        'badge': 'Ocean'
     },
     {
-        'id': 'gulf_of_mexico',
-        'name': 'Gulf of Mexico',
-        'bbox': {'min_lon': -97.00, 'max_lon': -82.00, 'min_lat': 20.00, 'max_lat': 30.00},
-        'description': 'Atlantic ocean basin and Loop Current'
+        'id': 'north_atlantic',
+        'name': 'North Atlantic',
+        'bbox': {'min_lon': -65.00, 'max_lon': -20.00, 'min_lat': 15.00, 'max_lat': 45.00},
+        'description': 'Subtropical gyre, Sargasso Sea & Gulf Stream',
+        'badge': 'Ocean'
+    },
+    {
+        'id': 'south_atlantic',
+        'name': 'South Atlantic',
+        'bbox': {'min_lon': -35.00, 'max_lon': 10.00, 'min_lat': -35.00, 'max_lat': -10.00},
+        'description': 'South Atlantic basin & Benguela Current',
+        'badge': 'Ocean'
+    },
+    {
+        'id': 'north_pacific',
+        'name': 'North Pacific',
+        'bbox': {'min_lon': 130.00, 'max_lon': 170.00, 'min_lat': 15.00, 'max_lat': 45.00},
+        'description': 'Northwest Pacific basin & Kuroshio extension',
+        'badge': 'Ocean'
+    },
+    {
+        'id': 'south_pacific',
+        'name': 'South Pacific',
+        'bbox': {'min_lon': -150.00, 'max_lon': -110.00, 'min_lat': -35.00, 'max_lat': -5.00},
+        'description': 'South Pacific central subtropical gyre',
+        'badge': 'Ocean'
     },
     {
         'id': 'mediterranean_sea',
         'name': 'Mediterranean Sea',
-        'bbox': {'min_lon': 5.00, 'max_lon': 25.00, 'min_lat': 32.00, 'max_lat': 42.00},
-        'description': 'Intercontinental basin'
+        'bbox': {'min_lon': 0.00, 'max_lon': 36.00, 'min_lat': 30.00, 'max_lat': 44.00},
+        'description': 'Semi-enclosed intercontinental marginal sea',
+        'badge': 'Sea'
+    },
+    {
+        'id': 'southern_ocean',
+        'name': 'Southern Ocean',
+        'bbox': {'min_lon': -70.00, 'max_lon': -20.00, 'min_lat': -65.00, 'max_lat': -50.00},
+        'description': 'Antarctic Circumpolar Current & Drake Passage',
+        'badge': 'Ocean'
+    },
+    {
+        'id': 'arctic_ocean',
+        'name': 'Arctic Ocean',
+        'bbox': {'min_lon': -10.00, 'max_lon': 50.00, 'min_lat': 68.00, 'max_lat': 82.00},
+        'description': 'Greenland and Barents Sea polar waters',
+        'badge': 'Ocean'
+    },
+    {
+        'id': 'gulf_of_mexico',
+        'name': 'Gulf of Mexico',
+        'bbox': {'min_lon': -97.00, 'max_lon': -80.00, 'min_lat': 18.00, 'max_lat': 31.00},
+        'description': 'Loop Current & Gulf Coast ocean system',
+        'badge': 'Sea'
+    },
+    {
+        'id': 'red_sea',
+        'name': 'Red Sea',
+        'bbox': {'min_lon': 32.00, 'max_lon': 44.00, 'min_lat': 12.00, 'max_lat': 28.50},
+        'description': 'Narrow inlet basin and rift zone',
+        'badge': 'Sea'
+    },
+    {
+        'id': 'strait_of_hormuz',
+        'name': 'Strait of Hormuz',
+        'bbox': {'min_lon': 55.50, 'max_lon': 57.50, 'min_lat': 25.50, 'max_lat': 27.20},
+        'description': 'Strategic Persian Gulf strait',
+        'badge': 'Strait'
+    },
+    {
+        'id': 'strait_of_malacca',
+        'name': 'Strait of Malacca',
+        'bbox': {'min_lon': 98.00, 'max_lon': 104.50, 'min_lat': 1.00, 'max_lat': 6.00},
+        'description': 'Indo-Pacific maritime gateway',
+        'badge': 'Strait'
     }
 ]
 

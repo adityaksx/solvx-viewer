@@ -236,7 +236,8 @@ def compare_regional_floats(
     min_lat: Optional[float] = None,
     max_lat: Optional[float] = None,
     variable: str = 'temperature',
-    time_iso: Optional[str] = None
+    time_iso: Optional[str] = None,
+    depth: Optional[float] = None
 ) -> RegionalModelVsArgoResponse:
     """
     Evaluates numerical model accuracy against all active Argo floats in the given bounding box.
@@ -277,6 +278,32 @@ def compare_regional_floats(
     # Sort ranking by RMSE descending (largest discrepancies first)
     ranking.sort(key=lambda r: r.rmse, reverse=True)
 
+    # Compute depth-dependent statistics across all vertical soundings
+    depth_errors = {}
+    max_diff_val = 0.0
+    max_diff_depth = None
+    max_diff_lat = None
+    max_diff_lon = None
+    for comp in comparisons:
+        for pt in comp.comparison:
+            d = round(float(pt.depth), 1)
+            if d not in depth_errors:
+                depth_errors[d] = []
+            depth_errors[d].append(pt.diff)
+            if pt.abs_diff > max_diff_val:
+                max_diff_val = pt.abs_diff
+                max_diff_depth = d
+                max_diff_lat = comp.latitude
+                max_diff_lon = comp.longitude
+
+    depth_of_max_rmse = None
+    max_depth_rmse = -1.0
+    for d, diffs in depth_errors.items():
+        d_rmse = float(np.sqrt(np.mean(np.square(diffs))))
+        if d_rmse > max_depth_rmse:
+            max_depth_rmse = d_rmse
+            depth_of_max_rmse = d
+
     overall_rmse = float(np.sqrt(np.mean(np.square(all_diffs)))) if all_diffs else None
     overall_bias = float(np.mean(all_diffs)) if all_diffs else None
     overall_mae = float(np.mean(all_abs_diffs)) if all_abs_diffs else None
@@ -294,7 +321,12 @@ def compare_regional_floats(
         metadata={
             "unit": unit,
             "floats_compared": len(comparisons),
-            "total_sounding_points": len(all_diffs)
+            "total_sounding_points": len(all_diffs),
+            "depth_of_max_rmse": depth_of_max_rmse,
+            "max_depth_rmse": round(max_depth_rmse, 4) if depth_of_max_rmse is not None else None,
+            "depth_of_max_discrepancy": max_diff_depth,
+            "max_discrepancy": round(max_diff_val, 4) if max_diff_depth is not None else None,
+            "max_discrepancy_loc": {"lat": max_diff_lat, "lon": max_diff_lon} if max_diff_depth is not None else None
         }
     )
 
@@ -449,58 +481,36 @@ def detect_observation_gaps(
     empty_count = len(empty_cells)
     gap_pct = round((empty_count / total_cells * 100.0), 2) if total_cells > 0 else 0.0
 
-    # Cluster gap cells into contiguous regional gaps
+    # Cluster gap cells into contiguous regional gaps dynamically based on bounding box
     gap_regions: List[GapRegion] = []
     if empty_cells:
-        # Sector 1: Northern/North-Eastern Basin Gap
-        ne_empty = [c for c in empty_cells if c.center_lat >= 19.0 and c.center_lon >= 89.0]
-        if ne_empty:
-            gap_regions.append(GapRegion(
-                id="gap_ne_basin",
-                name="North-Eastern Bay of Bengal Marine Gap",
-                bbox={
-                    'min_lat': min(c.lat_min for c in ne_empty),
-                    'max_lat': max(c.lat_max for c in ne_empty),
-                    'min_lon': min(c.lon_min for c in ne_empty),
-                    'max_lon': max(c.lon_max for c in ne_empty),
-                },
-                density="NONE",
-                severity="CRITICAL",
-                recommendation="Deploy autonomous profiling gliders or Bio-Argo floats to monitor northern freshwater plume."
-            ))
+        mid_lat = (cov.bbox['min_lat'] + cov.bbox['max_lat']) / 2.0
+        mid_lon = (cov.bbox['min_lon'] + cov.bbox['max_lon']) / 2.0
 
-        # Sector 2: Southern / Deep Central Basin Gap
-        s_empty = [c for c in empty_cells if c.center_lat < 16.0]
-        if s_empty:
-            gap_regions.append(GapRegion(
-                id="gap_south_basin",
-                name="Southern Equatorial Gateway Gap",
-                bbox={
-                    'min_lat': min(c.lat_min for c in s_empty),
-                    'max_lat': max(c.lat_max for c in s_empty),
-                    'min_lon': min(c.lon_min for c in s_empty),
-                    'max_lon': max(c.lon_max for c in s_empty),
-                },
-                density="NONE",
-                severity="MODERATE",
-                recommendation="Deploy deep-profiling floats (0-2000m) along cross-basin shipping transit lines."
-            ))
+        sectors = {
+            'ne': ('North-Eastern Observation Gap', [c for c in empty_cells if c.center_lat >= mid_lat and c.center_lon >= mid_lon], "Deploy autonomous profiling gliders or Bio-Argo floats to monitor north-eastern sector."),
+            'nw': ('North-Western Observation Gap', [c for c in empty_cells if c.center_lat >= mid_lat and c.center_lon < mid_lon], "Deploy autonomous profiling floats along north-western shelf and boundary."),
+            'se': ('South-Eastern Observation Gap', [c for c in empty_cells if c.center_lat < mid_lat and c.center_lon >= mid_lon], "Deploy deep-profiling floats (0-2000m) in south-eastern basin sector."),
+            'sw': ('South-Western Observation Gap', [c for c in empty_cells if c.center_lat < mid_lat and c.center_lon < mid_lon], "Deploy moorings and profiling floats across south-western maritime approaches.")
+        }
 
-        # Sector 3: Western boundary / coastal shadow
-        w_empty = [c for c in empty_cells if c.center_lon < 84.0]
-        if w_empty:
+        for sec_key, (sec_name, sec_cells, sec_rec) in sectors.items():
+            if not sec_cells:
+                continue
+            sec_pct = len(sec_cells) / total_cells if total_cells > 0 else 0
+            severity = "CRITICAL" if sec_pct >= 0.25 else ("MODERATE" if sec_pct >= 0.1 else "LOW")
             gap_regions.append(GapRegion(
-                id="gap_west_boundary",
-                name="Western Continental Margin Gap",
+                id=f"gap_{sec_key}_basin",
+                name=sec_name,
                 bbox={
-                    'min_lat': min(c.lat_min for c in w_empty),
-                    'max_lat': max(c.lat_max for c in w_empty),
-                    'min_lon': min(c.lon_min for c in w_empty),
-                    'max_lon': max(c.lon_max for c in w_empty),
+                    'min_lat': min(c.lat_min for c in sec_cells),
+                    'max_lat': max(c.lat_max for c in sec_cells),
+                    'min_lon': min(c.lon_min for c in sec_cells),
+                    'max_lon': max(c.lon_max for c in sec_cells),
                 },
                 density="NONE",
-                severity="LOW",
-                recommendation="Deploy coastal acoustic Doppler current profilers (ADCP) and shelf moorings."
+                severity=severity,
+                recommendation=sec_rec
             ))
 
         if not gap_regions and empty_cells:
@@ -549,7 +559,9 @@ def generate_analysis_summary(
     max_lon: Optional[float] = None,
     min_lat: Optional[float] = None,
     max_lat: Optional[float] = None,
-    variable: str = 'temperature'
+    variable: str = 'temperature',
+    time: Optional[str] = None,
+    depth: Optional[float] = None
 ) -> AnalysisSummaryResponse:
     """
     Generates a consolidated analysis summary bringing together model accuracy,
@@ -560,7 +572,9 @@ def generate_analysis_summary(
         max_lon=max_lon,
         min_lat=min_lat,
         max_lat=max_lat,
-        variable=variable
+        variable=variable,
+        time_iso=time,
+        depth=depth
     )
     cov_res = analyze_observation_coverage(
         min_lon=min_lon,
@@ -585,7 +599,12 @@ def generate_analysis_summary(
             'overall_mae': model_res.overall_mae,
             'floats_compared': model_res.floats_compared,
             'total_sounding_points': model_res.total_sounding_points,
-            'top_discrepancy': model_res.discrepancy_ranking[0].model_dump() if model_res.discrepancy_ranking else None
+            'top_discrepancy': model_res.discrepancy_ranking[0].model_dump() if model_res.discrepancy_ranking else None,
+            'depth_of_max_rmse': model_res.metadata.get('depth_of_max_rmse'),
+            'max_depth_rmse': model_res.metadata.get('max_depth_rmse'),
+            'depth_of_max_discrepancy': model_res.metadata.get('depth_of_max_discrepancy'),
+            'max_discrepancy': model_res.metadata.get('max_discrepancy'),
+            'max_discrepancy_loc': model_res.metadata.get('max_discrepancy_loc')
         },
         observation_coverage={
             'total_observations': cov_res.total_observations,

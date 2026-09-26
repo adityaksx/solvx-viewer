@@ -133,93 +133,74 @@ class CopernicusAdapter:
         import pandas as pd
 
         norm_var = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
-        prefix = f"cmems_{norm_var}_{min_lat:.2f}_{max_lat:.2f}_{min_lon:.2f}_{max_lon:.2f}"
-        pattern = os.path.join(self.cache_dir, f"{prefix}*.nc")
-        candidates = glob.glob(pattern)
+        cfg = COPERNICUS_VARIABLE_CATALOG.get(norm_var, {})
+        vars_needed = cfg.get("vars") or ([cfg.get("var")] if cfg.get("var") else [])
 
-        # If no direct prefix matches, also scan recent cmems_*.nc files for matching spatial coverage
-        if not candidates:
-            all_cmems = glob.glob(os.path.join(self.cache_dir, "cmems_*.nc"))
-            all_cmems.sort(key=os.path.getmtime, reverse=True)
-            for c in all_cmems[:35]:
-                if os.path.getsize(c) == 0: continue
-                try:
-                    with NETCDF_LOCK:
-                        with xr.open_dataset(c) as ds:
-                            if 'latitude' in ds.coords and 'longitude' in ds.coords:
-                                ds_min_lat = float(ds.latitude.min())
-                                ds_max_lat = float(ds.latitude.max())
-                                ds_min_lon = float(ds.longitude.min())
-                                ds_max_lon = float(ds.longitude.max())
-                                if (ds_min_lat <= min_lat + 0.1 and ds_max_lat >= max_lat - 0.1 and
-                                    ds_min_lon <= min_lon + 0.1 and ds_max_lon >= max_lon - 0.1):
-                                    cfg = COPERNICUS_VARIABLE_CATALOG.get(norm_var, {})
-                                    var_match = cfg.get("var") or (cfg.get("vars", [None])[0])
-                                    if var_match and var_match in ds.data_vars:
-                                        candidates.append(c)
-                except Exception:
-                    continue
-
-        if not candidates:
+        all_nc = glob.glob(os.path.join(self.cache_dir, "*.nc"))
+        if not all_nc:
+            logger.info("[CACHE] MISS requested bbox [%.2f, %.2f, %.2f, %.2f] no cached files", min_lon, max_lon, min_lat, max_lat)
             return None
 
-        # Parse timestamps safely as naive UTC for uniform comparison
+        # Parse timestamps safely as naive UTC
         t_start = _to_naive_utc(start_time)
         t_end = _to_naive_utc(end_time)
         t_req = _to_naive_utc(time)
 
-        if not t_req and not t_start and not t_end:
-            return candidates[0]
+        candidates = []
+        for c in all_nc:
+            if os.path.getsize(c) == 0:
+                continue
+            try:
+                with NETCDF_LOCK:
+                    with xr.open_dataset(c) as ds:
+                        # 1. Variable check
+                        has_var = any(v in ds.data_vars for v in vars_needed) if vars_needed else True
+                        if not has_var:
+                            continue
 
-        # 1. If a full start_time to end_time range is specified, candidate must cover the entire range
-        if t_start and t_end:
-            for c in candidates:
-                try:
-                    with NETCDF_LOCK:
-                        with xr.open_dataset(c) as ds:
-                            if 'time' in ds.coords and ds.time.size > 0:
-                                t_min = _to_naive_utc(ds.time.values.min())
-                                t_max = _to_naive_utc(ds.time.values.max())
-                                if t_min and t_max:
-                                    if (t_min - pd.Timedelta(days=1)) <= t_start and t_end <= (t_max + pd.Timedelta(days=1)):
-                                        return c
-                except Exception:
-                    continue
-            if not t_req:
-                return None
+                        # 2. Spatial containment check
+                        yd = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else None)
+                        xd = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else None)
+                        if not yd or not xd:
+                            continue
 
-        # 2. Check candidate covering the specific requested time (if specified)
-        if t_req:
-            for c in candidates:
-                try:
-                    with NETCDF_LOCK:
-                        with xr.open_dataset(c) as ds:
-                            if 'time' in ds.coords and ds.time.size > 0:
-                                t_min = _to_naive_utc(ds.time.values.min())
-                                t_max = _to_naive_utc(ds.time.values.max())
-                                if t_min and t_max:
-                                    if (t_min - pd.Timedelta(days=1)) <= t_req <= (t_max + pd.Timedelta(days=1)):
-                                        return c
-                except Exception:
-                    continue
+                        ds_min_lat = float(ds[yd].min())
+                        ds_max_lat = float(ds[yd].max())
+                        ds_min_lon = float(ds[xd].min())
+                        ds_max_lon = float(ds[xd].max())
 
-        # 3. Single boundary fallback if only start or end was provided
-        single_boundary = t_start or t_end
-        if single_boundary:
-            for c in candidates:
-                try:
-                    with NETCDF_LOCK:
-                        with xr.open_dataset(c) as ds:
-                            if 'time' in ds.coords and ds.time.size > 0:
-                                t_min = _to_naive_utc(ds.time.values.min())
-                                t_max = _to_naive_utc(ds.time.values.max())
-                                if t_min and t_max:
-                                    if (t_min - pd.Timedelta(days=1)) <= single_boundary <= (t_max + pd.Timedelta(days=1)):
-                                        return c
-                except Exception:
-                    continue
+                        # Check if cached bounding box contains requested bounding box
+                        tol = 0.05
+                        if not (ds_min_lat <= min_lat + tol and ds_max_lat >= max_lat - tol and
+                                ds_min_lon <= min_lon + tol and ds_max_lon >= max_lon - tol):
+                            continue
 
-        return candidates[0] if candidates and not (t_req or t_start or t_end) else None
+                        # 3. Time containment check
+                        if 'time' in ds.coords and ds.time.size > 0:
+                            t_min = _to_naive_utc(ds.time.values.min())
+                            t_max = _to_naive_utc(ds.time.values.max())
+                            if t_min and t_max:
+                                if t_start and t_end:
+                                    if not ((t_min - pd.Timedelta(days=1)) <= t_start and t_end <= (t_max + pd.Timedelta(days=1))):
+                                        continue
+                                elif t_req:
+                                    if not ((t_min - pd.Timedelta(days=1)) <= t_req <= (t_max + pd.Timedelta(days=1))):
+                                        continue
+
+                        area = (ds_max_lat - ds_min_lat) * (ds_max_lon - ds_min_lon)
+                        candidates.append((area, os.path.getmtime(c), c))
+            except Exception:
+                continue
+
+        if candidates:
+            # Sort by area ascending (smallest covering dataset first), then newest mtime
+            candidates.sort(key=lambda x: (x[0], -x[1]))
+            best_match = candidates[0][2]
+            logger.info("[CACHE] HIT requested bbox contained in cached bbox (%s)", best_match)
+            return best_match
+
+        logger.info("[CACHE] MISS requested bbox [%.2f, %.2f, %.2f, %.2f] not covered by local cache", min_lon, max_lon, min_lat, max_lat)
+        return None
 
     def fetch_ocean_variable(
         self,
@@ -363,8 +344,22 @@ class CopernicusAdapter:
                 else:
                     ds_slice = ds_slice.isel(depth=0)
 
-            lats = [float(x) for x in ds_slice.latitude.values]
-            lons = [float(x) for x in ds_slice.longitude.values]
+            # Spatial subsetting to requested bbox
+            yd = 'latitude' if 'latitude' in ds_slice.coords else ('lat' if 'lat' in ds_slice.coords else None)
+            xd = 'longitude' if 'longitude' in ds_slice.coords else ('lon' if 'lon' in ds_slice.coords else None)
+            if yd and xd and ds_slice.sizes.get(yd, 0) > 1 and ds_slice.sizes.get(xd, 0) > 1:
+                lat_vals = ds_slice.coords[yd].values
+                lon_vals = ds_slice.coords[xd].values
+                lat_asc = lat_vals[-1] > lat_vals[0]
+                lat_slice = slice(min_lat - 0.05, max_lat + 0.05) if lat_asc else slice(max_lat + 0.05, min_lat - 0.05)
+                lon_asc = lon_vals[-1] > lon_vals[0]
+                lon_slice = slice(min_lon - 0.05, max_lon + 0.05) if lon_asc else slice(max_lon + 0.05, min_lon - 0.05)
+                sub = ds_slice.sel({yd: lat_slice, xd: lon_slice})
+                if sub.sizes.get(yd, 0) > 0 and sub.sizes.get(xd, 0) > 0:
+                    ds_slice = sub
+
+            lats = [float(x) for x in ds_slice.coords[yd].values]
+            lons = [float(x) for x in ds_slice.coords[xd].values]
 
             # Apply stride if requested
             if stride > 1:

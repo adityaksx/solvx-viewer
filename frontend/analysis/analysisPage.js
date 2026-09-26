@@ -338,6 +338,26 @@ class AnalysisDashboard {
       }
     });
 
+    document.getElementById('selectGlider')?.addEventListener('change', async e => {
+      const gliderId = e.target.value;
+      if (!gliderId) return;
+      let obs = (this.gliderData || []).find(o => String(o.id) === gliderId || String(o.glider_id) === gliderId);
+      if (!obs) {
+        obs = this.argoData.find(o => String(o.id) === gliderId || String(o.glider_id) === gliderId);
+      }
+      if (obs) {
+        if (!obs.profile || obs.profile.length === 0) {
+          try {
+            const detailed = await ApiClient.getGliderProfile(gliderId);
+            if (detailed && detailed.profile) {
+              obs = { ...obs, ...detailed };
+            }
+          } catch (_) {}
+        }
+        this.selectObservation(obs);
+      }
+    });
+
     document.getElementById('rangeStartDate')?.addEventListener('change', e => {
       this.rangeStart = e.target.value;
       this.updateCharts();
@@ -798,19 +818,45 @@ class AnalysisDashboard {
   }
 
   populateArgoPicker() {
-    const sel = document.getElementById('selectArgo');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">Select Argo float…</option>';
-    this.argoData.forEach(o => {
-      const opt = document.createElement('option');
-      opt.value = String(o.id || o.wmo);
-      const soundings = o.profile ? o.profile.length : 0;
-      opt.textContent = `Argo #${o.wmo || o.id} (${o.platform || 'Float'}, ${soundings} soundings)`;
-      if (this.selectedObservation && (String(this.selectedObservation.id) === String(o.id) || String(this.selectedObservation.wmo) === String(o.wmo))) {
-        opt.selected = true;
+    const argoSel = document.getElementById('selectArgo');
+    if (argoSel) {
+      const argos = (this.argoOnlyData || this.argoData.filter(o => o.type !== 'glider' && !/glider/i.test(o.platform || '')));
+      if (argos.length === 0) {
+        argoSel.innerHTML = '<option value="">No Argo floats in region</option>';
+      } else {
+        argoSel.innerHTML = `<option value="">Select Argo float (${argos.length} available)…</option>`;
+        argos.forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = String(o.id || o.wmo);
+          const soundings = o.profile ? o.profile.length : (o.soundings_count || 0);
+          opt.textContent = `Argo #${o.wmo || o.id} (${o.platform || 'Float'}, ${soundings} soundings)`;
+          if (this.selectedObservation && (String(this.selectedObservation.id) === String(o.id) || String(this.selectedObservation.wmo) === String(o.wmo))) {
+            opt.selected = true;
+          }
+          argoSel.appendChild(opt);
+        });
       }
-      sel.appendChild(opt);
-    });
+    }
+
+    const gliderSel = document.getElementById('selectGlider');
+    if (gliderSel) {
+      const gliders = (this.gliderData || this.argoData.filter(o => o.type === 'glider' || /glider/i.test(o.platform || '')));
+      if (gliders.length === 0) {
+        gliderSel.innerHTML = '<option value="">No gliders in region</option>';
+      } else {
+        gliderSel.innerHTML = `<option value="">Select Glider (${gliders.length} available)…</option>`;
+        gliders.forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = String(o.id || o.glider_id);
+          const soundings = o.profile ? o.profile.length : (o.soundings_count || 0);
+          opt.textContent = `Glider #${o.id || o.glider_id} (${o.institution || 'In-Situ'}, ${soundings} soundings)`;
+          if (this.selectedObservation && (String(this.selectedObservation.id) === String(o.id) || String(this.selectedObservation.glider_id) === String(o.glider_id))) {
+            opt.selected = true;
+          }
+          gliderSel.appendChild(opt);
+        });
+      }
+    }
   }
 
   async fetchBundleData(time) {
@@ -844,11 +890,23 @@ class AnalysisDashboard {
   }
 
   async fetchArgoData() {
-    if (this.argoData.length) return;
     try {
-      const res = await ApiClient.getArgoObservations(this.bbox);
-      this.argoData = res.observations || [];
+      const [argoRes, gliderRes] = await Promise.allSettled([
+        ApiClient.getArgoObservations(this.bbox),
+        ApiClient.getGliderObservations(this.bbox, this.activeTime)
+      ]);
+      const argoObs = (argoRes.status === 'fulfilled' && argoRes.value?.observations)
+        ? argoRes.value.observations.map(o => ({ ...o, type: 'argo' }))
+        : [];
+      const gliderObs = (gliderRes.status === 'fulfilled' && gliderRes.value?.observations)
+        ? gliderRes.value.observations.map(o => ({ ...o, type: 'glider' }))
+        : [];
+      this.argoOnlyData = argoObs;
+      this.gliderData = gliderObs;
+      this.argoData = [...argoObs, ...gliderObs];
     } catch (e) {
+      this.argoOnlyData = [];
+      this.gliderData = [];
       this.argoData = [];
     }
   }
@@ -856,7 +914,12 @@ class AnalysisDashboard {
   async fetchSummaryAndCoverage(time) {
     try {
       const [summary, cov, gaps] = await Promise.all([
-        ApiClient.getAnalysisSummary({ variable: this.getBaseVar(this.activeVar), ...this.bbox }),
+        ApiClient.getAnalysisSummary({
+          variable: this.getBaseVar(this.activeVar),
+          time: this.activeTime,
+          depth: this.activeDepth,
+          ...this.bbox
+        }),
         ApiClient.getObservationCoverage({ ...this.bbox, grid_res_deg: 1.0 }),
         ApiClient.getDataGaps({ ...this.bbox })
       ]);
@@ -960,23 +1023,38 @@ class AnalysisDashboard {
       this.renderAbnormalRegions(regions);
     }
 
-    this.updateViewMode();
-
-    // Update legend
+    // Update legend per Section 14
     const legendEl = document.getElementById('legendVariable');
     const legendUnitsEl = document.getElementById('legendUnits');
     const legendEyebrowEl = document.getElementById('legendEyebrow');
     if (legendEl) {
-      if (this.analysisMode === 'error') {
-        legendEl.textContent = 'MODEL − OBS ERROR';
-        if (legendUnitsEl) legendUnitsEl.textContent = this.getVariableUnit(this.activeVar);
-        if (legendEyebrowEl) legendEyebrowEl.textContent = 'ANALYSIS FIELD';
-      } else {
-        legendEl.textContent = this.prettyVar(this.activeVar).toUpperCase();
-        if (legendUnitsEl) legendUnitsEl.textContent = this.getVariableUnit(this.activeVar);
-        if (legendEyebrowEl) legendEyebrowEl.textContent = 'ACTIVE FIELD';
+      const modeLabels = {
+        obs_vs_model: 'MODEL VS IN-SITU',
+        error: 'MODEL − OBS ERROR',
+        bias: 'MODEL BIAS',
+        rmse: 'RMSE',
+        anomaly: 'SUBSURFACE ANOMALY',
+        observation_gap: 'OBSERVATION GAP'
+      };
+      const modeLabel = modeLabels[this.analysisMode] || (this.analysisMode ? this.analysisMode.toUpperCase().replace(/_/g, ' ') : 'OBS VS MODEL');
+      if (legendEyebrowEl) legendEyebrowEl.textContent = 'ANALYSIS FIELD';
+      legendEl.textContent = modeLabel;
+      if (legendUnitsEl) {
+        legendUnitsEl.textContent = `${this.prettyVar(this.activeVar)} · ${this.getVariableUnit(this.activeVar)}`;
       }
     }
+  }
+
+  prettyMode(mode) {
+    const map = {
+      obs_vs_model: 'Model vs In-Situ',
+      error: 'Model Error',
+      bias: 'Model Bias',
+      rmse: 'RMSE',
+      anomaly: 'Subsurface Anomaly',
+      observation_gap: 'Observation Gap'
+    };
+    return map[mode] || (mode ? mode.replace(/_/g, ' ') : '');
   }
 
   updateViewMode() {
@@ -1005,13 +1083,13 @@ class AnalysisDashboard {
     const klon = 111.32 * Math.cos((midLat * Math.PI) / 180);
 
     observations.forEach(obs => {
-      const glider = /glider/i.test(obs.platform || '');
+      const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
       const x = (obs.latitude - midLat) * 111.32;
       const z = (obs.longitude - midLon) * klon;
 
       const isSelected = this.selectedObservation && (String(this.selectedObservation.id) === String(obs.id) || String(this.selectedObservation.float_id) === String(obs.float_id));
 
-      let markerColor = glider ? 0x22d3ee : 0xf59e0b;
+      let markerColor = isGlider ? 0x22d3ee : 0xf59e0b;
 
       // Color convention for ERROR analysis mode (Section 8: negative -> blue, neutral -> white, positive -> red)
       if (this.analysisMode === 'error') {
@@ -1021,16 +1099,88 @@ class AnalysisDashboard {
         else markerColor = 0xdceff5; // Neutral
       }
 
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(isSelected ? 2.8 : 1.6, 16, 16),
-        new THREE.MeshStandardMaterial({
-          color: markerColor,
-          emissive: isSelected ? 0xffffff : 0x000000,
-          emissiveIntensity: isSelected ? 0.6 : 0
-        })
-      );
+      const maxD = obs.max_depth || (obs.depth_range ? obs.depth_range[1] : 1000);
+      const bottomY = this.scene ? this.scene.depthY(maxD) : -20;
+
+      const marker = new THREE.Group();
       marker.position.set(x, 2, z);
-      marker.userData = { float: obs };
+      marker.userData = { isArgoFloat: true, isGlider, float: obs };
+
+      if (isGlider) {
+        // Autonomous Underwater Glider: Cyan #22d3ee, Torpedo fuselage + Swept Wings
+        const bodyGeom = new THREE.CylinderGeometry(0.8, 0.9, 3.6, 12);
+        bodyGeom.rotateX(Math.PI / 2);
+        const bodyMat = new THREE.MeshStandardMaterial({
+          color: markerColor,
+          roughness: 0.25,
+          metalness: 0.3,
+          emissive: isSelected ? 0xffffff : (markerColor === 0x22d3ee ? 0x0891b2 : 0x000000),
+          emissiveIntensity: isSelected ? 0.7 : 0.4
+        });
+        const body = new THREE.Mesh(bodyGeom, bodyMat);
+        body.userData = { isArgoFloat: true, float: obs };
+        marker.add(body);
+
+        const wingGeom = new THREE.BoxGeometry(4.2, 0.15, 1.2);
+        const wingMat = new THREE.MeshStandardMaterial({ color: markerColor });
+        const wings = new THREE.Mesh(wingGeom, wingMat);
+        wings.userData = { isArgoFloat: true, float: obs };
+        marker.add(wings);
+
+        const finGeom = new THREE.BoxGeometry(0.15, 1.2, 0.8);
+        const fin = new THREE.Mesh(finGeom, wingMat);
+        fin.position.set(0, 0.6, -1.4);
+        fin.userData = { isArgoFloat: true, float: obs };
+        marker.add(fin);
+      } else {
+        // Argo Profiling Float: Amber #f59e0b, Cylinder hull + Antenna + Beacon
+        const hullGeom = new THREE.CylinderGeometry(1.6, 1.4, 2.2, 16);
+        const hullMat = new THREE.MeshStandardMaterial({
+          color: markerColor,
+          roughness: 0.3,
+          metalness: 0.2,
+          emissive: isSelected ? 0xffffff : (markerColor === 0xf59e0b ? 0xb45309 : 0x000000),
+          emissiveIntensity: isSelected ? 0.7 : 0.3
+        });
+        const hull = new THREE.Mesh(hullGeom, hullMat);
+        hull.userData = { isArgoFloat: true, float: obs };
+        marker.add(hull);
+
+        const antGeom = new THREE.CylinderGeometry(0.15, 0.2, 2.4, 8);
+        const antMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+        const antenna = new THREE.Mesh(antGeom, antMat);
+        antenna.position.set(0, 2.2, 0);
+        antenna.userData = { isArgoFloat: true, float: obs };
+        marker.add(antenna);
+
+        const beaconGeom = new THREE.SphereGeometry(0.7, 12, 12);
+        const beaconMat = new THREE.MeshStandardMaterial({
+          color: 0xfbbf24,
+          emissive: 0xf59e0b,
+          emissiveIntensity: 0.85
+        });
+        const beacon = new THREE.Mesh(beaconGeom, beaconMat);
+        beacon.position.set(0, 3.4, 0);
+        beacon.userData = { isArgoFloat: true, float: obs };
+        marker.add(beacon);
+      }
+
+      // Vertical Sounding Wire down to profiling depth
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, bottomY, 0)
+      ]);
+      const lineMat = new THREE.LineDashedMaterial({
+        color: markerColor,
+        dashSize: 1.5,
+        gapSize: 0.8,
+        opacity: 0.45,
+        transparent: true
+      });
+      const soundingWire = new THREE.Line(lineGeom, lineMat);
+      soundingWire.computeLineDistances();
+      marker.add(soundingWire);
+
       this.markersGroup.add(marker);
     });
     this.scene.layers.observations = { group: this.markersGroup };
@@ -1100,16 +1250,25 @@ class AnalysisDashboard {
     this.selectedRegion = null;
     this.selectedCell = null;
 
+    const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
     SelectionContext.setSelection({
-      type: 'argo',
-      id: obs.id || obs.wmo,
+      type: isGlider ? 'glider' : 'argo',
+      id: obs.id || obs.wmo || obs.glider_id,
       lat: obs.latitude,
       lon: obs.longitude,
-      argoId: obs.id || obs.wmo
+      argoId: isGlider ? null : (obs.id || obs.wmo),
+      gliderId: isGlider ? (obs.id || obs.glider_id) : null
     });
 
     const argoSel = document.getElementById('selectArgo');
-    if (argoSel) argoSel.value = String(obs.id || obs.wmo);
+    const gliderSel = document.getElementById('selectGlider');
+    if (isGlider) {
+      if (gliderSel) gliderSel.value = String(obs.id || obs.glider_id);
+      if (argoSel) argoSel.value = '';
+    } else {
+      if (argoSel) argoSel.value = String(obs.id || obs.wmo);
+      if (gliderSel) gliderSel.value = '';
+    }
 
     const latInput = document.getElementById('manualLat');
     const lonInput = document.getElementById('manualLon');
@@ -1140,10 +1299,10 @@ class AnalysisDashboard {
     if (latInput) latInput.value = cell.lat.toFixed(2);
     if (lonInput) lonInput.value = cell.lon.toFixed(2);
 
-    // Fetch point ocean data for value readout
+    // Fetch point ocean data for value readout and vertical profile
     try {
-      const ptData = await ApiClient.getOceanPoint(cell.lat, cell.lon, this.activeTime);
-      if (ptData && ptData.variables) {
+      const ptData = await ApiClient.getOceanPoint(cell.lat, cell.lon, this.activeTime, cell.depthM != null ? cell.depthM : this.activeDepth);
+      if (ptData && (ptData.variables || ptData.profile)) {
         this.selectedCell.pointData = ptData;
       }
     } catch (_) {}
@@ -1255,6 +1414,7 @@ class AnalysisDashboard {
       this._wireSidebarButtons();
     } else if (this.selectedObservation) {
       const o = this.selectedObservation;
+      const isGlider = o.type === 'glider' || /glider/i.test(o.platform || '');
       const profile = o.profile || [];
       const nearestPt = profile.length > 0
         ? profile.reduce((prev, curr) => Math.abs(curr.depth - this.activeDepth) < Math.abs(prev.depth - this.activeDepth) ? curr : prev)
@@ -1265,8 +1425,10 @@ class AnalysisDashboard {
       const errorVal = (obsVal != null && modelVal != null) ? (modelVal - obsVal) : null;
 
       sb.innerHTML = `
-        <div class="sidebar-row"><label>PLATFORM</label><span>${o.platform || 'Apex CTD Float'}</span></div>
-        <div class="sidebar-row"><label>FLOAT ID</label><span class="mono">#${o.wmo || o.id}</span></div>
+        <div class="sidebar-row"><label>TARGET</label><span style="color:${isGlider ? '#22d3ee' : '#f59e0b'};font-weight:700;">${isGlider ? 'Autonomous Glider' : 'Argo Profiling Float'}</span></div>
+        <div class="sidebar-row"><label>PLATFORM</label><span>${o.platform || (isGlider ? 'Autonomous Underwater Glider' : 'Apex CTD Float')}</span></div>
+        <div class="sidebar-row"><label>${isGlider ? 'GLIDER ID' : 'FLOAT ID'}</label><span class="mono">#${o.wmo || o.id || o.glider_id}</span></div>
+        <div class="sidebar-row"><label>INSTITUTION</label><span>${o.institution || 'Copernicus Marine In-Situ'}</span></div>
         <div class="sidebar-row"><label>LOCATION</label><span class="mono">${o.latitude.toFixed(2)}°N, ${o.longitude.toFixed(2)}°E</span></div>
         <div class="sidebar-row"><label>ACTIVE DEPTH</label><span>${this.activeDepth} m</span></div>
         <div class="sidebar-divider"></div>
@@ -1447,7 +1609,7 @@ class AnalysisDashboard {
     const baseVar = this.getBaseVar(this.activeVar);
 
     if (baseVar !== 'temperature' && baseVar !== 'salinity') {
-      this.clearProfileChart("Argo in-situ vertical profiles only available for Temperature and Salinity.");
+      this.clearProfileChart("In-situ vertical profiles only available for Temperature and Salinity.");
       this.clearErrorDepthChart("Error vs depth profile only available for Temperature and Salinity.");
       this.clearTimeSeriesChart("Time series comparison unavailable for non-Argo variable.");
       return;
@@ -1459,15 +1621,49 @@ class AnalysisDashboard {
         this.renderProfileChart(profile);
         this.renderErrorDepthChart(profile);
       } catch (e) {
-        this.clearProfileChart("Profile data unavailable for selected float.");
+        this.clearProfileChart("Profile data unavailable for selected platform.");
         this.clearErrorDepthChart("Error profile unavailable.");
       }
+    } else if (this.selectedCell?.pointData?.profile && Array.isArray(this.selectedCell.pointData.profile)) {
+      this.renderPointSoundingChart(this.selectedCell.pointData.profile, baseVar);
+      this.clearErrorDepthChart("Arbitrary grid point sounding (no collocated in-situ profile for error computation).");
     } else {
-      this.clearProfileChart("Select an Argo float or anomaly to view vertical profile comparison.");
-      this.clearErrorDepthChart("Select an Argo float or anomaly to view error vs depth.");
+      this.clearProfileChart("Select an in-situ platform, anomaly, or click any ocean grid cell to view vertical sounding profile.");
+      this.clearErrorDepthChart("Select an in-situ platform or anomaly to view model discrepancy profile.");
     }
 
     await this.updateTimeSeriesChart(selectedFloat);
+  }
+
+  renderPointSoundingChart(profileArray, baseVar) {
+    if (!this.modelArgoChart) return;
+    if (!Array.isArray(profileArray) || !profileArray.length) {
+      this.clearProfileChart();
+      return;
+    }
+
+    const unit = this.getVariableUnit(baseVar);
+    const validPoints = profileArray.filter(p => p[baseVar] != null && Number.isFinite(Number(p[baseVar])));
+    if (!validPoints.length) {
+      this.clearProfileChart(`No vertical sounding data for ${this.prettyVar(baseVar)} at selected grid point.`);
+      return;
+    }
+
+    const coordStr = this.selectedCell ? ` at (${this.selectedCell.lat.toFixed(2)}°N, ${this.selectedCell.lon.toFixed(2)}°E)` : '';
+    this.modelArgoChart.options.scales.x.title.text = `${this.prettyVar(baseVar)} (${unit})${coordStr}`;
+    this.modelArgoChart.data.labels = validPoints.map(p => Number(p.depth));
+    this.modelArgoChart.data.datasets = [
+      {
+        label: `Model Sounding (Copernicus NEMO)${coordStr}`,
+        data: validPoints.map(p => Number(p[baseVar])),
+        borderColor: '#0284C7',
+        backgroundColor: 'rgba(2, 132, 199, 0.12)',
+        borderWidth: 2,
+        pointRadius: 3,
+        fill: true
+      }
+    ];
+    this.modelArgoChart.update();
   }
 
   renderProfileChart(profileData) {
@@ -1640,7 +1836,23 @@ class AnalysisDashboard {
     const gaps = this.gapsData?.gap_regions || [];
     const anomalies = this.anomaliesCache[this.activeTime] || [];
     const unit = this.getVariableUnit(this.activeVar);
-    const floatsCount = acc.floats_compared || this.argoData.length || 0;
+    const floatsCount = acc.floats_compared != null ? acc.floats_compared : (this.argoData.length || 0);
+
+    // Dynamic Thermocline & Depth of Discrepancy Calculation (Section 11)
+    const maxDepth = acc.depth_of_max_rmse ?? acc.depth_of_max_discrepancy;
+    let depthDiscrepancyStr = '';
+    if (maxDepth != null) {
+      const dMin = Math.max(0, Math.round(maxDepth - 25));
+      const dMax = Math.round(maxDepth + 25);
+      depthDiscrepancyStr = `The largest discrepancy occurs around the <strong>${dMin}–${dMax} m</strong> depth range (depth of max RMSE: ${maxDepth} m).`;
+    } else if (acc.top_discrepancy && acc.top_discrepancy.depth != null) {
+      const d = acc.top_discrepancy.depth;
+      depthDiscrepancyStr = `The largest discrepancy occurs around <strong>${d} m</strong>.`;
+    } else if (acc.overall_rmse > 1.5) {
+      depthDiscrepancyStr = 'Elevated model discrepancies observed across the water column.';
+    } else {
+      depthDiscrepancyStr = 'Model predictions closely track in-situ observations across surface and subsurface layers.';
+    }
 
     // Build Scientific Insight section
     let insightHtml = '';
@@ -1652,10 +1864,11 @@ class AnalysisDashboard {
             <span class="taxonomy-tag computed">COMPUTED</span>
             <span class="taxonomy-tag inferred">INFERRED</span>
           </div>
-          The selected basin contains <strong>${floatsCount} matched in-situ profile(s)</strong>.
+          The selected basin contains <strong>${floatsCount} matched in-situ profile(s)</strong> (${acc.total_sounding_points || 0} sounding points).
           The model-observation RMSE is <strong>${acc.overall_rmse.toFixed(2)} ${unit}</strong> and mean bias is 
           <strong>${(acc.overall_bias > 0 ? '+' : '')}${(acc.overall_bias || 0).toFixed(2)} ${unit}</strong>.
-          ${acc.overall_rmse > 1.5 ? 'The largest discrepancy occurs around the <strong>50–200 m</strong> thermocline depth range.' : 'Model predictions closely track in-situ observations across surface and subsurface layers.'}
+          ${depthDiscrepancyStr}
+          ${floatsCount < 3 ? `<div style="margin-top:8px; font-size:12px; color:#f59e0b; display:flex; align-items:center; gap:5px;"><span>⚠</span> <em>Limited sample count (${floatsCount} platform${floatsCount === 1 ? '' : 's'}). Model agreement estimates carry higher uncertainty.</em></div>` : ''}
         </div>
       `;
     } else {
@@ -1665,39 +1878,109 @@ class AnalysisDashboard {
             <span class="taxonomy-tag observed">OBSERVED</span>
             <span class="taxonomy-tag computed">COMPUTED</span>
           </div>
-          No matched in-situ soundings for active parameters in this regional bounding box. Analysis based on Copernicus numerical model output.
+          No matched in-situ soundings for active parameters in this regional bounding box. Model predictions cannot be empirically validated without collocated observation profiles.
         </div>
       `;
     }
 
-    // Rule 1: High Thermocline Discrepancy
+    const areaName = SelectionContext.getArea()?.name || 'Selected Region';
+    const dateStr = this.activeTime ? this.activeTime.slice(0, 10) : 'Current Interval';
+    const sampleStr = `${floatsCount} platform(s), ${acc.total_sounding_points || 0} pts`;
+
+    // Flag 1: High model error (RMSE > 1.50)
     if (acc.overall_rmse && acc.overall_rmse > 1.5) {
+      const isCritical = acc.overall_rmse > 3.0;
       this.warnings.push({
         id: 'flag-discrepancy',
-        severity: acc.overall_rmse > 3.0 ? 'critical' : 'warning',
-        title: 'Elevated model discrepancy',
-        evidence: `RMSE ${acc.overall_rmse.toFixed(2)} ${unit} across ${floatsCount} matched profiles (Bias: ${(acc.overall_bias > 0 ? '+' : '')}${(acc.overall_bias || 0).toFixed(2)} ${unit})`
+        severity: isCritical ? 'critical' : 'warning',
+        title: 'High Model Error',
+        variable: this.prettyVar(this.activeVar),
+        area: areaName,
+        date: dateStr,
+        depth: acc.depth_of_max_rmse != null ? `${acc.depth_of_max_rmse} m (max RMSE)` : 'Water Column',
+        metric: 'RMSE',
+        actualValue: `${acc.overall_rmse.toFixed(2)} ${unit}`,
+        threshold: `1.50 ${unit}`,
+        sampleCount: sampleStr,
+        evidence: `Root Mean Squared Error of ${acc.overall_rmse.toFixed(2)} ${unit} exceeds acceptance threshold of 1.50 ${unit}.`
       });
     }
 
-    // Rule 2: Critical Observation Gap Sector
+    // Flag 2: Systematic bias (|bias| > 0.80)
+    if (acc.overall_bias != null && Math.abs(acc.overall_bias) > 0.8) {
+      const isCritical = Math.abs(acc.overall_bias) > 1.5;
+      this.warnings.push({
+        id: 'flag-bias',
+        severity: isCritical ? 'critical' : 'warning',
+        title: 'Systematic Model Bias',
+        variable: this.prettyVar(this.activeVar),
+        area: areaName,
+        date: dateStr,
+        depth: acc.depth_of_max_discrepancy != null ? `${acc.depth_of_max_discrepancy} m` : 'Water Column',
+        metric: 'Mean Bias',
+        actualValue: `${acc.overall_bias > 0 ? '+' : ''}${acc.overall_bias.toFixed(2)} ${unit}`,
+        threshold: `±0.80 ${unit}`,
+        sampleCount: sampleStr,
+        evidence: `Systematic model ${acc.overall_bias > 0 ? 'under-prediction (observed > model)' : 'over-prediction (model > observed)'} across sounding column.`
+      });
+    }
+
+    // Flag 3: Observation gap (< 35%)
     if (cov.spatial_coverage_pct != null && cov.spatial_coverage_pct < 35.0) {
+      const isCritical = cov.spatial_coverage_pct < 15.0;
       this.warnings.push({
         id: 'flag-coverage-gap',
-        severity: cov.spatial_coverage_pct < 15.0 ? 'warning' : 'info',
-        title: 'Observation coverage gap',
-        evidence: `Spatial coverage: ${(cov.spatial_coverage_pct || 0).toFixed(1)}% across basin. ${gaps.length} unmonitored sectors detected.`
+        severity: isCritical ? 'critical' : 'warning',
+        title: 'Observation Coverage Gap',
+        variable: this.prettyVar(this.activeVar),
+        area: areaName,
+        date: dateStr,
+        depth: 'All Depth Strata',
+        metric: 'Spatial Coverage',
+        actualValue: `${(cov.spatial_coverage_pct || 0).toFixed(1)}%`,
+        threshold: '35.0%',
+        sampleCount: `${cov.total_observations || floatsCount} observation(s)`,
+        evidence: `Spatial coverage of ${(cov.spatial_coverage_pct || 0).toFixed(1)}% falls below 35.0% threshold. ${gaps.length} unmonitored quadrant sector(s) detected.`
       });
     }
 
-    // Rule 3: Subsurface Physical Anomalies
-    const criticalAnoms = anomalies.filter(a => a.severity === 'CRITICAL' || Math.abs(a.z_score || 0) > 2.0);
+    // Flag 4: Anomaly cluster (> 2.0σ)
+    const criticalAnoms = anomalies.filter(a => a.severity === 'CRITICAL' || a.severity === 'HIGH' || Math.abs(a.z_score || 0) > 2.0);
     if (criticalAnoms.length > 0) {
+      const top = criticalAnoms[0];
       this.warnings.push({
         id: 'flag-anomalies',
         severity: 'critical',
-        title: 'Subsurface physical anomaly cluster',
-        evidence: `${criticalAnoms.length} depth levels exceed 2.0σ. Max discrepancy: ${criticalAnoms[0].difference > 0 ? '+' : ''}${criticalAnoms[0].difference.toFixed(2)} ${unit} at Float #${criticalAnoms[0].float_id} (${criticalAnoms[0].depth}m).`
+        title: 'Subsurface Anomaly Cluster',
+        variable: this.prettyVar(this.activeVar),
+        area: areaName,
+        date: top.time ? top.time.slice(0, 10) : dateStr,
+        depth: `${top.depth} m`,
+        metric: 'Z-Score / Discrepancy',
+        actualValue: `${top.z_score ? top.z_score.toFixed(2) + 'σ' : (top.difference > 0 ? '+' : '') + top.difference.toFixed(2) + ' ' + unit}`,
+        threshold: '2.00σ',
+        sampleCount: `${criticalAnoms.length} anomalous sounding level(s)`,
+        evidence: `${criticalAnoms.length} sounding levels exceed 2.0σ threshold. Peak discrepancy: ${top.difference > 0 ? '+' : ''}${top.difference.toFixed(2)} ${unit} at Float #${top.float_id} (${top.depth} m).`
+      });
+    }
+
+    // Flag 5: Insufficient data (< 3 platforms)
+    if (floatsCount < 3) {
+      this.warnings.push({
+        id: 'flag-insufficient-data',
+        severity: floatsCount === 0 ? 'critical' : 'warning',
+        title: 'Insufficient In-Situ Data',
+        variable: this.prettyVar(this.activeVar),
+        area: areaName,
+        date: dateStr,
+        depth: 'Full Column',
+        metric: 'Platform Count',
+        actualValue: `${floatsCount} platform(s)`,
+        threshold: '≥ 3 platforms',
+        sampleCount: `${floatsCount} platform(s)`,
+        evidence: floatsCount === 0
+          ? 'Zero collocated in-situ soundings in active bounding box. Model predictions cannot be empirically ground-truthed.'
+          : `Only ${floatsCount} in-situ platform(s) available in this region. Low statistical power for bias and RMSE validation.`
       });
     }
 
@@ -1714,11 +1997,24 @@ class AnalysisDashboard {
         <div class="analytical-flag-list">
           ${this.warnings.map(w => `
             <div class="analytical-flag-card flag-${w.severity}">
-              <div class="flag-header">
-                <span class="flag-indicator-dot"></span>
-                <span class="flag-title">${w.title}</span>
+              <div class="flag-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="flag-indicator-dot"></span>
+                  <span class="flag-title">${w.title}</span>
+                </div>
+                <span class="taxonomy-tag ${w.severity === 'critical' ? 'flag-badge-critical' : 'flag-badge-warning'}" style="text-transform:uppercase; font-size:10px; font-weight:700;">${w.severity}</span>
               </div>
-              <div class="flag-evidence">${w.evidence}</div>
+              <div class="flag-evidence" style="margin: 4px 0 8px 0;">${w.evidence}</div>
+              <div class="flag-metrics-grid" style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 4px 8px; font-size: 11px; background: rgba(0,0,0,0.03); padding: 8px 10px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.06); line-height: 1.4;">
+                <div><span style="color:var(--text-secondary);">Variable:</span> <strong>${w.variable}</strong></div>
+                <div><span style="color:var(--text-secondary);">Area:</span> <strong>${w.area}</strong></div>
+                <div><span style="color:var(--text-secondary);">Date:</span> <strong>${w.date}</strong></div>
+                <div><span style="color:var(--text-secondary);">Depth:</span> <strong>${w.depth}</strong></div>
+                <div><span style="color:var(--text-secondary);">Metric:</span> <strong>${w.metric}</strong></div>
+                <div><span style="color:var(--text-secondary);">Actual:</span> <strong style="color:${w.severity === 'critical' ? '#ef4444' : '#f59e0b'};">${w.actualValue}</strong></div>
+                <div><span style="color:var(--text-secondary);">Threshold:</span> <strong>${w.threshold}</strong></div>
+                <div><span style="color:var(--text-secondary);">Sample Count:</span> <strong>${w.sampleCount}</strong></div>
+              </div>
             </div>
           `).join('')}
         </div>

@@ -1,6 +1,16 @@
 from typing import List, Dict, Any, Optional
+import numpy as np
 from ..processing.interpolation import compare_vertical_profiles
 from .ocean_data_service import get_ocean_point
+from ..adapters.glider_adapter import GliderAdapter
+
+_GLIDER_ADAPTER = None
+
+def get_glider_adapter() -> GliderAdapter:
+    global _GLIDER_ADAPTER
+    if _GLIDER_ADAPTER is None:
+        _GLIDER_ADAPTER = GliderAdapter()
+    return _GLIDER_ADAPTER
 
 # Authoritative calibrated Argo profiling floats in the Indian Ocean & Bay of Bengal basin
 # Includes Core CTD (Temperature, Salinity, Pressure) and Bio-Argo (Chlorophyll-a) profiles.
@@ -273,6 +283,23 @@ def get_argo_float(float_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+# Glider observations
+def get_glider_observations(
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    time: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns normalized autonomous glider observations within bounding box from Copernicus in-situ."""
+    return get_glider_adapter().search_gliders(min_lon=min_lon, max_lon=max_lon, min_lat=min_lat, max_lat=max_lat, start_time=time, end_time=time)
+
+
+def get_glider_profile(glider_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves vertical sounding profile for a specific glider ID."""
+    return get_glider_adapter().get_glider_profile(glider_id)
+
+
 # Backward compatibility aliases
 def get_observations(
     min_lon: Optional[float] = None,
@@ -283,42 +310,40 @@ def get_observations(
     return get_argo_observations(min_lon=min_lon, max_lon=max_lon, min_lat=min_lat, max_lat=max_lat)
 
 
-def get_observation_comparison(obs_id: str) -> Dict[str, Any]:
-    """Compares an Argo float profile against collocated model readings."""
-    obs = next((o for o in ARGO_OBSERVATIONS if o['id'] == obs_id or str(o['wmo']) == str(obs_id)), None)
+def get_observation_comparison(obs_id: str, variable: str = 'temperature', time: Optional[str] = None) -> Dict[str, Any]:
+    """Compares an Argo float or glider profile against real collocated model readings."""
+    clean_id = str(obs_id).strip()
+    obs = next((o for o in ARGO_OBSERVATIONS if str(o.get('id')) == clean_id or str(o.get('wmo')) == clean_id), None)
+    is_glider = False
+    if not obs:
+        obs = get_glider_adapter().get_glider_profile(clean_id)
+        is_glider = True
     if not obs:
         return {'error': f"Observation ID '{obs_id}' not found"}
 
     lat = obs['latitude']
     lon = obs['longitude']
-    from ..adapters.copernicus_adapter import CopernicusAdapter
-    ca = CopernicusAdapter()
-    try:
-        model_point = ca.fetch_ocean_point(lat, lon, None, None)
-        surf_temp = model_point.get('ocean_temperature') or 28.8
-    except Exception:
-        surf_temp = 28.8
+    var_key = 'salinity' if variable in ('salinity', 'sal', 'so') else 'temperature'
 
-    model_depths = [0, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000]
-    model_temps = [
-        surf_temp,
-        surf_temp - 0.2,
-        surf_temp - 0.8,
-        surf_temp - 3.2,
-        surf_temp - 5.8,
-        surf_temp - 8.1,
-        surf_temp - 11.2,
-        surf_temp - 14.1,
-        surf_temp - 17.0,
-        surf_temp - 19.4,
-        surf_temp - 21.3,
-        surf_temp - 22.6
-    ]
+    # Query real model vertical profile at (lat, lon)
+    pt_data = get_ocean_point(latitude=lat, longitude=lon, time=time or obs.get('timestamp') or obs.get('date'))
+    model_profile = pt_data.get('profile', [])
 
-    comp_result = compare_vertical_profiles(model_depths, model_temps, obs['profile'])
+    model_depths = []
+    model_vals = []
+    for p in model_profile:
+        val = p.get(var_key)
+        if val is not None and not np.isnan(val):
+            model_depths.append(p['depth'])
+            model_vals.append(val)
+
+    obs_profile = obs.get('profile', [])
+    comp_result = compare_vertical_profiles(model_depths, model_vals, obs_profile, variable=var_key)
     return {
-        'observation': _normalize_argo_record(obs),
+        'observation': obs if is_glider else _normalize_argo_record(obs),
         'comparison': comp_result['profile'],
         'rmse': comp_result['rmse'],
-        'bias': comp_result['bias']
+        'bias': comp_result['bias'],
+        'variable': var_key,
+        'unit': 'PSU' if var_key == 'salinity' else '°C'
     }

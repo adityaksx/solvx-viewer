@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import numpy as np
@@ -7,8 +8,10 @@ from fastapi import HTTPException
 
 from ..config import MODEL_DATA_DIR
 from ..processing.normalization import sanitize, normalize_time_coordinate, variable_catalog
-from ..processing.subset import subset_array, select_surface, select_time
+from ..processing.subset import subset_array, select_surface, select_time, select_depth
 from .cache_service import safe_open_dataset, NETCDF_LOCK
+
+logger = logging.getLogger("solvx.ocean_data_service")
 
 def get_nc_files() -> List[Path]:
     return sorted(MODEL_DATA_DIR.glob('*.nc'))
@@ -170,7 +173,7 @@ def get_ocean_current_grid(time: Optional[str] = None, depth: Optional[float] = 
             'units': u.attrs.get('units') or v.attrs.get('units')
         }
 
-def get_ocean_point(latitude: float, longitude: float, time: Optional[str] = None) -> Dict[str, Any]:
+def get_ocean_point(latitude: float, longitude: float, time: Optional[str] = None, depth: Optional[float] = None) -> Dict[str, Any]:
     result = []
     for logical, label in [
         ('temperature', 'Temperature'),
@@ -195,12 +198,12 @@ def get_ocean_point(latitude: float, longitude: float, time: Optional[str] = Non
                                 q = q.sel({dim: val}, method='nearest')
                         if time is not None:
                             q = select_time(q, time)
-                        q = select_surface(q)
+                        q = select_depth(q, depth)
                         if q.ndim:
                             q = q.isel({dim: 0 for dim in q.dims})
                         if q.ndim == 0:
                             vals[name] = sanitize(q.values)
-                    speed = float(np.hypot(vals.get(un, 0), vals.get(vn, 0))) if (un in vals and vn in vals) else None
+                    speed = float(np.hypot(vals.get(un, 0), vals.get(vn, 0))) if (un in vals and vn in vals and vals.get(un) is not None and vals.get(vn) is not None) else None
                     result.append({
                         'id': logical,
                         'label': label,
@@ -223,7 +226,7 @@ def get_ocean_point(latitude: float, longitude: float, time: Optional[str] = Non
                         q = q.sel({dim: val}, method='nearest')
                 if time is not None:
                     q = select_time(q, time)
-                q = select_surface(q)
+                q = select_depth(q, depth)
                 if q.ndim:
                     q = q.isel({dim: 0 for dim in q.dims})
                 result.append({
@@ -236,7 +239,112 @@ def get_ocean_point(latitude: float, longitude: float, time: Optional[str] = Non
                 })
         except Exception as e:
             result.append({'id': logical, 'label': label, 'available': False, 'value': None, 'error': str(e)})
-    return {'latitude': latitude, 'longitude': longitude, 'time': time, 'values': result}
+
+    # Extract vertical profile across real available depths
+    available_depths: List[float] = []
+    profile_points: List[Dict[str, Any]] = []
+
+    try:
+        m_temp = find_logical('temperature')
+        m_sal = find_logical('salinity')
+        cf_curr, un_curr, vn_curr = find_current_components()
+
+        temp_by_depth = {}
+        sal_by_depth = {}
+        u_by_depth = {}
+        v_by_depth = {}
+
+        if m_temp:
+            f, n, _, _, _ = m_temp[0]
+            with safe_open_dataset(f) as ds:
+                da = ds[n]
+                depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in da.dims or d in da.coords), None)
+                if depth_dim and depth_dim in da.coords:
+                    available_depths = [round(float(d_val), 2) for d_val in da.coords[depth_dim].values]
+                    q = da
+                    for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                        if dim in q.dims:
+                            q = q.sel({dim: val}, method='nearest')
+                    if time is not None:
+                        q = select_time(q, time)
+                    for d in ('time', 't'):
+                        if d in q.dims:
+                            q = q.isel({d: 0})
+                    if q.ndim == 1 and depth_dim in q.dims:
+                        for d_val, t_val in zip(available_depths, q.values):
+                            if not np.isnan(t_val):
+                                temp_by_depth[d_val] = round(float(t_val), 3)
+
+        if m_sal:
+            f, n, _, _, _ = m_sal[0]
+            with safe_open_dataset(f) as ds:
+                da = ds[n]
+                depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in da.dims or d in da.coords), None)
+                if depth_dim and depth_dim in da.coords:
+                    q = da
+                    for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                        if dim in q.dims:
+                            q = q.sel({dim: val}, method='nearest')
+                    if time is not None:
+                        q = select_time(q, time)
+                    for d in ('time', 't'):
+                        if d in q.dims:
+                            q = q.isel({d: 0})
+                    if q.ndim == 1 and depth_dim in q.dims:
+                        for d_val, s_val in zip(da.coords[depth_dim].values, q.values):
+                            d_round = round(float(d_val), 2)
+                            if not np.isnan(s_val):
+                                sal_by_depth[d_round] = round(float(s_val), 3)
+
+        if cf_curr and un_curr and vn_curr:
+            with safe_open_dataset(cf_curr) as ds:
+                for name, d_dict in [(un_curr, u_by_depth), (vn_curr, v_by_depth)]:
+                    da = ds[name]
+                    depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in da.dims or d in da.coords), None)
+                    if depth_dim and depth_dim in da.coords:
+                        q = da
+                        for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                            if dim in q.dims:
+                                q = q.sel({dim: val}, method='nearest')
+                        if time is not None:
+                            q = select_time(q, time)
+                        for d in ('time', 't'):
+                            if d in q.dims:
+                                q = q.isel({d: 0})
+                        if q.ndim == 1 and depth_dim in q.dims:
+                            for d_val, val in zip(da.coords[depth_dim].values, q.values):
+                                d_round = round(float(d_val), 2)
+                                if not np.isnan(val):
+                                    d_dict[d_round] = round(float(val), 3)
+
+        all_depths = sorted(set(available_depths) | set(sal_by_depth.keys()) | set(u_by_depth.keys()))
+        for d in all_depths:
+            t_val = temp_by_depth.get(d)
+            s_val = sal_by_depth.get(d)
+            u_val = u_by_depth.get(d)
+            v_val = v_by_depth.get(d)
+            speed_val = float(np.hypot(u_val, v_val)) if (u_val is not None and v_val is not None) else None
+            if t_val is not None or s_val is not None or u_val is not None or v_val is not None:
+                profile_points.append({
+                    'depth': d,
+                    'temperature': t_val,
+                    'salinity': s_val,
+                    'current_u': u_val,
+                    'current_v': v_val,
+                    'current_speed': round(speed_val, 3) if speed_val is not None else None
+                })
+    except Exception as e:
+        logger.warning(f"Failed to extract vertical profile at ({latitude}, {longitude}): {e}")
+
+    return {
+        'latitude': latitude,
+        'longitude': longitude,
+        'time': time,
+        'depth': depth,
+        'available_depths': available_depths,
+        'profile': profile_points,
+        'values': result
+    }
 
 def get_region_array(
     file: str,

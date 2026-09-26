@@ -96,8 +96,8 @@ def legacy_ocean_current_grid(time: Optional[str] = None, depth: Optional[float]
     return get_ocean_current_grid(time=time, depth=depth, stride=stride)
 
 @app.get('/ocean/point')
-def legacy_ocean_point(latitude: float, longitude: float, time: Optional[str] = None):
-    return get_ocean_point(latitude=latitude, longitude=longitude, time=time)
+def legacy_ocean_point(latitude: float, longitude: float, time: Optional[str] = None, depth: Optional[float] = None):
+    return get_ocean_point(latitude=latitude, longitude=longitude, time=time, depth=depth)
 
 @app.get('/ocean/observations')
 def legacy_ocean_observations(min_lon: Optional[float] = None, max_lon: Optional[float] = None, min_lat: Optional[float] = None, max_lat: Optional[float] = None):

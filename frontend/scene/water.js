@@ -1,6 +1,7 @@
-// SolvX Viewer — Dynamic Ocean Water Surface & Volume Column
+// SolvX Viewer — Bathymetry-Driven 3D Ocean Volumetric Columns
 import * as THREE from 'three';
-import { OceanVertShader, OceanFragShader } from './oceanShader.js';
+
+const _tempCol = new THREE.Color();
 
 export class DynamicWater {
     constructor(bathymetry, sceneManager, options = {}) {
@@ -9,31 +10,16 @@ export class DynamicWater {
         this.bounds = bathymetry.bounds || [84.1, 93.0, 16.0, 23.5];
 
         this.temperature = options.temperature || 28.0;
-        this.waveHeight = options.waveHeight || 0.6;
-        this.opacity = options.opacity || 0.28;
+        this.opacity = options.opacity != null ? options.opacity : 0.65;
 
         this.group = new THREE.Group();
-        this.surfaceMesh = null;
         this.instancedVolume = null;
         this.cells = [];
 
-        // Create bathymetry mask texture
+        // Retain bathymetry texture for subsurface slice masking if needed
         this.bathyTex = this._buildBathymetryTexture();
 
-        this.uniforms = {
-            uTime: { value: 0 },
-            uWaveHeight: { value: this.waveHeight },
-            uBaseColor: { value: new THREE.Color(0x0c659e) },
-            uSkyColor: { value: new THREE.Color(0x0a2838) },
-            uBathyTex: { value: this.bathyTex },
-            uHasBathyTex: { value: this.bathyTex ? 1.0 : 0.0 },
-            uDataTex: { value: null },
-            uHasDataTex: { value: 0.0 },
-            uDataOpacity: { value: 1.0 }
-        };
-
         this.buildVolume();
-        this.buildSurface();
     }
 
     /**
@@ -51,11 +37,10 @@ export class DynamicWater {
         for (let j = 0; j < ny; j++) {
             for (let i = 0; i < nx; i++) {
                 const rawD = Number((t.rawDepthKm[j] || [])[i]);
-                // Store depth value: 0 for land (depth <= 0 or NaN), normalized for ocean
                 if (rawD == null || isNaN(rawD) || rawD <= 0) {
                     data[j * nx + i] = 0.0;
                 } else {
-                    data[j * nx + i] = Math.min(rawD / 6.0, 1.0); // normalize to 0–1 range
+                    data[j * nx + i] = Math.min(rawD / 6.0, 1.0);
                 }
             }
         }
@@ -76,6 +61,8 @@ export class DynamicWater {
         const nx = t.x.length;
         const ny = t.y.length;
         const raw = t.rawDepthKm;
+        
+        // Adaptive sampling targeting ~18000 cells
         const step = Math.max(1, Math.ceil(Math.sqrt((nx * ny) / 18000)));
 
         const midLat = (this.bounds[2] + this.bounds[3]) / 2;
@@ -104,7 +91,6 @@ export class DynamicWater {
                 const posX = (t.y[j] + t.y[j2]) / 2;
                 const posZ = (t.x[i] + t.x[i2]) / 2;
 
-                // Derive exact geographic coordinates
                 const lat = midLat + posX / 111.32;
                 const lon = midLon + posZ / (klon || 1.0);
 
@@ -124,8 +110,10 @@ export class DynamicWater {
         if (!this.cells.length) return;
 
         const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-        const boxMat = new THREE.MeshBasicMaterial({
-            color: 0x249ed0,
+        const boxMat = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            roughness: 0.2,
+            metalness: 0.15,
             transparent: true,
             opacity: this.opacity,
             depthWrite: false,
@@ -135,7 +123,6 @@ export class DynamicWater {
         this.instancedVolume = new THREE.InstancedMesh(boxGeom, boxMat, this.cells.length);
         const dummy = new THREE.Object3D();
 
-        // Find max depth for gradient normalization
         const maxH = Math.max(...this.cells.map(c => c.h), 1);
 
         for (let k = 0; k < this.cells.length; k++) {
@@ -145,11 +132,11 @@ export class DynamicWater {
             dummy.updateMatrix();
             this.instancedVolume.setMatrixAt(k, dummy.matrix);
 
-            // Depth-based color gradient: lighter near surface, darker at depth
+            // Original natural depth visualization gradient
             const depthFrac = Math.min(c.h / maxH, 1.0);
-            const r = 0.08 + (1.0 - depthFrac) * 0.10; // 0.08–0.18
-            const g = 0.35 + (1.0 - depthFrac) * 0.25; // 0.35–0.60
-            const b = 0.55 + (1.0 - depthFrac) * 0.30; // 0.55–0.85
+            const r = 0.08 + (1.0 - depthFrac) * 0.10;
+            const g = 0.35 + (1.0 - depthFrac) * 0.25;
+            const b = 0.55 + (1.0 - depthFrac) * 0.30;
             this.instancedVolume.setColorAt(k, new THREE.Color(r, g, b));
         }
 
@@ -162,102 +149,66 @@ export class DynamicWater {
         this.group.add(this.instancedVolume);
     }
 
-    buildSurface() {
-        const t = this.bathymetry.terrain;
-        if (!t || !t.x || !t.y) return;
-
-        const widthX = Math.abs(t.y[t.y.length - 1] - t.y[0]) || 500;
-        const widthZ = Math.abs(t.x[t.x.length - 1] - t.x[0]) || 500;
-        const centerX = (t.y[0] + t.y[t.y.length - 1]) / 2;
-        const centerZ = (t.x[0] + t.x[t.x.length - 1]) / 2;
-
-        const geom = new THREE.PlaneGeometry(widthX, widthZ, 128, 128);
-        geom.rotateX(-Math.PI / 2);
-
-        // Responsive ocean color based on temperature
-        const baseColor = this.temperature > 26 ? 0x1892c9 : 0x0c659e;
-        this.uniforms.uBaseColor.value.setHex(baseColor);
-
-        const mat = new THREE.ShaderMaterial({
-            vertexShader: OceanVertShader,
-            fragmentShader: OceanFragShader,
-            uniforms: this.uniforms,
-            transparent: true,
-            depthWrite: false,
-            side: THREE.DoubleSide
-        });
-
-        this.surfaceMesh = new THREE.Mesh(geom, mat);
-        // Position at Y=0 (sea level) — same as land top. The shader discards land pixels.
-        this.surfaceMesh.position.set(centerX, 0, centerZ);
-        this.surfaceMesh.renderOrder = 10;
-        this.group.add(this.surfaceMesh);
-    }
-
-    update(timeMs) {
-        if (!this.surfaceMesh) return;
-        this.uniforms.uTime.value = timeMs * 0.001;
-    }
-
     setOpacity(opacity) {
         this.opacity = Number(opacity);
         if (this.instancedVolume?.material) {
             this.instancedVolume.material.opacity = this.opacity;
             this.instancedVolume.visible = this.opacity > 0.01;
         }
-        if (this.surfaceMesh) {
-            this.surfaceMesh.visible = this.opacity > 0.01;
-        }
-    }
-
-    setSurfaceVisible(visible) {
-        if (this.surfaceMesh) {
-            this.surfaceMesh.visible = !!visible;
-        }
     }
 
     setTemperature(temp) {
         this.temperature = temp;
-        const hex = temp > 27 ? 0x1da5d8 : temp > 22 ? 0x1482b8 : 0x095286;
-        this.uniforms.uBaseColor.value.setHex(hex);
     }
 
-    recolorCells(colorFunc) {
+    recolorCells(colorFunc, sliceDepthM = 0) {
         if (!this.instancedVolume) return;
+        const dummy = new THREE.Object3D();
+        const maxH = Math.max(...this.cells.map(c => c.h), 1);
+
         for (let i = 0; i < this.cells.length; i++) {
-            const col = colorFunc(this.cells[i]);
+            const c = this.cells[i];
+
+            // If slicing below this cell's seabed depth, mask it out
+            if (sliceDepthM > 0 && c.depthM < sliceDepthM) {
+                dummy.position.set(c.x, -c.h / 2, c.z);
+                dummy.scale.set(0, 0, 0);
+                dummy.updateMatrix();
+                this.instancedVolume.setMatrixAt(i, dummy.matrix);
+                continue;
+            }
+
+            const col = colorFunc(c);
             if (col) {
                 this.instancedVolume.setColorAt(i, col);
+                dummy.position.set(c.x, -c.h / 2, c.z);
+                dummy.scale.set(c.sx, c.h, c.sz);
+                dummy.updateMatrix();
+                this.instancedVolume.setMatrixAt(i, dummy.matrix);
+            } else {
+                // Default depth gradient
+                const depthFrac = Math.min(c.h / maxH, 1.0);
+                const r = 0.08 + (1.0 - depthFrac) * 0.10;
+                const g = 0.35 + (1.0 - depthFrac) * 0.25;
+                const b = 0.55 + (1.0 - depthFrac) * 0.30;
+                _tempCol.setRGB(r, g, b);
+                this.instancedVolume.setColorAt(i, _tempCol);
+                dummy.position.set(c.x, -c.h / 2, c.z);
+                dummy.scale.set(c.sx, c.h, c.sz);
+                dummy.updateMatrix();
+                this.instancedVolume.setMatrixAt(i, dummy.matrix);
             }
         }
+        this.instancedVolume.instanceMatrix.needsUpdate = true;
         if (this.instancedVolume.instanceColor) {
             this.instancedVolume.instanceColor.needsUpdate = true;
         }
     }
 
-    setDataTexture(tex, opacity = 1.0) {
-        if (this.uniforms.uDataTex.value && this.uniforms.uDataTex.value !== tex) {
-            this.uniforms.uDataTex.value.dispose();
-        }
-        this.uniforms.uDataTex.value = tex;
-        this.uniforms.uHasDataTex.value = tex ? 1.0 : 0.0;
-        this.uniforms.uDataOpacity.value = opacity;
-    }
-
     dispose() {
-        if (this.uniforms?.uDataTex?.value) {
-            this.uniforms.uDataTex.value.dispose();
-            this.uniforms.uDataTex.value = null;
-        }
         if (this.bathyTex) {
             this.bathyTex.dispose();
             this.bathyTex = null;
-        }
-        if (this.surfaceMesh) {
-            this.surfaceMesh.geometry?.dispose();
-            this.surfaceMesh.material?.dispose();
-            this.group.remove(this.surfaceMesh);
-            this.surfaceMesh = null;
         }
         if (this.instancedVolume) {
             this.instancedVolume.geometry?.dispose();
@@ -267,3 +218,4 @@ export class DynamicWater {
         }
     }
 }
+

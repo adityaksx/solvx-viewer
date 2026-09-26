@@ -147,7 +147,6 @@ class SolvXApp {
         this.setupLayerToggles();
 
         this.scene.onUpdate((timeMs) => {
-            this.water?.update(timeMs);
             this.currentParticles?.update(0.016);
         });
 
@@ -173,20 +172,21 @@ class SolvXApp {
         const mapContainer = document.getElementById('mapContainer');
         if (mapContainer && window.maplibregl) {
             try {
-                this.worldMap = new WorldMap2D('mapContainer', {
-                    initialBBox: this.currentBBox
-                });
                 const theme = themeManager.getTheme();
+                const initialBasemap = theme === 'dark' ? 'osm-dark' : 'osm';
+                this.worldMap = new WorldMap2D('mapContainer', {
+                    initialBBox: this.currentBBox,
+                    basemap: initialBasemap
+                });
                 this.worldMap.setTheme(theme);
-                this.worldMap.init().then(() => {
-                    this.regionDrawer = new RegionDrawer(this.worldMap, {
-                        onExplore: (bbox) => {
-                            SelectionContext.setArea({ bbox });
-                            this.loadRegion(bbox);
-                            this.setViewMode('3d');
-                        }
-                    });
-                }).catch(e => console.warn('[WorldMap2D] init err:', e));
+                this.worldMap.init().catch(e => console.warn('[WorldMap2D] init err:', e));
+                this.regionDrawer = new RegionDrawer(this.worldMap, {
+                    onExplore: (bbox) => {
+                        SelectionContext.setArea({ bbox });
+                        this.loadRegion(bbox);
+                        this.setViewMode('3d');
+                    }
+                });
             } catch (e) {
                 console.error('[SolvXApp] 2D Map ERROR:', e);
             }
@@ -354,7 +354,6 @@ class SolvXApp {
             { id: 'layerIslands', layer: 'islands' },
             { id: 'layerEEZ', layer: 'eez' },
             { id: 'layerSeabed', layer: 'seabed' },
-            { id: 'layerWater', layer: 'water' },
             { id: 'layerScientific', layer: 'scientific' },
             { id: 'layerCurrents', layer: 'currents' },
             { id: 'layerParticles', layer: 'particles' }
@@ -372,9 +371,7 @@ class SolvXApp {
     }
 
     applyLayerVisibility(layer, visible) {
-        if (layer === 'water') {
-            if (this.water?.surfaceMesh) this.water.surfaceMesh.visible = visible;
-        } else if (layer === 'scientific') {
+        if (layer === 'scientific') {
             if (this.water?.instancedVolume) this.water.instancedVolume.visible = visible;
         } else if (layer === 'observations') {
             if (this.argoMarkersGroup) this.argoMarkersGroup.visible = visible;
@@ -500,7 +497,7 @@ class SolvXApp {
 
         try {
             // Parallel fetch of catalog, geography, bathymetry, eez, and observations
-            const [catalogData, geoData, bathyData, eezData, argoData] = await Promise.all([
+            const [catalogData, geoData, bathyData, eezData, argoData, gliderData] = await Promise.all([
                 ApiClient.getDataVariables().catch(() => ({ variables: [] })),
                 ApiClient.getDataGeometry(bbox).then(res => {
                     this.updateGeoProgress('stepCoast', 'done', 'Loaded', 40, 'Coastlines & islands processed');
@@ -517,7 +514,8 @@ class SolvXApp {
                     this.updateGeoProgress('stepEEZ', 'done', 'Loaded', 80, 'Maritime boundaries configured');
                     return res;
                 }),
-                ApiClient.getArgoObservations(bbox).catch(() => ApiClient.getDataObservations(bbox)).catch(() => ({ observations: [] }))
+                ApiClient.getArgoObservations(bbox).catch(() => ({ observations: [] })),
+                ApiClient.getGliderObservations(bbox).catch(() => ({ observations: [] }))
             ]);
 
             this.catalog = catalogData.variables || [];
@@ -533,8 +531,12 @@ class SolvXApp {
             const maxD = ((bathyData?.maxDepthKm) || (bathyData?.terrain?.maxDepthKm) || 3.5) * 1000;
             this.depthControl.setMaxDepth(maxD);
 
-            // Assemble 3D Scene
-            this.assemble3DScene(geoData, bathyData, eezData, argoData.observations || []);
+            // Assemble 3D Scene with both Argo floats and Gliders
+            const allObservations = [
+                ...(argoData.observations || []),
+                ...(gliderData?.observations || [])
+            ];
+            this.assemble3DScene(geoData, bathyData, eezData, allObservations);
 
             this.updateGeoProgress('stepTerrain', 'done', 'Ready', 100, 'Geography loaded successfully!');
 
@@ -619,72 +621,104 @@ class SolvXApp {
         observations.forEach(obs => {
             const x = (obs.latitude - midLat) * klat;
             const z = (obs.longitude - midLon) * klon;
+            const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
             const y = 1.2;
-            const maxD = obs.max_depth || 1000;
+            const maxD = obs.max_depth || (obs.depth_range ? obs.depth_range[1] : 1000);
             const bottomY = this.scene.depthY(maxD);
 
             const floatMarker = new THREE.Group();
             floatMarker.position.set(x, y, z);
-            floatMarker.userData = { isArgoFloat: true, float: obs };
+            floatMarker.userData = { isArgoFloat: true, isGlider: isGlider, float: obs };
 
-            // 1. Buoyant Surface Hull
-            const hullGeom = new THREE.CylinderGeometry(1.6, 1.4, 2.2, 16);
-            const hullMat = new THREE.MeshStandardMaterial({
-                color: 0x0284c7,
-                roughness: 0.3,
-                metalness: 0.2
-            });
-            const hull = new THREE.Mesh(hullGeom, hullMat);
-            hull.userData = { isArgoFloat: true, float: obs };
-            floatMarker.add(hull);
+            if (isGlider) {
+                // Autonomous Underwater Glider (Cyan #22d3ee, Winged body)
+                const bodyGeom = new THREE.CylinderGeometry(0.8, 0.9, 3.6, 12);
+                bodyGeom.rotateX(Math.PI / 2);
+                const bodyMat = new THREE.MeshStandardMaterial({
+                    color: 0x22d3ee,
+                    roughness: 0.2,
+                    metalness: 0.3,
+                    emissive: 0x0891b2,
+                    emissiveIntensity: 0.4
+                });
+                const body = new THREE.Mesh(bodyGeom, bodyMat);
+                body.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(body);
 
-            // 2. Transmitting Antenna Mast + Glowing Beacon
-            const antGeom = new THREE.CylinderGeometry(0.15, 0.2, 2.4, 8);
-            const antMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
-            const antenna = new THREE.Mesh(antGeom, antMat);
-            antenna.position.set(0, 2.2, 0);
-            antenna.userData = { isArgoFloat: true, float: obs };
-            floatMarker.add(antenna);
+                // Swept Wings
+                const wingGeom = new THREE.BoxGeometry(4.2, 0.15, 1.2);
+                const wingMat = new THREE.MeshStandardMaterial({ color: 0x06b6d4 });
+                const wings = new THREE.Mesh(wingGeom, wingMat);
+                wings.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(wings);
 
-            const beaconGeom = new THREE.SphereGeometry(0.7, 12, 12);
-            const beaconMat = new THREE.MeshStandardMaterial({
-                color: 0x00d2ff,
-                emissive: 0x00d2ff,
-                emissiveIntensity: 0.85
-            });
-            const beacon = new THREE.Mesh(beaconGeom, beaconMat);
-            beacon.position.set(0, 3.4, 0);
-            beacon.userData = { isArgoFloat: true, float: obs };
-            floatMarker.add(beacon);
+                // Vertical fin
+                const finGeom = new THREE.BoxGeometry(0.15, 1.2, 0.8);
+                const fin = new THREE.Mesh(finGeom, wingMat);
+                fin.position.set(0, 0.6, -1.4);
+                fin.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(fin);
+            } else {
+                // Argo Profiling Float (Amber #f59e0b)
+                const hullGeom = new THREE.CylinderGeometry(1.6, 1.4, 2.2, 16);
+                const hullMat = new THREE.MeshStandardMaterial({
+                    color: 0xf59e0b,
+                    roughness: 0.3,
+                    metalness: 0.2,
+                    emissive: 0xb45309,
+                    emissiveIntensity: 0.3
+                });
+                const hull = new THREE.Mesh(hullGeom, hullMat);
+                hull.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(hull);
 
-            // 3. Vertical Sounding Wire down to profiling depth
-            const lineGeom = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, bottomY, 0)
-            ]);
-            const lineMat = new THREE.LineDashedMaterial({
-                color: 0x38bdf8,
-                dashSize: 2.5,
-                gapSize: 1.5,
-                opacity: 0.8,
-                transparent: true
-            });
-            const wire = new THREE.Line(lineGeom, lineMat);
-            wire.computeLineDistances();
-            wire.userData = { isArgoFloat: true, float: obs };
-            floatMarker.add(wire);
+                const antGeom = new THREE.CylinderGeometry(0.15, 0.2, 2.4, 8);
+                const antMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+                const antenna = new THREE.Mesh(antGeom, antMat);
+                antenna.position.set(0, 2.2, 0);
+                antenna.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(antenna);
 
-            // 4. CTD Sensor Payload Package at Profiling Depth
-            const ctdGeom = new THREE.CylinderGeometry(1.0, 1.0, 1.8, 12);
-            const ctdMat = new THREE.MeshStandardMaterial({
-                color: 0xf59e0b,
-                emissive: 0xd97706,
-                emissiveIntensity: 0.5
-            });
-            const ctd = new THREE.Mesh(ctdGeom, ctdMat);
-            ctd.position.set(0, bottomY, 0);
-            ctd.userData = { isArgoFloat: true, float: obs };
-            floatMarker.add(ctd);
+                const beaconGeom = new THREE.SphereGeometry(0.7, 12, 12);
+                const beaconMat = new THREE.MeshStandardMaterial({
+                    color: 0xfbbf24,
+                    emissive: 0xf59e0b,
+                    emissiveIntensity: 0.85
+                });
+                const beacon = new THREE.Mesh(beaconGeom, beaconMat);
+                beacon.position.set(0, 3.4, 0);
+                beacon.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(beacon);
+
+                // Sounding Wire down to profiling depth
+                const lineGeom = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, bottomY, 0)
+                ]);
+                const lineMat = new THREE.LineDashedMaterial({
+                    color: 0xf59e0b,
+                    dashSize: 2.5,
+                    gapSize: 1.5,
+                    opacity: 0.7,
+                    transparent: true
+                });
+                const wire = new THREE.Line(lineGeom, lineMat);
+                wire.computeLineDistances();
+                wire.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(wire);
+
+                // CTD Sensor Package at Profiling Depth
+                const ctdGeom = new THREE.CylinderGeometry(1.0, 1.0, 1.8, 12);
+                const ctdMat = new THREE.MeshStandardMaterial({
+                    color: 0xd97706,
+                    emissive: 0xb45309,
+                    emissiveIntensity: 0.5
+                });
+                const ctd = new THREE.Mesh(ctdGeom, ctdMat);
+                ctd.position.set(0, bottomY, 0);
+                ctd.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(ctd);
+            }
 
             this.argoMarkersGroup.add(floatMarker);
         });
@@ -1089,6 +1123,7 @@ class SolvXApp {
         const midLon = (this.currentBBox.min_lon + this.currentBBox.max_lon) / 2;
         const posX = (cell.lat - midLat) * 111.32;
         const posZ = (cell.lon - midLon) * 111.32 * Math.cos(midLat * Math.PI / 180);
+        const pointDepth = cell.depthM != null ? cell.depthM : (this.activeDepth || 0);
 
         this.markerMesh.position.set(posX, 1.0, posZ);
         this.markerMesh.visible = true;
@@ -1098,7 +1133,7 @@ class SolvXApp {
         const gridEl = document.getElementById('readoutGrid');
         const timeEl = document.getElementById('readoutTime');
 
-        if (coordsEl) coordsEl.textContent = `${cell.lat.toFixed(4)}° N, ${cell.lon.toFixed(4)}° E`;
+        if (coordsEl) coordsEl.textContent = `${cell.lat.toFixed(4)}° N, ${cell.lon.toFixed(4)}° E · Depth: ${pointDepth.toFixed(1)} m`;
         if (gridEl) gridEl.innerHTML = '<div style="color: var(--ink-muted); font-size: 11px; padding: 4px 0;">Querying oceanographic & atmospheric sensors…</div>';
         readout?.classList.remove('hidden');
 
@@ -1106,7 +1141,7 @@ class SolvXApp {
 
         try {
             const [data, mlData] = await Promise.all([
-                ApiClient.getPoint(cell.lat, cell.lon, this.activeTime).catch(() => ({ variables: {}, units: {} })),
+                ApiClient.getPoint(cell.lat, cell.lon, this.activeTime, pointDepth).catch(() => ({ variables: {}, units: {}, profile: [] })),
                 ApiClient.getMLPoint(cell.lat, cell.lon, this.activeTime).catch(() => null)
             ]);
 
@@ -1143,6 +1178,34 @@ class SolvXApp {
                     <span class="readout-val">${formatVal(vars.sea_level_pressure, 'hPa')}</span>
                 </div>
             `;
+
+            if (data.profile && data.profile.length > 0) {
+                gridHtml += `
+                    <div class="readout-category-title">VERTICAL SOUNDING PROFILE</div>
+                    <div style="max-height: 140px; overflow-y: auto; font-size: 11px; margin-top: 4px; border: 1px solid var(--border-subtle, rgba(255,255,255,0.1)); border-radius: 4px;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: right;">
+                            <thead>
+                                <tr style="color: var(--ink-muted); border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.1)); font-size: 10px;">
+                                    <th style="padding: 2px 4px; text-align: left;">Depth</th>
+                                    <th style="padding: 2px 4px;">Temp</th>
+                                    <th style="padding: 2px 4px;">Sal</th>
+                                    <th style="padding: 2px 4px;">Speed</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.profile.map(p => `
+                                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                                        <td style="padding: 2px 4px; text-align: left;">${p.depth.toFixed(1)} m</td>
+                                        <td style="padding: 2px 4px;">${p.temperature != null ? `${p.temperature.toFixed(2)} °C` : '—'}</td>
+                                        <td style="padding: 2px 4px;">${p.salinity != null ? `${p.salinity.toFixed(2)}` : '—'}</td>
+                                        <td style="padding: 2px 4px;">${p.current_speed != null ? `${p.current_speed.toFixed(2)} m/s` : '—'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
 
             if (mlData?.anomaly || mlData?.hazard) {
                 const aScore = mlData.anomaly?.anomaly_score;

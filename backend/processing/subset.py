@@ -48,6 +48,22 @@ def select_surface(data: xr.DataArray) -> xr.DataArray:
                     return data.isel({dim: 0})
     return data
 
+def select_depth(data: xr.DataArray, depth: Optional[float] = None) -> xr.DataArray:
+    """Selects a specific depth layer along standard vertical dimensions."""
+    if depth is None:
+        return select_surface(data)
+    for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z'):
+        if dim in data.dims:
+            c = data[dim].values
+            if not c.size:
+                continue
+            try:
+                return data.sel({dim: float(depth)}, method='nearest')
+            except Exception:
+                if c.size > 0:
+                    return data.isel({dim: 0})
+    return data
+
 def subset_array(
     data: xr.DataArray,
     lat_min: Optional[float] = None,

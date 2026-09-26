@@ -242,10 +242,11 @@ class TestCopernicusAdapter(unittest.TestCase):
             self.assertTrue(req.headers['Authorization'].startswith('Basic '))
 
     def test_error_transparency(self):
-        with patch.object(self.adapter, '_execute_http_query', side_effect=RuntimeError("Copernicus Marine HTTP 401: Unauthorized")):
-            with self.assertRaises(RuntimeError) as ctx:
-                self.adapter.fetch_ocean_variable('temperature', 16.0, 20.0, 84.0, 88.0)
-            self.assertIn("Copernicus Marine HTTP 401", str(ctx.exception))
+        with patch.object(self.adapter, 'find_cached_file', return_value=None):
+            with patch.object(self.adapter, '_execute_http_query', side_effect=RuntimeError("Copernicus Marine HTTP 401: Unauthorized")):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.adapter.fetch_ocean_variable('temperature', 16.0, 20.0, 84.0, 88.0)
+                self.assertIn("Copernicus Marine HTTP 401", str(ctx.exception))
 
 
 # =============================================================================

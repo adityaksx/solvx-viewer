@@ -91,15 +91,16 @@ def ocean_current_grid(
     return get_ocean_current_grid(time=time, depth=depth, stride=stride)
 
 @router.get('/point')
-def ocean_point(latitude: float = Query(...), longitude: float = Query(...), time: Optional[str] = None):
-    """Point query for all physical oceanographic and atmospheric variables at a given location."""
+def ocean_point(latitude: float = Query(...), longitude: float = Query(...), time: Optional[str] = None, depth: Optional[float] = None):
+    """Point query for all physical oceanographic and atmospheric variables at a given location and depth."""
+    import numpy as np
     from ..services.cache_service import GLOBAL_CACHE, make_cache_key
 
-    cache_key = make_cache_key('ocean_point', {'lat': round(latitude, 4), 'lon': round(longitude, 4), 'time': time})
+    cache_key = make_cache_key('ocean_point', {'lat': round(latitude, 4), 'lon': round(longitude, 4), 'time': time, 'depth': depth})
 
     def _compute_point():
         from ..services.ocean_data_service import get_ocean_point
-        base_res = get_ocean_point(latitude=latitude, longitude=longitude, time=time)
+        base_res = get_ocean_point(latitude=latitude, longitude=longitude, time=time, depth=depth)
         val_map = {v['id']: v.get('value') for v in base_res.get('values', [])}
 
         u_val = None
@@ -121,17 +122,25 @@ def ocean_point(latitude: float = Query(...), longitude: float = Query(...), tim
         salinity = val_map.get('salinity')
         ssh = val_map.get('sea_level') or val_map.get('sea_surface_height')
 
+        cur_speed = float(np.hypot(u_val, v_val)) if (u_val is not None and v_val is not None) else None
+        cur_dir = float((np.degrees(np.arctan2(u_val, v_val)) + 360) % 360) if (u_val is not None and v_val is not None) else None
+
         base_res.update({
             "location": {
                 "latitude": latitude,
                 "longitude": longitude
             },
             "time": time or base_res.get("time"),
+            "depth": depth,
+            "available_depths": base_res.get("available_depths", []),
+            "profile": base_res.get("profile", []),
             "variables": {
                 "ocean_temperature": ocean_temp,
                 "salinity": salinity,
                 "current_u": u_val,
                 "current_v": v_val,
+                "current_speed": cur_speed,
+                "current_direction": cur_dir,
                 "sea_surface_height": ssh,
                 "air_temperature": atmos_data.get("air_temperature"),
                 "relative_humidity": atmos_data.get("relative_humidity"),
@@ -144,6 +153,8 @@ def ocean_point(latitude: float = Query(...), longitude: float = Query(...), tim
                 "salinity": "PSU",
                 "current_u": "m/s",
                 "current_v": "m/s",
+                "current_speed": "m/s",
+                "current_direction": "°",
                 "sea_surface_height": "m",
                 "air_temperature": "°C",
                 "relative_humidity": "%",

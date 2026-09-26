@@ -87,15 +87,48 @@ export class OceanScene {
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.055;
+        this.controls.dampingFactor = 0.075;
+        this.controls.rotateSpeed = 0.9;
+        this.controls.zoomSpeed = 1.2;
+        this.controls.panSpeed = 0.85;
         this.controls.screenSpacePanning = true;
-        this.controls.minDistance = 30;
+        this.controls.minDistance = 20;
         this.controls.maxDistance = 15000;
 
         window.addEventListener('resize', this.onResize.bind(this));
         this.canvas.addEventListener('click', this.onClick.bind(this));
 
         this.animate(0);
+    }
+
+    animateCameraTo(targetCamPos, targetControlsTarget, durationMs = 550) {
+        if (!this.camera || !this.controls) return;
+        if (this._cameraAnim) {
+            cancelAnimationFrame(this._cameraAnim);
+            this._cameraAnim = null;
+        }
+
+        const startCamPos = this.camera.position.clone();
+        const startTarget = this.controls.target.clone();
+        const startTime = performance.now();
+
+        const step = (now) => {
+            const elapsed = now - startTime;
+            const progress = Math.min(elapsed / durationMs, 1);
+            // Smooth ease-out cubic
+            const ease = 1 - Math.pow(1 - progress, 3);
+
+            this.camera.position.lerpVectors(startCamPos, targetCamPos, ease);
+            this.controls.target.lerpVectors(startTarget, targetControlsTarget, ease);
+            this.controls.update();
+
+            if (progress < 1) {
+                this._cameraAnim = requestAnimationFrame(step);
+            } else {
+                this._cameraAnim = null;
+            }
+        };
+        this._cameraAnim = requestAnimationFrame(step);
     }
 
     onUpdate(cb) {
@@ -158,24 +191,32 @@ export class OceanScene {
         return -Math.max(0, Number(meters)) * this.depthEx / 1000;
     }
 
-    fitCamera() {
+    fitCamera(durationMs = 600) {
         const box = new THREE.Box3().setFromObject(this.root);
         if (box.isEmpty()) return;
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
         const radius = Math.max(size.x, size.z, size.y, 10);
 
-        this.controls.target.set(center.x, center.y * 0.12, center.z);
-        this.camera.position.set(center.x + radius * 0.95, center.y + radius * 0.72, center.z + radius * 1.05);
+        const targetControls = new THREE.Vector3(center.x, center.y * 0.12, center.z);
+        const targetPos = new THREE.Vector3(center.x + radius * 0.95, center.y + radius * 0.72, center.z + radius * 1.05);
+
         this.camera.near = 0.1;
         this.camera.far = radius * 30;
         this.camera.updateProjectionMatrix();
-        this.controls.update();
+
+        if (durationMs > 0) {
+            this.animateCameraTo(targetPos, targetControls, durationMs);
+        } else {
+            this.controls.target.copy(targetControls);
+            this.camera.position.copy(targetPos);
+            this.controls.update();
+        }
     }
 
     setView(viewName) {
         if (viewName === 'reset') {
-            this.fitCamera();
+            this.fitCamera(600);
             return;
         }
         const box = new THREE.Box3().setFromObject(this.root);
@@ -183,19 +224,19 @@ export class OceanScene {
         const size = box.getSize(new THREE.Vector3());
         const radius = Math.max(size.x, size.z, size.y, 10);
 
+        let targetPos;
         if (viewName === 'top') {
-            this.camera.position.set(center.x, center.y + radius * 1.65, center.z + 0.001);
+            targetPos = new THREE.Vector3(center.x, center.y + radius * 1.65, center.z + 0.001);
         } else if (viewName === 'cut' || viewName === 'horizontal') {
-            this.camera.position.set(center.x + radius * 1.3, center.y * 0.1, center.z + radius * 0.1);
+            targetPos = new THREE.Vector3(center.x + radius * 1.3, center.y * 0.1, center.z + radius * 0.1);
         } else if (viewName === 'profile' || viewName === 'vertical') {
-            this.camera.position.set(center.x + radius * 1.55, center.y, center.z);
+            targetPos = new THREE.Vector3(center.x + radius * 1.55, center.y, center.z);
         } else if (viewName === 'under') {
-            this.camera.position.set(center.x + radius * 0.7, center.y - radius * 0.65, center.z - radius * 1.2);
+            targetPos = new THREE.Vector3(center.x + radius * 0.7, center.y - radius * 0.65, center.z - radius * 1.2);
         } else {
-            this.camera.position.set(center.x + radius * 0.95, center.y + radius * 0.72, center.z + radius * 1.05);
+            targetPos = new THREE.Vector3(center.x + radius * 0.95, center.y + radius * 0.72, center.z + radius * 1.05);
         }
-        this.controls.target.copy(center);
-        this.controls.update();
+        this.animateCameraTo(targetPos, center, 550);
     }
 
     setTheme(themeName = 'light') {
@@ -226,12 +267,10 @@ export class OceanScene {
 
     focusPosition(targetVec, distance = null) {
         if (!targetVec) return;
-        this.controls.target.copy(targetVec);
-        if (distance) {
-            const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-            this.camera.position.copy(targetVec).add(dir.multiplyScalar(distance));
-        }
-        this.controls.update();
+        const dist = distance || this.camera.position.distanceTo(this.controls.target);
+        const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+        const targetPos = targetVec.clone().add(dir.multiplyScalar(dist));
+        this.animateCameraTo(targetPos, targetVec, 550);
     }
 
     onClick(e) {
@@ -293,10 +332,6 @@ export class OceanScene {
 
     animate(timestamp) {
         this.animId = requestAnimationFrame(this.animate.bind(this));
-        if (this._lastFrameTime && (timestamp - this._lastFrameTime) < 30) {
-            return;
-        }
-        this._lastFrameTime = timestamp;
 
         for (const cb of this.updateCallbacks) {
             cb(timestamp);

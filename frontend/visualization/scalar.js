@@ -171,13 +171,13 @@ export class ScalarVisualizer {
         this.range = { lo, hi };
         updateLegendUI(this.variable, lo, hi, dataArray?.units || '');
 
-        // Recolor volume only when new data is supplied
-        this.applyVolumeColors();
+        // Recolor volume cells at selected depth level
+        this.applyVolumeColors(depthM);
         this.updateSliceTexture(depthM, mode);
     }
 
-    applyVolumeColors() {
-        if (!this.currentData || !this.water.cells) return;
+    applyVolumeColors(depthM = 0) {
+        if (!this.currentData || !this.water || !this.water.cells) return;
         const vals = this.currentData.values;
         if (!vals || !vals.length) return;
         
@@ -190,35 +190,29 @@ export class ScalarVisualizer {
         const lons = is3D ? (vals[0]?.[0]?.length || 0) : (vals[0]?.length || 0);
         if (!lats || !lons) return;
         
-        let volLo = this.range.lo;
-        let volHi = this.range.hi;
-        if (is3D) {
-            const volRange = calculatePercentileRange(vals);
-            volLo = volRange.lo;
-            volHi = volRange.hi;
-        }
-        
-        const variable = this.variable;
         const depthLevels = this.currentData.metadata?.depth_levels;
+        let dIdx = 0;
+        if (is3D && depthLevels && depthLevels.length > 0) {
+            dIdx = findDepthIndex(depthLevels, depthM);
+        }
+
+        const volLo = this.range.lo;
+        const volHi = this.range.hi;
+        const variable = this.variable;
 
         this.water.recolorCells(c => {
             const j = Math.floor(((c.lat - bounds[2]) / dLat) * lats);
             const i = Math.floor(((c.lon - bounds[0]) / dLon) * lons);
             
             if (j < 0 || j >= lats || i < 0 || i >= lons) return null;
-            
-            let d = 0;
-            if (is3D && depthLevels) {
-                d = findDepthIndex(depthLevels, c.depthM);
-            }
-            
-            const val = is3D ? vals[d]?.[j]?.[i] : vals[j]?.[i];
-            if (val == null || isNaN(val)) return null;
+
+            const val = is3D ? vals[dIdx]?.[j]?.[i] : vals[j]?.[i];
+            if (val == null || !Number.isFinite(val)) return null;
             
             const color = sampleColor(variable, val, volLo, volHi);
             _reusableColor.setRGB(color.r, color.g, color.b);
             return _reusableColor;
-        });
+        }, depthM);
     }
 
     applyVerticalSlicePlane(sLat, sLon, eLat, eLon, transectData = null) {
@@ -230,33 +224,14 @@ export class ScalarVisualizer {
         if (!this.currentData && !(this.customVerticalCoords && this.customVerticalCoords.transectData)) {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
-            if (this.water) this.water.setDataTexture(null, 0.0);
             return;
         }
 
         if (mode === 'volume') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
-
-            // Keep the selected scientific field on the visible ocean surface while
-            // retaining the volumetric cell coloring underneath. Previously volume
-            // mode cleared the data texture, so the surface fell back to a static,
-            // temperature-only base color and did not react to timeline changes.
-            const depthLevels = this.currentData?.metadata?.depth_levels;
-            const surfaceIndex = findDepthIndex(depthLevels, 0);
-            const surface2d = extractSlice2D(this.currentData, surfaceIndex);
-            const surfaceTexture = surface2d
-                ? createDataTexture2D(
-                    { values: surface2d },
-                    this.variable,
-                    this.range.lo,
-                    this.range.hi
-                  )
-                : null;
-
             if (this.water) {
-                this.water.setDataTexture(surfaceTexture, surfaceTexture ? 1.0 : 0.0);
-                this.water.setOpacity(0.35);
+                this.water.setOpacity(0.45);
             }
             return;
         }
@@ -265,7 +240,6 @@ export class ScalarVisualizer {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = true;
             if (this.water) {
-                this.water.setDataTexture(null, 0.0);
                 this.water.setOpacity(0.0);
             }
             
@@ -339,18 +313,15 @@ export class ScalarVisualizer {
         const texture = createDataTexture2D(tempFakeArray, this.variable, this.range.lo, this.range.hi);
         
         if (isSurface) {
-            // Apply directly onto realistic 3D animated water surface shader — avoids double layer / reflection artifacts
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water) {
-                this.water.setDataTexture(texture, 1.0);
-                this.water.setOpacity(0.35); // restore volume
+                this.water.setOpacity(0.45);
             }
         } else {
             // Subsurface depth slice: position underwater mesh at actual depth
             if (this.water) {
-                this.water.setDataTexture(null, 0.0);
-                this.water.setOpacity(0.0); // hide volume to see cutaway clearly
+                this.water.setOpacity(0.45);
             }
             if (this.sliceMesh) this.sliceMesh.visible = true;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
@@ -376,6 +347,7 @@ export class ScalarVisualizer {
     }
 
     sliceAtDepth(depthM, mode = 'slice') {
+        this.applyVolumeColors(depthM);
         this.updateSliceTexture(depthM, mode);
     }
 

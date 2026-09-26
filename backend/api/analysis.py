@@ -65,7 +65,8 @@ def get_regional_model_vs_argo(
     min_lat: Optional[float] = Query(None, description="Minimum latitude bounding extent"),
     max_lat: Optional[float] = Query(None, description="Maximum latitude bounding extent"),
     variable: str = Query('temperature', description="Ocean variable: temperature, salinity"),
-    time: Optional[str] = Query(None, description="ISO timestamp for model collocation")
+    time: Optional[str] = Query(None, description="ISO timestamp for model collocation"),
+    depth: Optional[float] = Query(None, description="Depth level in meters")
 ):
     """
     Evaluates numerical model accuracy against in-situ Argo profiling floats across the specified region.
@@ -78,7 +79,8 @@ def get_regional_model_vs_argo(
             min_lat=min_lat,
             max_lat=max_lat,
             variable=variable,
-            time_iso=time
+            time_iso=time,
+            depth=depth
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Regional model vs Argo evaluation failed: {str(e)}")
@@ -168,7 +170,9 @@ def get_analysis_summary(
     max_lon: Optional[float] = Query(None),
     min_lat: Optional[float] = Query(None),
     max_lat: Optional[float] = Query(None),
-    variable: str = Query('temperature')
+    variable: str = Query('temperature'),
+    time: Optional[str] = Query(None),
+    depth: Optional[float] = Query(None)
 ):
     """
     Returns an executive analytical summary combining Model Accuracy (RMSE, Bias),
@@ -180,7 +184,9 @@ def get_analysis_summary(
             max_lon=max_lon,
             min_lat=min_lat,
             max_lat=max_lat,
-            variable=variable
+            variable=variable,
+            time=time,
+            depth=depth
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis summary generation failed: {str(e)}")

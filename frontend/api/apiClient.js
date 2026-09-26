@@ -354,13 +354,18 @@ export const ApiClient = {
         return request(`/api/ocean/current-grid?${q}`);
     },
 
-    async getPoint(lat, lon, time = null) {
+    async getPoint(lat, lon, time = null, depth = null) {
         const q = new URLSearchParams({
             latitude: String(lat),
             longitude: String(lon)
         });
         if (time) q.set('time', time);
+        if (depth != null) q.set('depth', String(depth));
         return request(`/api/ocean/point?${q}`, { category: 'point_inspect' });
+    },
+
+    async getOceanPoint(lat, lon, time = null, depth = null) {
+        return this.getPoint(lat, lon, time, depth);
     },
 
     async getRegionArray(params) {
@@ -533,6 +538,23 @@ export const ApiClient = {
 
     async getArgoFloat(floatId) {
         return request(`/api/observations/argo/${encodeURIComponent(floatId)}`);
+    },
+
+    async getGliderObservations(bbox = null, time = null) {
+        const q = new URLSearchParams();
+        if (bbox) {
+            q.set('min_lat', String(bbox.min_lat));
+            q.set('max_lat', String(bbox.max_lat));
+            q.set('min_lon', String(bbox.min_lon));
+            q.set('max_lon', String(bbox.max_lon));
+        }
+        if (time) q.set('time', time);
+        const qs = q.toString();
+        return request(`/api/observations/gliders${qs ? `?${qs}` : ''}`);
+    },
+
+    async getGliderProfile(gliderId) {
+        return request(`/api/observations/gliders/${encodeURIComponent(gliderId)}`);
     },
 
     // =========================================================================

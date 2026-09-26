@@ -9,31 +9,99 @@ export const PRESET_REGIONS = {
         id: 'bay_of_bengal',
         name: 'Bay of Bengal',
         bbox: { min_lon: 84.10, max_lon: 93.00, min_lat: 16.07, max_lat: 23.52 },
-        desc: 'INCOIS Model Coverage'
+        desc: 'High-resolution GEBCO + INCOIS ocean model data',
+        badge: 'Basin'
     },
     arabian_sea: {
         id: 'arabian_sea',
         name: 'Arabian Sea',
-        bbox: { min_lon: 60.00, max_lon: 74.00, min_lat: 12.00, max_lat: 24.00 },
-        desc: 'Western Indian Ocean'
+        bbox: { min_lon: 60.00, max_lon: 76.00, min_lat: 10.00, max_lat: 24.00 },
+        desc: 'Western Indian Ocean & Somali Current',
+        badge: 'Sea'
     },
-    south_china_sea: {
-        id: 'south_china_sea',
-        name: 'South China Sea',
-        bbox: { min_lon: 105.00, max_lon: 120.00, min_lat: 8.00, max_lat: 22.00 },
-        desc: 'Indo-Pacific Basin'
+    indian_ocean: {
+        id: 'indian_ocean',
+        name: 'Indian Ocean',
+        bbox: { min_lon: 55.00, max_lon: 95.00, min_lat: -15.00, max_lat: 15.00 },
+        desc: 'Tropical Indian Ocean & monsoon drift basin',
+        badge: 'Ocean'
     },
-    gulf_of_mexico: {
-        id: 'gulf_of_mexico',
-        name: 'Gulf of Mexico',
-        bbox: { min_lon: -97.00, max_lon: -82.00, min_lat: 20.00, max_lat: 30.00 },
-        desc: 'Atlantic Basin'
+    north_atlantic: {
+        id: 'north_atlantic',
+        name: 'North Atlantic',
+        bbox: { min_lon: -65.00, max_lon: -20.00, min_lat: 15.00, max_lat: 45.00 },
+        desc: 'Subtropical gyre, Sargasso Sea & Gulf Stream',
+        badge: 'Ocean'
+    },
+    south_atlantic: {
+        id: 'south_atlantic',
+        name: 'South Atlantic',
+        bbox: { min_lon: -35.00, max_lon: 10.00, min_lat: -35.00, max_lat: -10.00 },
+        desc: 'South Atlantic basin & Benguela Current',
+        badge: 'Ocean'
+    },
+    north_pacific: {
+        id: 'north_pacific',
+        name: 'North Pacific',
+        bbox: { min_lon: 130.00, max_lon: 170.00, min_lat: 15.00, max_lat: 45.00 },
+        desc: 'Northwest Pacific basin & Kuroshio extension',
+        badge: 'Ocean'
+    },
+    south_pacific: {
+        id: 'south_pacific',
+        name: 'South Pacific',
+        bbox: { min_lon: -150.00, max_lon: -110.00, min_lat: -35.00, max_lat: -5.00 },
+        desc: 'South Pacific central subtropical gyre',
+        badge: 'Ocean'
     },
     mediterranean_sea: {
         id: 'mediterranean_sea',
         name: 'Mediterranean Sea',
-        bbox: { min_lon: 5.00, max_lon: 25.00, min_lat: 32.00, max_lat: 42.00 },
-        desc: 'Intercontinental Basin'
+        bbox: { min_lon: 0.00, max_lon: 36.00, min_lat: 30.00, max_lat: 44.00 },
+        desc: 'Semi-enclosed intercontinental marginal sea',
+        badge: 'Sea'
+    },
+    southern_ocean: {
+        id: 'southern_ocean',
+        name: 'Southern Ocean',
+        bbox: { min_lon: -70.00, max_lon: -20.00, min_lat: -65.00, max_lat: -50.00 },
+        desc: 'Antarctic Circumpolar Current & Drake Passage',
+        badge: 'Ocean'
+    },
+    arctic_ocean: {
+        id: 'arctic_ocean',
+        name: 'Arctic Ocean',
+        bbox: { min_lon: -10.00, max_lon: 50.00, min_lat: 68.00, max_lat: 82.00 },
+        desc: 'Greenland and Barents Sea polar waters',
+        badge: 'Ocean'
+    },
+    gulf_of_mexico: {
+        id: 'gulf_of_mexico',
+        name: 'Gulf of Mexico',
+        bbox: { min_lon: -97.00, max_lon: -80.00, min_lat: 18.00, max_lat: 31.00 },
+        desc: 'Loop Current & Gulf Coast ocean system',
+        badge: 'Sea'
+    },
+    red_sea: {
+        id: 'red_sea',
+        name: 'Red Sea',
+        bbox: { min_lon: 32.00, max_lon: 44.00, min_lat: 12.00, max_lat: 28.50 },
+        desc: 'Narrow inlet basin and rift zone',
+        badge: 'Sea'
+    },
+    strait_of_hormuz: {
+        id: 'strait_of_hormuz',
+        name: 'Strait of Hormuz',
+        bbox: { min_lon: 55.50, max_lon: 57.50, min_lat: 25.50, max_lat: 27.20 },
+        desc: 'Strategic Persian Gulf strait',
+        badge: 'Strait'
+    },
+    strait_of_malacca: {
+        id: 'strait_of_malacca',
+        name: 'Strait of Malacca',
+        bbox: { min_lon: 98.00, max_lon: 104.50, min_lat: 1.00, max_lat: 6.00 },
+        desc: 'Indo-Pacific maritime gateway',
+        badge: 'Strait'
     }
 };
 

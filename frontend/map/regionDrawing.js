@@ -3,7 +3,7 @@
 // real-time area calculation in km², bidirectional sync with manual inputs,
 // and preset basin selection.
 
-import { SelectionContext } from '../context/selectionContext.js';
+import { SelectionContext, PRESET_REGIONS } from '../context/selectionContext.js';
 
 export class RegionDrawer {
     constructor(worldMap, options = {}) {
@@ -29,6 +29,11 @@ export class RegionDrawer {
         this.presetList = document.getElementById('presetList');
         this.toggleEEZBtn = document.getElementById('toggleEEZBtn');
         this.basemapSelect = document.getElementById('mapBasemapSelect');
+
+        const initialName = ctxArea?.name || 'Bay of Bengal';
+        const nameEl = document.getElementById('regionNameDisplay');
+        if (nameEl) nameEl.textContent = initialName;
+        this.worldMap.setBBox(this.currentBBox, false, initialName);
 
         this._bindEvents();
         this._populatePresets();
@@ -85,7 +90,7 @@ export class RegionDrawer {
                 max_lat: roundCoord(max_lat)
             };
 
-            this.worldMap.setBBox(this.currentBBox, false);
+            this.worldMap.setBBox(this.currentBBox, false, 'Selecting Area…');
             this.updateInputs(this.currentBBox);
         });
 
@@ -94,11 +99,34 @@ export class RegionDrawer {
             this.isDrawing = false;
             this.map.dragPan.enable();
             canvas.style.cursor = '';
+            this._hideGuidanceBanner();
             if (this.drawMode) {
                 this.setDrawMode(false);
             }
+
+            // Check if user did a micro-click without dragging (< 0.25 deg)
+            const dLat = Math.abs(this.currentBBox.max_lat - this.currentBBox.min_lat);
+            const dLon = Math.abs(this.currentBBox.max_lon - this.currentBBox.min_lon);
+            if (dLat < 0.25 || dLon < 0.25) {
+                if (this.startLngLat) {
+                    const cLat = Math.max(-85, Math.min(85, this.startLngLat.lat));
+                    const cLon = Math.max(-175, Math.min(175, this.startLngLat.lng));
+                    this.currentBBox = {
+                        min_lat: roundCoord(cLat - 2.5),
+                        max_lat: roundCoord(cLat + 2.5),
+                        min_lon: roundCoord(cLon - 2.5),
+                        max_lon: roundCoord(cLon + 2.5)
+                    };
+                }
+            }
+
+            const areaName = 'Custom Selected Area';
+            const nameEl = document.getElementById('regionNameDisplay');
+            if (nameEl) nameEl.textContent = areaName;
+            this.worldMap.setBBox(this.currentBBox, false, areaName);
+            this.updateInputs(this.currentBBox);
             this.worldMap.loadEEZForBBox(this.currentBBox);
-            SelectionContext.setArea({ id: 'custom', bbox: this.currentBBox });
+            SelectionContext.setArea({ id: 'custom', name: areaName, bbox: this.currentBBox });
         };
 
         this.map.on('mouseup', finishDrawing);
@@ -134,10 +162,13 @@ export class RegionDrawer {
                 max_lon: roundCoord(maxLon)
             };
 
-            this.worldMap.setBBox(this.currentBBox, true);
+            const areaName = 'Custom Coordinates';
+            const nameEl = document.getElementById('regionNameDisplay');
+            if (nameEl) nameEl.textContent = areaName;
+            this.worldMap.setBBox(this.currentBBox, true, areaName);
             this.worldMap.loadEEZForBBox(this.currentBBox);
             this.updateAreaDisplay(this.currentBBox);
-            SelectionContext.setArea({ id: 'custom', bbox: this.currentBBox });
+            SelectionContext.setArea({ id: 'custom', name: areaName, bbox: this.currentBBox });
         };
 
         [this.inMinLat, this.inMaxLat, this.inMinLon, this.inMaxLon].forEach(input => {
@@ -180,11 +211,35 @@ export class RegionDrawer {
                 this.drawBtn.classList.add('active');
                 this.drawBtn.innerText = 'CANCEL DRAWING';
                 canvas.style.cursor = 'crosshair';
+                this._showGuidanceBanner('✎ Click and drag anywhere on the map to define the custom bounding box');
             } else {
                 this.drawBtn.classList.remove('active');
                 this.drawBtn.innerText = 'DRAW BOUNDING BOX';
                 canvas.style.cursor = '';
+                this._hideGuidanceBanner();
             }
+        }
+    }
+
+    _showGuidanceBanner(message) {
+        let banner = document.getElementById('drawGuidanceBanner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'drawGuidanceBanner';
+            banner.className = 'draw-guidance-banner';
+            const container = this.worldMap?.map?.getContainer() || document.getElementById('mapContainer');
+            if (container) {
+                container.appendChild(banner);
+            }
+        }
+        banner.textContent = message;
+        banner.classList.add('visible');
+    }
+
+    _hideGuidanceBanner() {
+        const banner = document.getElementById('drawGuidanceBanner');
+        if (banner) {
+            banner.classList.remove('visible');
         }
     }
 
@@ -243,51 +298,33 @@ export class RegionDrawer {
 
     _populatePresets() {
         if (!this.presetList) return;
-        const presets = [
-            {
-                id: 'bay_of_bengal',
-                name: 'Bay of Bengal',
-                bbox: { min_lon: 84.10, max_lon: 93.00, min_lat: 16.07, max_lat: 23.52 },
-                desc: 'INCOIS Model Coverage'
-            },
-            {
-                id: 'arabian_sea',
-                name: 'Arabian Sea',
-                bbox: { min_lon: 60.00, max_lon: 74.00, min_lat: 12.00, max_lat: 24.00 },
-                desc: 'Western Indian Ocean'
-            },
-            {
-                id: 'south_china_sea',
-                name: 'South China Sea',
-                bbox: { min_lon: 105.00, max_lon: 120.00, min_lat: 8.00, max_lat: 22.00 },
-                desc: 'Indo-Pacific Basin'
-            },
-            {
-                id: 'gulf_of_mexico',
-                name: 'Gulf of Mexico',
-                bbox: { min_lon: -97.00, max_lon: -82.00, min_lat: 20.00, max_lat: 30.00 },
-                desc: 'Atlantic Basin'
-            },
-            {
-                id: 'mediterranean_sea',
-                name: 'Mediterranean Sea',
-                bbox: { min_lon: 5.00, max_lon: 25.00, min_lat: 32.00, max_lat: 42.00 },
-                desc: 'Intercontinental Basin'
-            }
-        ];
+        const presets = Object.values(PRESET_REGIONS);
+        const activeArea = SelectionContext.getArea();
+        const activeId = activeArea?.id || 'bay_of_bengal';
 
         this.presetList.innerHTML = '';
-        presets.forEach((p, idx) => {
+        presets.forEach((p) => {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = `preset-card ${idx === 0 ? 'active' : ''}`;
-            btn.innerHTML = `<b>${p.name}</b><span>${p.desc}</span>`;
+            const isActive = p.id === activeId;
+            btn.className = `preset-card ${isActive ? 'active' : ''}`;
+            btn.dataset.presetId = p.id;
+            btn.innerHTML = `
+                <div class="preset-card-header">
+                    <b class="preset-name">${p.name}</b>
+                    <span class="preset-badge">${p.badge || 'Basin'}</span>
+                </div>
+                <span class="preset-desc">${p.desc}</span>
+                <span class="preset-coords">${p.bbox.min_lat.toFixed(1)}° to ${p.bbox.max_lat.toFixed(1)}°N · ${p.bbox.min_lon.toFixed(1)}° to ${p.bbox.max_lon.toFixed(1)}°E</span>
+            `;
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.preset-card').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 this.currentBBox = { ...p.bbox };
                 this.updateInputs(this.currentBBox);
-                this.worldMap.setBBox(this.currentBBox, true);
+                const nameEl = document.getElementById('regionNameDisplay');
+                if (nameEl) nameEl.textContent = p.name;
+                this.worldMap.setBBox(this.currentBBox, true, p.name);
                 this.worldMap.loadEEZForBBox(this.currentBBox);
                 SelectionContext.setArea(p);
             });

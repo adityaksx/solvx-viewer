@@ -67,6 +67,39 @@ def extract_model_vertical_column(
                     xd = next((dim for dim in ('longitude', 'lon') if dim in da.dims), None)
                     zd = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'lev', 'level', 'z') if dim in da.dims), None)
 
+                    if yd and xd and not zd:
+                        # Surface-only variables (for example chlorophyll) still
+                        # have a valid horizontal model field. Sample it bilinearly
+                        # at the float location and represent it at the surface layer.
+                        grid_lats = np.asarray(da.coords[yd].values, dtype=float)
+                        grid_lons = np.asarray(da.coords[xd].values, dtype=float)
+                        vals_2d = np.asarray(da.values, dtype=np.float32)
+                        if vals_2d.ndim > 2:
+                            vals_2d = np.squeeze(vals_2d)
+                        if vals_2d.ndim == 2 and len(grid_lats) >= 2 and len(grid_lons) >= 2:
+                            lat_clamped = float(np.clip(latitude, grid_lats.min(), grid_lats.max()))
+                            lon_clamped = float(np.clip(longitude, grid_lons.min(), grid_lons.max()))
+                            i = int(np.clip(np.searchsorted(grid_lats, lat_clamped, side='right') - 1, 0, len(grid_lats) - 2))
+                            j = int(np.clip(np.searchsorted(grid_lons, lon_clamped, side='right') - 1, 0, len(grid_lons) - 2))
+                            dlat = grid_lats[i + 1] - grid_lats[i]
+                            dlon = grid_lons[j + 1] - grid_lons[j]
+                            fy = float((lat_clamped - grid_lats[i]) / dlat) if dlat > 0 else 0.0
+                            fx = float((lon_clamped - grid_lons[j]) / dlon) if dlon > 0 else 0.0
+                            w00 = (1.0 - fy) * (1.0 - fx)
+                            w01 = (1.0 - fy) * fx
+                            w10 = fy * (1.0 - fx)
+                            w11 = fy * fx
+                            sample = (
+                                w00 * vals_2d[i, j] +
+                                w01 * vals_2d[i, j + 1] +
+                                w10 * vals_2d[i + 1, j] +
+                                w11 * vals_2d[i + 1, j + 1]
+                            )
+                            if not np.isfinite(sample):
+                                sample = vals_2d[int(round(i + fy)), int(round(j + fx))]
+                            if np.isfinite(sample):
+                                model_src = f"Copernicus Global Ocean Analysis - {f.name}"
+                                return np.array([0.49], dtype=float), np.array([float(sample)], dtype=float), False, model_src
                     if yd and xd and zd:
                         grid_lats = np.asarray(da.coords[yd].values, dtype=float)
                         grid_lons = np.asarray(da.coords[xd].values, dtype=float)

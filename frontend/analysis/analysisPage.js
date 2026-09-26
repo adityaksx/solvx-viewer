@@ -1079,10 +1079,6 @@ class AnalysisDashboard {
       }
     }
 
-    if (!derived && this.analysisMode !== 'obs_vs_model' && this.activeTime) {
-      this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
-    }
-
     // 2. Analysis Mode handling in 3D (Section 8)
     this.clearMarkers();
 

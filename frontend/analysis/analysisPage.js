@@ -468,6 +468,7 @@ class AnalysisDashboard {
 
   clearAllCaches() {
     this.bundleCache = {};
+    this.comparisonFieldCache = {};
     this.anomaliesCache = {};
     this.abnormalCache = {};
     this.modelVsArgoCache = {};

@@ -1024,6 +1024,17 @@ class AnalysisDashboard {
   updateAnalysisView() {
     if (!this.water || !this.scalarViz) return;
 
+    // The comparison field is a derived product of the selected variable,
+    // depth, time and analysis metric; never silently fall back to raw model
+    // values once an analysis mode is selected.
+    if (this.analysisMode !== 'obs_vs_model' && this.activeTime && this.comparisonFieldCache) {
+      const comparisonKey = String(this.activeTime || '') + '|' + String(this.activeVar) + '|' + String(this.activeDepth) + '|' + String(this.analysisMode);
+      if (!(comparisonKey in this.comparisonFieldCache)) {
+        this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
+        return;
+      }
+    }
+
     const vars = this.bundleCache[this.activeTime] || {};
     const anomalies = this.anomaliesCache[this.activeTime] || [];
     const regions = this.abnormalCache[this.activeTime] || [];

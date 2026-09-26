@@ -622,6 +622,18 @@ export const ApiClient = {
         return request('/api/analysis/definitions');
     },
 
+    async getComparisonField(params = {}) {
+        const q = new URLSearchParams();
+        ['min_lat', 'max_lat', 'min_lon', 'max_lon', 'variable', 'time', 'depth', 'grid_res_deg', 'metric'].forEach(k => {
+            if (params[k] != null) q.set(k, String(params[k]));
+        });
+        const qs = q.toString();
+        return request('/api/analysis/comparison-field' + (qs ? `?${qs}` : ''), {
+            category: 'analysis_field',
+            noCache: true
+        });
+    },
+
     // =========================================================================
     // Stage 5: Anomaly Detection & Abnormal Region Extraction
     // =========================================================================

@@ -1665,10 +1665,14 @@ class AnalysisDashboard {
     const selectedFloat = this.selectedAnomaly?.float_id || this.selectedObservation?.float_id || this.selectedObservation?.id || this.selectedObservation?.wmo;
     const baseVar = this.getBaseVar(this.activeVar);
 
-    if (baseVar !== 'temperature' && baseVar !== 'salinity') {
-      this.clearProfileChart("In-situ vertical profiles only available for Temperature and Salinity.");
-      this.clearErrorDepthChart("Error vs depth profile only available for Temperature and Salinity.");
-      this.clearTimeSeriesChart("Time series comparison unavailable for non-Argo variable.");
+    // Keep comparison/error charts useful for BGC variables as well. The backend
+    // now accepts chlorophyll observations from Bio-Argo records. Sea level and
+    // currents may still legitimately lack collocated in-situ profiles.
+    const profileComparableVars = new Set(['temperature', 'salinity', 'chlorophyll']);
+    if (!profileComparableVars.has(baseVar)) {
+      this.clearProfileChart("Collocated in-situ profile unavailable for this variable.");
+      this.clearErrorDepthChart("Model − Observation error requires collocated in-situ data.");
+      this.clearTimeSeriesChart("Time series comparison unavailable for this variable.");
       return;
     }
 

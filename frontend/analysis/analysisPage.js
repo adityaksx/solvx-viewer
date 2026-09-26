@@ -862,10 +862,51 @@ class AnalysisDashboard {
   async fetchBundleData(time) {
     if (this.bundleCache[time]) return;
     try {
-      const bundle = await ApiClient.getOceanBundle({ provider: 'auto', bbox: this.bbox, time, stride: 1 });
+      const bundle = await ApiClient.getOceanBundle({
+        provider: 'auto',
+        bbox: this.bbox,
+        time,
+        depth: this.activeDepth,
+        stride: 1,
+        variables: [this.activeVar]
+      });
       this.bundleCache[time] = bundle?.variables || {};
     } catch (e) {
-      this.bundleCache[time] = {};
+      // Fall back to the single-variable endpoint. This keeps the analysis tab
+      // functional for variables such as chlorophyll that are not in the legacy bundle.
+      try {
+        const res = await ApiClient.getOceanVariable({
+          provider: 'auto',
+          variable: this.getBaseVar(this.activeVar),
+          bbox: this.bbox,
+          depth: this.activeDepth,
+          time
+        });
+        this.bundleCache[time] = { [this.activeVar]: res };
+      } catch (_) {
+        this.bundleCache[time] = {};
+      }
+    }
+  }
+
+  async fetchComparisonField(time) {
+    if (!time) return;
+    const key = `${time}|${this.activeVar}|${this.activeDepth}|${this.analysisMode}`;
+    if (!this.comparisonFieldCache) this.comparisonFieldCache = {};
+    if (this.comparisonFieldCache[key]) return;
+
+    try {
+      const res = await ApiClient.getComparisonField({
+        ...this.bbox,
+        variable: this.getBaseVar(this.activeVar),
+        time,
+        depth: this.activeDepth,
+        metric: this.analysisMode,
+        grid_res_deg: 1.0
+      });
+      this.comparisonFieldCache[key] = res;
+    } catch (e) {
+      this.comparisonFieldCache[key] = null;
     }
   }
 

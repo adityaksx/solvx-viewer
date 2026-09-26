@@ -10,6 +10,7 @@ Exposes REST endpoints for:
 """
 
 from typing import Optional
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 
 from ..services.analysis_service import (

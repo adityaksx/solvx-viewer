@@ -1045,8 +1045,12 @@ class AnalysisDashboard {
       this.currentVectorsGroup.remove(this.currentVectorsGroup.children[0]);
     }
 
-    const comparisonKey = `${this.activeTime}|${this.activeVar}|${this.activeDepth}|${this.analysisMode}`;
+    const comparisonKey = String(this.activeTime || '') + '|' + String(this.activeVar) + '|' + String(this.activeDepth) + '|' + String(this.analysisMode);
     const derived = this.comparisonFieldCache?.[comparisonKey];
+
+    if (this.analysisMode !== 'obs_vs_model' && this.activeTime && !derived && this.comparisonFieldCache) {
+      this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
+    }
 
     if (this.activeVar === 'currents' && !derived) {
       const curData = this.resolveVar(vars, 'currents');

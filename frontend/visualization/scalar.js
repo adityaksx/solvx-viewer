@@ -164,8 +164,23 @@ export class ScalarVisualizer {
                 sliceOrVolume = extractSlice2D(dataArray, idx);
             }
             const range = calculatePercentileRange(sliceOrVolume);
-            lo = range.lo;
-            hi = range.hi;
+            const metric = dataArray.metadata?.analysis_metric;
+            if (metric === 'obs_vs_model' || metric === 'error' || metric === 'bias') {
+                // Signed residual fields must be centered on zero so that the
+                // diverging scale actually communicates Model - Observation.
+                const maxAbs = Math.max(Math.abs(range.lo), Math.abs(range.hi), 1e-9);
+                lo = -maxAbs;
+                hi = maxAbs;
+            } else if (metric === 'rmse') {
+                lo = 0;
+                hi = Math.max(Math.abs(range.hi), 1e-9);
+            } else if (metric === 'observation_gap') {
+                lo = 0;
+                hi = 1;
+            } else {
+                lo = range.lo;
+                hi = range.hi;
+            }
         }
 
         this.range = { lo, hi };

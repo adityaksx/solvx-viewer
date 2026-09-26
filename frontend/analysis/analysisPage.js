@@ -417,6 +417,17 @@ class AnalysisDashboard {
     const sel = document.getElementById('analysisModeSelect');
     if (sel && sel.value !== mode) sel.value = mode;
 
+    if (this.comparisonFieldCache) {
+      const prefix = String(this.activeTime || '') + '|' + String(this.activeVar) + '|' + String(this.activeDepth) + '|';
+      Object.keys(this.comparisonFieldCache)
+        .filter(k => k.startsWith(prefix))
+        .forEach(k => { delete this.comparisonFieldCache[k]; });
+    }
+
+    if (this.activeTime && mode !== 'obs_vs_model') {
+      this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
+    }
+
     this.updateAnalysisView();
     this.updateKPIStrip();
     this.updateInvestigationSidebar();

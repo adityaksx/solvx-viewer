@@ -425,8 +425,8 @@ html, body {
 }
 
 input[type=range].vertical-slider {
-  writing-mode: bt-lr;
-  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
   width: 8px;
   height: 320px;
   margin: 16px 0;

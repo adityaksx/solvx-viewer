@@ -821,6 +821,13 @@ class AnalysisDashboard {
       this.fetchSummaryAndCoverage(this.activeTime)
     ]);
 
+    // Auto-select the first available Argo float or Glider if no target is active yet
+    if (!this.selectedObservation && !this.selectedAnomaly && !this.selectedCell && !this.selectedRegion) {
+      if (this.argoData && this.argoData.length > 0) {
+        this.selectedObservation = this.argoData[0];
+      }
+    }
+
     this.populateArgoPicker();
     this.updateAnalysisView();
     this.updateKPIStrip();
@@ -1116,6 +1123,7 @@ class AnalysisDashboard {
     const legendEl = document.getElementById('legendVariable');
     const legendUnitsEl = document.getElementById('legendUnits');
     const legendEyebrowEl = document.getElementById('legendEyebrow');
+    const legendRangeEl = document.getElementById('legendRange');
     if (legendEl) {
       const modeLabels = {
         obs_vs_model: 'MODEL VS IN-SITU',
@@ -1126,10 +1134,15 @@ class AnalysisDashboard {
         observation_gap: 'OBSERVATION GAP'
       };
       const modeLabel = modeLabels[this.analysisMode] || (this.analysisMode ? this.analysisMode.toUpperCase().replace(/_/g, ' ') : 'OBS VS MODEL');
-      if (legendEyebrowEl) legendEyebrowEl.textContent = 'ANALYSIS FIELD';
+      if (legendEyebrowEl) legendEyebrowEl.textContent = 'ACTIVE FIELD';
       legendEl.textContent = modeLabel;
+      const unit = this.getVariableUnit(this.activeVar);
       if (legendUnitsEl) {
-        legendUnitsEl.textContent = `${this.prettyVar(this.activeVar)} · ${this.getVariableUnit(this.activeVar)}`;
+        legendUnitsEl.textContent = `${this.prettyVar(this.activeVar)} · ${unit}`;
+      }
+      if (legendRangeEl && this.scalarViz?.range) {
+        const { lo, hi } = this.scalarViz.range;
+        legendRangeEl.textContent = `${Number(lo).toFixed(2)} to ${Number(hi).toFixed(2)} ${unit}`;
       }
     }
   }
@@ -1477,6 +1490,7 @@ class AnalysisDashboard {
     const sb = document.getElementById('investigationContent');
     if (!sb) return;
 
+    const baseVar = this.getBaseVar(this.activeVar);
     const unit = this.getVariableUnit(this.activeVar);
     const acc = this.summaryData?.model_accuracy || {};
 

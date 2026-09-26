@@ -59,7 +59,8 @@ export const PALETTES = {
         [0xf8fafc, 0.0],
         [0xf59e0b, 0.50],
         [0x7f1d1d, 1.0]
-    ],\n    analysis_magnitude: [
+    ],
+    analysis_magnitude: [
         [0x071b8f, 0.0],
         [0x00c6ff, 0.30],
         [0x00e79a, 0.50],

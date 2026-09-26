@@ -229,7 +229,7 @@ def compare_float_profile(
 
         # 1D linear vertical interpolation at exact observation depth z
         mod_val = float(np.interp(z, m_depths, m_vals))
-        diff = mod_val - obs_val
+        diff = obs_val - mod_val
         abs_diff = abs(diff)
 
         diffs.append(diff)

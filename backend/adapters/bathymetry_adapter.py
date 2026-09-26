@@ -39,8 +39,8 @@ from ..services.cache_service import GLOBAL_CACHE, make_cache_key, safe_open_dat
 
 logger = logging.getLogger('solvx.bathymetry')
 
-GEBCO_NC_PATH = DATA_DIR / 'gebco_2026_n23.5244_s16.0707_w84.105_e92.993.nc'
-GEBCO_ZIP_PATH = DATA_DIR / 'GEBCO_10_Sep_2026_c6ae0e7b7408.zip'
+GEBCO_NC_PATH = DATA_DIR / 'gebco_2026_indian_ocean_region.nc'
+GEBCO_ZIP_PATH = DATA_DIR / 'gebco_2026_indian_ocean_region.zip'
 
 RESOLUTION_TARGETS = {
     'low': (40, 40),
@@ -141,7 +141,23 @@ class GEBCOAdapter:
             return False
         # Local GEBCO dataset spans lat: 16.07 to 23.52, lon: 84.10 to 92.99
         # Check if there is meaningful overlap
-        return not (max_lat < 16.0 or min_lat > 23.6 or max_lon < 84.0 or min_lon > 93.1)
+        with safe_open_dataset(GEBCO_NC_PATH) as ds:
+            da = ds["elevation"]
+
+            yd = "lat" if "lat" in da.coords else "latitude"
+            xd = "lon" if "lon" in da.coords else "longitude"
+
+            data_min_lat = float(da[yd].min())
+            data_max_lat = float(da[yd].max())
+            data_min_lon = float(da[xd].min())
+            data_max_lon = float(da[xd].max())
+
+            return (
+                min_lat >= data_min_lat and
+                max_lat <= data_max_lat and
+                min_lon >= data_min_lon and
+                max_lon <= data_max_lon
+            )
 
     def _fetch_from_local_gebco(
         self,
@@ -353,7 +369,7 @@ class GEBCOAdapter:
 
         return {
             'type': 'bathymetry',
-            'provider': 'GEBCO_BASELINE',
+            'provider': 'GEBCO',
             'dataset': 'GEBCO Baseline Bathymetry (Offline Fallback)',
             'units': 'meters',
             'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},

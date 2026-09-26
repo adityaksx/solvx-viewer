@@ -297,7 +297,11 @@ def compare_regional_floats(
     all_abs_diffs = []
     ranking: List[RegionalDiscrepancyRank] = []
 
-    unit = "°C" if variable == 'temperature' else ("PSU" if variable == 'salinity' else "")
+    unit = {
+        'temperature': '°C',
+        'salinity': 'PSU',
+        'chlorophyll': 'mg/m³',
+    }.get(variable, '')
     for f in floats:
         try:
             comp = compare_float_profile(str(f['float_id']), variable=variable, time_iso=time_iso)
@@ -724,8 +728,12 @@ def detect_anomalies(
     if not obs_list:
         obs_list = ARGO_OBSERVATIONS
 
-    val_key = 'temperature' if variable == 'temperature' else 'salinity'
-    alt_key = 'temp' if variable == 'temperature' else 'sal'
+    value_keys = {
+        'temperature': ('temperature', 'temp'),
+        'salinity': ('salinity', 'sal'),
+        'chlorophyll': ('chlorophyll', 'chl'),
+    }
+    val_key, alt_key = value_keys.get(variable, (variable, variable))
 
     # ── Pass 1: collect all (depth, value) pairs for basin-wide statistics ──
     all_depths: List[float] = []

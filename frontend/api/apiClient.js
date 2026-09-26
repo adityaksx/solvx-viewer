@@ -614,6 +614,8 @@ export const ApiClient = {
         if (params.min_lon != null) q.set('min_lon', String(params.min_lon));
         if (params.max_lon != null) q.set('max_lon', String(params.max_lon));
         if (params.variable) q.set('variable', params.variable);
+        if (params.time) q.set('time', params.time);
+        if (params.depth != null) q.set('depth', String(params.depth));
         const qs = q.toString();
         return request(`/api/analysis/summary${qs ? `?${qs}` : ''}`);
     },

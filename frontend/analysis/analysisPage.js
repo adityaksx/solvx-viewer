@@ -813,6 +813,7 @@ class AnalysisDashboard {
     // Concurrently fetch real analysis data
     await Promise.all([
       this.fetchBundleData(this.activeTime),
+      this.fetchComparisonField(this.activeTime),
       this.fetchAnomalyData(this.activeTime),
       this.fetchAbnormalRegions(this.activeTime),
       this.fetchArgoData(),

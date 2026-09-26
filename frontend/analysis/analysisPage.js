@@ -1092,11 +1092,6 @@ class AnalysisDashboard {
               ? 'analysis_diverging'
               : this.activeVar)));
 
-      if (derived?.values) {
-        vizData.metadata.analysis_metric = this.analysisMode;
-        vizData.metadata.analysis_variable = this.activeVar;
-      }
-
       if (this.layerModel && vizData) {
         this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);
       } else {

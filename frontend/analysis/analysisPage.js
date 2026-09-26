@@ -1028,12 +1028,15 @@ class AnalysisDashboard {
       sliceMode = 'volume';
     }
 
-    // 1. Variable handling in 3D: Currents vs Scalar
+    // 1. Variable handling in 3D: raw model field vs derived analysis field.
     while (this.currentVectorsGroup.children.length > 0) {
       this.currentVectorsGroup.remove(this.currentVectorsGroup.children[0]);
     }
 
-    if (this.activeVar === 'currents') {
+    const comparisonKey = `${this.activeTime}|${this.activeVar}|${this.activeDepth}|${this.analysisMode}`;
+    const derived = this.comparisonFieldCache?.[comparisonKey];
+
+    if (this.activeVar === 'currents' && !derived) {
       const curData = this.resolveVar(vars, 'currents');
       if (curData && (curData.u || curData.values)) {
         const vectors = buildCurrentVectors(curData, this.scene, this.water.bounds, false);
@@ -1041,14 +1044,27 @@ class AnalysisDashboard {
       }
       this.scalarViz.updateSliceTexture(this.activeDepth, 'none');
     } else {
-      let vizData = this.resolveVar(vars, this.activeVar);
-      let vizVar = this.activeVar;
+      const vizData = derived?.values
+        ? {
+            values: derived.values,
+            units: derived.units || this.getVariableUnit(this.activeVar),
+            metadata: { depth_levels: [this.activeDepth] }
+          }
+        : this.resolveVar(vars, this.activeVar);
 
-      if (this.layerModel) {
+      const vizVar = this.analysisMode === 'observation_gap'
+        ? 'observation_gap'
+        : (this.analysisMode === 'anomaly' ? 'temperature_anomaly' : this.activeVar);
+
+      if (this.layerModel && vizData) {
         this.scalarViz.apply(vizVar, vizData, this.activeDepth, sliceMode);
       } else {
         this.scalarViz.updateSliceTexture(this.activeDepth, 'none');
       }
+    }
+
+    if (!derived && this.analysisMode !== 'obs_vs_model' && this.activeTime) {
+      this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
     }
 
     // 2. Analysis Mode handling in 3D (Section 8)

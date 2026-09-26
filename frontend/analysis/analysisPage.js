@@ -1589,7 +1589,6 @@ class AnalysisDashboard {
   }
 
   updateErrorMap() {
-    const anomalies = this.anomaliesCache[this.activeTime] || [];
     if (!this.errorMapChart) return;
 
     this.errorMapChart.options.scales.x.min = this.bbox.min_lon;
@@ -1597,6 +1596,75 @@ class AnalysisDashboard {
     this.errorMapChart.options.scales.y.min = this.bbox.min_lat;
     this.errorMapChart.options.scales.y.max = this.bbox.max_lat;
 
+    const comparisonKey = String(this.activeTime || '') + '|' + String(this.activeVar) + '|' + String(this.activeDepth) + '|' + String(this.analysisMode);
+    const derived = this.comparisonFieldCache?.[comparisonKey];
+
+    if (derived?.values && Array.isArray(derived.latitude) && Array.isArray(derived.longitude)) {
+      const points = [];
+      for (let j = 0; j < derived.latitude.length; j++) {
+        const row = derived.values[j] || [];
+        for (let i = 0; i < derived.longitude.length; i++) {
+          const value = row[i];
+          if (value != null && Number.isFinite(Number(value))) {
+            points.push({
+              x: Number(derived.longitude[i]),
+              y: Number(derived.latitude[j]),
+              value: Number(value)
+            });
+          }
+        }
+      }
+
+      const label = {
+        obs_vs_model: 'Model − Observation',
+        error: 'Error (Model − Obs)',
+        bias: 'Bias (Model − Obs)',
+        rmse: 'RMSE (per collocated cell)',
+        anomaly: 'Residual Anomaly (σ)',
+        observation_gap: 'Observation Gap'
+      }[this.analysisMode] || this.analysisMode;
+
+      if (this.analysisMode === 'error' || this.analysisMode === 'bias' || this.analysisMode === 'obs_vs_model') {
+        this.errorMapChart.data.datasets = [
+          {
+            label: label + ' — Positive',
+            data: points.filter(p => p.value > 0),
+            backgroundColor: '#EF4444',
+            borderColor: '#EF4444',
+            pointRadius: 5
+          },
+          {
+            label: label + ' — Negative / Zero',
+            data: points.filter(p => p.value <= 0),
+            backgroundColor: '#06B6D4',
+            borderColor: '#06B6D4',
+            pointRadius: 5
+          }
+        ];
+      } else {
+        this.errorMapChart.data.datasets = [{
+          label,
+          data: points,
+          backgroundColor: '#0284C7',
+          borderColor: '#0284C7',
+          pointRadius: 4
+        }];
+      }
+
+      this.errorMapChart.options.plugins.tooltip.callbacks.label = ctx => {
+        const raw = ctx.raw || {};
+        const unit = this.analysisMode === 'anomaly' ? 'σ'
+          : this.analysisMode === 'observation_gap' ? ''
+          : (derived.units || this.getVariableUnit(this.activeVar));
+        const suffix = unit ? ' ' + unit : '';
+        return '[' + Number(raw.y).toFixed(2) + '°N, ' + Number(raw.x).toFixed(2) + '°E] ' +
+          label + ': ' + Number(raw.value).toFixed(3) + suffix;
+      };
+      this.errorMapChart.update();
+      return;
+    }
+
+    const anomalies = this.anomaliesCache[this.activeTime] || [];
     const pts = anomalies.map(a => ({
       x: a.longitude,
       y: a.latitude,
@@ -1621,7 +1689,6 @@ class AnalysisDashboard {
     ];
     this.errorMapChart.update();
   }
-
   updateCoveragePanel() {
     const cov = this.coverageData;
     const gaps = this.gapsData;

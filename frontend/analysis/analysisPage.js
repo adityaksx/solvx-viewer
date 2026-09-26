@@ -1509,8 +1509,18 @@ class AnalysisDashboard {
         ? profile.reduce((prev, curr) => Math.abs(curr.depth - this.activeDepth) < Math.abs(prev.depth - this.activeDepth) ? curr : prev)
         : null;
 
-      const obsVal = nearestPt ? (nearestPt.temp ?? nearestPt.sal ?? nearestPt.value) : null;
-      const modelVal = nearestPt ? nearestPt.model : null;
+      const obsVal = nearestPt
+        ? (baseVar === 'temperature'
+          ? (nearestPt.temp ?? nearestPt.temperature)
+          : baseVar === 'salinity'
+            ? (nearestPt.sal ?? nearestPt.salinity)
+            : baseVar === 'chlorophyll'
+              ? (nearestPt.chl ?? nearestPt.chlorophyll)
+              : nearestPt.value)
+        : null;
+      const modelVal = nearestPt
+        ? (nearestPt.model ?? nearestPt[baseVar] ?? null)
+        : null;
       const errorVal = (obsVal != null && modelVal != null) ? (modelVal - obsVal) : null;
 
       sb.innerHTML = `

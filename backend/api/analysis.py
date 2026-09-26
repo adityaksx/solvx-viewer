@@ -192,6 +192,180 @@ def get_analysis_summary(
         raise HTTPException(status_code=500, detail=f"Analysis summary generation failed: {str(e)}")
 
 
+
+@router.get('/comparison-field')
+def get_comparison_field(
+    min_lon: Optional[float] = Query(None),
+    max_lon: Optional[float] = Query(None),
+    min_lat: Optional[float] = Query(None),
+    max_lat: Optional[float] = Query(None),
+    variable: str = Query('temperature'),
+    time: Optional[str] = Query(None),
+    depth: Optional[float] = Query(0.0),
+    grid_res_deg: float = Query(1.0, ge=0.25, le=5.0),
+    metric: str = Query('error', description='obs_vs_model | error | bias | rmse | anomaly | observation_gap')
+):
+    """
+    Returns an analysis field on a coarse geographic grid.
+
+    Model and observation values are collocated at the requested depth/time.
+    Residual convention is Model - Observation. Where no matching observation
+    exists, the field is NaN rather than inventing an observation.
+    """
+    allowed = {'obs_vs_model', 'error', 'bias', 'rmse', 'anomaly', 'observation_gap'}
+    if metric not in allowed:
+        raise HTTPException(status_code=400, detail=f"Unknown metric '{metric}'")
+
+    from ..config import DEFAULT_BBOX
+    from ..services.ocean_data_service import get_ocean_slice
+    from ..services.observation_service import get_argo_observations
+
+    bmin_lon = min_lon if min_lon is not None else DEFAULT_BBOX['min_lon']
+    bmax_lon = max_lon if max_lon is not None else DEFAULT_BBOX['max_lon']
+    bmin_lat = min_lat if min_lat is not None else DEFAULT_BBOX['min_lat']
+    bmax_lat = max_lat if max_lat is not None else DEFAULT_BBOX['max_lat']
+
+    try:
+        res = get_ocean_slice(
+            variable=variable,
+            depth=float(depth or 0.0),
+            time=time,
+            min_lat=bmin_lat,
+            max_lat=bmax_lat,
+            min_lon=bmin_lon,
+            max_lon=bmax_lon,
+            stride=max(1, int(round(grid_res_deg / 0.25)))
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model analysis field failed: {e}")
+
+    lats = [float(v) for v in (res.get('latitude') or [])]
+    lons = [float(v) for v in (res.get('longitude') or [])]
+    model = res.get('values') or []
+
+    obs_list = get_argo_observations(
+        min_lon=bmin_lon, max_lon=bmax_lon,
+        min_lat=bmin_lat, max_lat=bmax_lat
+    )
+
+    obs_key = {
+        'temperature': ('temperature', 'temp'),
+        'salinity': ('salinity', 'sal'),
+        'chlorophyll': ('chlorophyll', 'chl'),
+        'sea_level': ('sea_level', 'ssh'),
+    }.get(variable, (variable, variable))
+
+    samples = []
+    for obs in obs_list:
+        profile = obs.get('profile') or []
+        best = None
+        best_d = float('inf')
+        for p in profile:
+            v = p.get(obs_key[0])
+            if v is None:
+                v = p.get(obs_key[1])
+            if v is None:
+                continue
+            pd = abs(float(p.get('depth', 0.0)) - float(depth or 0.0))
+            if pd < best_d:
+                best_d = pd
+                best = float(v)
+        if best is not None and best_d <= max(25.0, float(grid_res_deg) * 50.0):
+            samples.append({
+                'lat': float(obs.get('latitude', 0.0)),
+                'lon': float(obs.get('longitude', 0.0)),
+                'value': best
+            })
+
+    # Nearest-neighbour observation collocation for a display field. Only
+    # populate cells with observations close enough to make the comparison explicit.
+    max_dist = max(0.75, float(grid_res_deg) * 1.5)
+    field = []
+    used = []
+    for j, lat in enumerate(lats):
+        row = []
+        for i, lon in enumerate(lons):
+            try:
+                mv = float(model[j][i])
+            except (IndexError, TypeError, ValueError):
+                row.append(None)
+                continue
+            if not np.isfinite(mv):
+                row.append(None)
+                continue
+
+            nearby = sorted(
+                samples,
+                key=lambda s: (s['lat'] - lat) ** 2 + ((s['lon'] - lon) * np.cos(np.radians(lat))) ** 2
+            )
+            ob = nearby[0] if nearby else None
+            if ob is None:
+                row.append(None)
+                continue
+            ob_dist = np.sqrt((ob['lat'] - lat) ** 2 + ((ob['lon'] - lon) * np.cos(np.radians(lat))) ** 2)
+            if ob_dist > max_dist:
+                row.append(None)
+                continue
+
+            diff = mv - ob['value']
+            used.append({'lat': lat, 'lon': lon, 'model': mv, 'observed': ob['value'], 'error': diff})
+
+            if metric in ('obs_vs_model', 'error'):
+                out = diff
+            elif metric == 'bias':
+                out = diff
+            elif metric == 'rmse':
+                out = abs(diff)
+            elif metric == 'anomaly':
+                # Standardize the collocated residuals below; provisional value here.
+                out = diff
+            else:
+                out = None
+            row.append(out)
+        field.append(row)
+
+    if metric == 'anomaly' and used:
+        vals = np.asarray([p['error'] for p in used], dtype=float)
+        mu = float(vals.mean())
+        sd = float(vals.std()) if vals.size > 1 else 1.0
+        sd = sd or 1.0
+        k = 0
+        for j in range(len(field)):
+            for i in range(len(field[j])):
+                if field[j][i] is not None:
+                    field[j][i] = float((field[j][i] - mu) / sd)
+                    k += 1
+    elif metric == 'observation_gap':
+        obs_cells = set()
+        for s in samples:
+            jj = min(range(len(lats)), key=lambda j: abs(lats[j] - s['lat'])) if lats else None
+            ii = min(range(len(lons)), key=lambda i: abs(lons[i] - s['lon'])) if lons else None
+            if jj is not None and ii is not None:
+                obs_cells.add((jj, ii))
+        field = [[0.0 if (j, i) in obs_cells else 1.0 for i in range(len(lons))] for j in range(len(lats))]
+
+    valid = [float(v) for row in field for v in row if v is not None and np.isfinite(v)]
+    return {
+        'variable': variable,
+        'metric': metric,
+        'time': time,
+        'depth': float(depth or 0.0),
+        'latitude': lats,
+        'longitude': lons,
+        'values': field,
+        'units': 'σ' if metric == 'anomaly' else ('index' if metric == 'observation_gap' else (res.get('units') or '')),
+        'model_observation_pairs': len(used),
+        'model_minus_observation': True,
+        'min_val': min(valid) if valid else None,
+        'max_val': max(valid) if valid else None,
+        'metadata': {
+            'grid_res_deg': grid_res_deg,
+            'observation_collocation': 'nearest profile level at selected depth',
+            'missing_observation_cells': True,
+            'metric_definition': 'Model - Observation' if metric in ('obs_vs_model', 'error', 'bias') else metric
+        }
+    }
+
 # ==============================================================================
 # Stage 5: Anomaly Detection & Abnormal Region Extraction
 # ==============================================================================

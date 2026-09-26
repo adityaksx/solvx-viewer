@@ -23,8 +23,10 @@ import { VariableControl } from './controls/variableControl.js';
 import { TimelineControl } from './controls/timelineControl.js';
 import { OpacityControl } from './controls/opacityControl.js';
 import { SelectionContext } from './context/selectionContext.js';
+import { themeManager } from './context/themeManager.js';
 import { ViewerController } from './viewer/viewerController.js';
 import { ProfileViewer } from './profiles/profileViewer.js';
+
 
 class SolvXApp {
     constructor() {
@@ -97,26 +99,6 @@ class SolvXApp {
     async init() {
         this.status('Initializing SolvX 3D Ocean Explorer…', 'busy');
 
-        // 1. Initialize Interactive 2D World Map
-        const mapContainer = document.getElementById('mapContainer');
-        if (mapContainer && window.maplibregl) {
-            try {
-                this.worldMap = new WorldMap2D('mapContainer', {
-                    initialBBox: this.currentBBox
-                });
-                await this.worldMap.init();
-
-                this.regionDrawer = new RegionDrawer(this.worldMap, {
-                    onExplore: (bbox) => {
-                        this.loadRegion(bbox);
-                        this.setViewMode('3d');
-                    }
-                });
-            } catch (e) {
-                console.warn('[SolvXApp] 2D Map initialization warning:', e);
-            }
-        }
-
         // Setup UI View Switchers and Navigation
         this.setupNavigation();
 
@@ -143,13 +125,14 @@ class SolvXApp {
             getBBox: () => this.currentBBox
         });
 
-        // Initialize depth levels for active variable
         try {
             const depthData = await ApiClient.getOceanDepths(this.activeVar);
             if (depthData?.depths) {
                 this.depthControl.setDepthLevels(depthData.depths);
             }
-        } catch (_) {}
+        } catch (e) {
+            console.warn('Initial depths fetch error:', e);
+        }
 
         this.timelineControl = new TimelineControl({
             onTimeChange: (idx, timeIso, meta) => this.onTimeChange(idx, timeIso, meta)
@@ -161,24 +144,58 @@ class SolvXApp {
             }
         });
 
-        // Setup Layer Visibility Checkboxes
         this.setupLayerToggles();
 
-        // Register animation loop callbacks
         this.scene.onUpdate((timeMs) => {
             this.water?.update(timeMs);
             this.currentParticles?.update(0.016);
         });
 
-        // 4. Load initial region (Bay of Bengal)
         await this.loadRegion(this.currentBBox);
+
+        // Synchronize theme with 3D scene and 2D map
+        themeManager.init();
+        const currentTheme = themeManager.getTheme();
+        this.scene?.setTheme(currentTheme);
+        this.worldMap?.setTheme(currentTheme);
+        themeManager.subscribe(({ theme }) => {
+            this.scene?.setTheme(theme);
+            this.worldMap?.setTheme(theme);
+        });
 
         // Hide loading screen
         document.getElementById('loading')?.classList.add('hidden');
         this.status('Ready to explore');
     }
 
+    ensureMapInitialized() {
+        if (this.worldMap) return;
+        const mapContainer = document.getElementById('mapContainer');
+        if (mapContainer && window.maplibregl) {
+            try {
+                this.worldMap = new WorldMap2D('mapContainer', {
+                    initialBBox: this.currentBBox
+                });
+                const theme = themeManager.getTheme();
+                this.worldMap.setTheme(theme);
+                this.worldMap.init().then(() => {
+                    this.regionDrawer = new RegionDrawer(this.worldMap, {
+                        onExplore: (bbox) => {
+                            SelectionContext.setArea({ bbox });
+                            this.loadRegion(bbox);
+                            this.setViewMode('3d');
+                        }
+                    });
+                }).catch(e => console.warn('[WorldMap2D] init err:', e));
+            } catch (e) {
+                console.error('[SolvXApp] 2D Map ERROR:', e);
+            }
+        }
+    }
+
     setupNavigation() {
+        const navViewer = document.getElementById('navViewer');
+        const navMap = document.getElementById('navMap');
         const switchBtn = document.getElementById('toggleMapBtn');
         const mapView = document.getElementById('mapView');
         const sceneView = document.getElementById('sceneView');
@@ -188,11 +205,12 @@ class SolvXApp {
             if (mode === 'map') {
                 mapView?.classList.remove('hidden');
                 sceneView?.classList.add('hidden');
+                navMap?.classList.add('active');
+                navViewer?.classList.remove('active');
                 if (switchBtn) {
-                    switchBtn.innerHTML = `
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                      <span>3D OCEAN SCENE</span>`;
+                    switchBtn.innerHTML = `<span>3D OCEAN SCENE</span>`;
                 }
+                this.ensureMapInitialized();
                 requestAnimationFrame(() => {
                     setTimeout(() => {
                         this.worldMap?.resize();
@@ -201,15 +219,25 @@ class SolvXApp {
             } else {
                 mapView?.classList.add('hidden');
                 sceneView?.classList.remove('hidden');
+                navViewer?.classList.add('active');
+                navMap?.classList.remove('active');
                 if (switchBtn) {
-                    switchBtn.innerHTML = `
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
-                      <span>2D WORLD MAP</span>`;
+                    switchBtn.innerHTML = `<span>2D WORLD MAP</span>`;
                 }
                 this.scene?.onResize();
             }
         };
         this.setViewMode = setViewMode;
+
+        navViewer?.addEventListener('click', (e) => {
+            e.preventDefault();
+            setViewMode('3d');
+        });
+
+        navMap?.addEventListener('click', (e) => {
+            e.preventDefault();
+            setViewMode('map');
+        });
 
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('mode') === 'map') {
@@ -1140,6 +1168,19 @@ class SolvXApp {
             if (gridEl) gridEl.innerHTML = gridHtml;
             if (timeEl) timeEl.textContent = new Date(this.activeTime || data.timestamp || Date.now()).toUTCString();
 
+            const openAnalysisBtn = document.getElementById('btnOpenAnalysisFromReadout');
+            if (openAnalysisBtn) {
+                openAnalysisBtn.onclick = () => {
+                    SelectionContext.setSelection({
+                        type: 'cell',
+                        lat: cell.lat,
+                        lon: cell.lon,
+                        depth: this.currentDepth || 0
+                    });
+                    window.location.href = `/analysis.html?lat=${cell.lat.toFixed(4)}&lon=${cell.lon.toFixed(4)}`;
+                };
+            }
+
             this.status('Point data loaded.');
         } catch (e) {
             console.error('Point inspection failed:', e);
@@ -1242,17 +1283,15 @@ class SolvXApp {
     }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-    const app = new SolvXApp();
-    window.solvx = app;
-    window.solvxViewer = app.viewerController;
-    app.init().catch(err => {
-        console.error('Fatal initialization error:', err);
-        const fatal = document.getElementById('fatal');
-        const fatalText = document.getElementById('fatalText');
-        if (fatalText) fatalText.textContent = err.message || String(err);
-        fatal?.classList.add('show');
-    });
+const app = new SolvXApp();
+window.solvx = app;
+window.solvxViewer = app.viewerController;
+app.init().catch(err => {
+    console.error('Fatal initialization error:', err);
+    const fatal = document.getElementById('fatal');
+    const fatalText = document.getElementById('fatalText');
+    if (fatalText) fatalText.textContent = err.message || String(err);
+    fatal?.classList.add('show');
 });
 
 // --- ML Hazard Early Warning Extension ---

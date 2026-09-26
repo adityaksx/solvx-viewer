@@ -51,55 +51,45 @@ function _render() {
 
     _container.innerHTML = `
         <div class="ai-assistant-wrapper">
-            <div class="ai-status-banner ${_aiAvailable ? 'status-online' : 'status-notice'}">
-                <span class="ai-status-indicator"></span>
-                <span class="ai-status-text">
-                    ${_aiAvailable 
-                        ? `Gemini AI Engine Active (${_aiModel})` 
-                        : 'Gemini Key Not Set (Deterministic mode active)'}
-                </span>
-                <button id="aiKeyToggleBtn" class="ai-key-btn" title="Configure session Gemini API key">
-                    ${_sessionApiKey ? 'Key Saved' : 'Set Key'}
-                </button>
+            <div class="ai-intro-bar">
+                <span><span class="ai-status-indicator"></span><strong>SOLVX AI</strong> &middot; Ask about the selected ocean data</span>
+                <button id="aiKeyToggleBtn" class="theme-toggle-btn" style="width:24px;height:24px;font-size:12px;border:none;background:transparent;cursor:pointer;" title="Configure Gemini API Key" aria-label="API Settings">⚙</button>
             </div>
 
-            <div id="aiKeyInputRow" class="ai-key-input-row hidden">
-                <input type="password" id="aiApiKeyField" class="ai-key-field" 
-                       placeholder="Enter Gemini API Key (saved in session only)" 
+            <div id="aiKeyInputRow" class="ai-key-input-row" style="display:none; gap:6px;">
+                <input type="password" id="aiApiKeyField" class="ai-chat-input" 
+                       placeholder="Gemini API Key (saved in session only)" 
                        value="${_sessionApiKey}">
-                <button id="aiSaveKeyBtn" class="focus-btn">SAVE</button>
+                <button id="aiSaveKeyBtn" class="compact-btn">SAVE</button>
             </div>
 
             <div class="ai-prompt-chips">
-                <button class="ai-chip" data-prompt="Where does the numerical model disagree most with in-situ Argo floats?">
-                    Top Discrepancy
+                <button class="ai-chip" data-prompt="Why is model error highest here?">
+                    Why is model error highest here?
                 </button>
-                <button class="ai-chip" data-prompt="Show temperature anomalies below 100m depth.">
-                    Anomalies &gt;100m
+                <button class="ai-chip" data-prompt="Explain this Argo profile.">
+                    Explain this Argo profile
                 </button>
-                <button class="ai-chip" data-prompt="Where are the critical observation data gaps in the Bay of Bengal?">
-                    Data Gaps
+                <button class="ai-chip" data-prompt="What depth has the largest discrepancy?">
+                    Largest discrepancy depth
                 </button>
-                <button class="ai-chip" data-prompt="Set depth to 150 meters and show salinity.">
-                    Set 150m Salinity
+                <button class="ai-chip" data-prompt="Where are the observation gaps?">
+                    Where are observation gaps?
                 </button>
             </div>
 
             <div class="ai-chat-history" id="aiChatHistory">
                 <div class="ai-message ai-message-assistant">
-                    <div class="ai-message-header">SOLVX AI SCIENCE ASSISTANT</div>
-                    <div class="ai-message-body">
-                        Ask any question about model accuracy, Argo soundings, or observation gaps. 
-                        You can also type natural language commands to control the 3D viewer.
-                    </div>
+                    <div class="ai-message-header">SOLVX AI ASSISTANT</div>
+                    Ask any question about model accuracy, Argo soundings, or observation gaps in the active region.
                 </div>
             </div>
 
             <form class="ai-input-form" id="aiInputForm">
                 <input type="text" id="aiChatInput" class="ai-chat-input" 
-                       placeholder="Ask ocean science question or command 3D view…" autocomplete="off">
-                <button type="submit" id="aiSendBtn" class="ai-send-btn" title="Send to AI">
-                    <span>SEND</span>
+                       placeholder="Why is the model different from Argo?" autocomplete="off">
+                <button type="submit" id="aiSendBtn" class="ai-send-btn">
+                    <span>ASK</span>
                 </button>
             </form>
         </div>
@@ -118,7 +108,8 @@ function _bindEvents() {
     const history = document.getElementById('aiChatHistory');
 
     keyToggleBtn?.addEventListener('click', () => {
-        keyInputRow?.classList.toggle('hidden');
+        if (!keyInputRow) return;
+        keyInputRow.style.display = keyInputRow.style.display === 'none' ? 'flex' : 'none';
     });
 
     saveKeyBtn?.addEventListener('click', async () => {

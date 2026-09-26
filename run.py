@@ -22,15 +22,36 @@ def main():
     else:
         print('Dynamic geometry mode enabled (fetching on demand via /api/geography and /api/bathymetry).')
     threading.Thread(target=start_api,daemon=True).start()
+    ThreadingHTTPServer.request_queue_size = 128
+    ThreadingHTTPServer.daemon_threads = True
+    ThreadingHTTPServer.allow_reuse_address = True
     class Handler(SimpleHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        timeout = 5
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(FRONTEND), **kwargs)
+
+        def end_headers(self):
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', '*')
+            self.send_header('Connection', 'close')
+            self.close_connection = True
+            super().end_headers()
+
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.end_headers()
+
         def do_GET(self):
             clean_path = self.path.split('?')[0].rstrip('/')
             if clean_path == '/download':
                 query = ('?' + self.path.split('?', 1)[1]) if '?' in self.path else ''
                 self.path = '/download.html' + query
             return super().do_GET()
+
         def log_message(self, fmt, *args):
             print('[frontend]', fmt % args)
     server = ThreadingHTTPServer(('127.0.0.1', 5500), Handler)

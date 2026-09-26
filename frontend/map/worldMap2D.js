@@ -126,18 +126,26 @@ export class WorldMap2D {
         this.map.addControl(new window.maplibregl.ScaleControl({ maxWidth: 200, unit: 'metric' }), 'bottom-left');
 
         return new Promise((resolve) => {
+            let done = false;
             const onReady = () => {
+                if (done) return;
+                done = true;
                 this.isLoaded = true;
-                this._initLayers();
-                this.setBBox(this.currentBBox, false);
-                this.loadEEZForBBox(this.currentBBox);
+                try {
+                    this._initLayers();
+                    this.setBBox(this.currentBBox, false);
+                    this.loadEEZForBBox(this.currentBBox);
+                } catch (e) {
+                    console.warn('[WorldMap2D] Layer setup deferred:', e);
+                }
                 resolve(this);
             };
 
-            if (this.map.loaded()) {
+            if (this.map.isStyleLoaded()) {
                 onReady();
             } else {
-                this.map.once('load', onReady);
+                this.map.once('style.load', onReady);
+                setTimeout(onReady, 400);
             }
         });
     }
@@ -148,15 +156,22 @@ export class WorldMap2D {
         const style = this._getBasemapStyle(styleKey);
         this.map.setStyle(style);
         this.map.once('style.load', () => {
-            this._initLayers();
-            this.setBBox(this.currentBBox, false);
-            if (this.showEEZ) {
-                this.loadEEZForBBox(this.currentBBox);
+            try {
+                this._initLayers();
+                this.setBBox(this.currentBBox, false);
+                if (this.showEEZ) {
+                    this.loadEEZForBBox(this.currentBBox);
+                }
+            } catch (e) {
+                console.warn('[WorldMap2D] Basemap style layer update deferred:', e);
             }
         });
     }
 
     _initLayers() {
+        if (!this.map || !this.map.isStyleLoaded()) return;
+        if (this.map.getSource('eez-source')) return;
+
         // 1. EEZ Boundaries Layer (Real VLIZ / Marine Regions v12)
         this.map.addSource('eez-source', {
             type: 'geojson',
@@ -193,8 +208,8 @@ export class WorldMap2D {
             source: 'selection-box-source',
             filter: ['==', '$type', 'Polygon'],
             paint: {
-                'fill-color': '#00e5ff',
-                'fill-opacity': 0.18
+                'fill-color': '#0284C7',
+                'fill-opacity': 0.15
             }
         });
 
@@ -205,8 +220,8 @@ export class WorldMap2D {
             source: 'selection-box-source',
             filter: ['==', '$type', 'Polygon'],
             paint: {
-                'line-color': '#00e5ff',
-                'line-width': 2.5
+                'line-color': '#0284C7',
+                'line-width': 2.0
             }
         });
 
@@ -217,12 +232,17 @@ export class WorldMap2D {
             source: 'selection-box-source',
             filter: ['==', '$type', 'Point'],
             paint: {
-                'circle-radius': 5,
+                'circle-radius': 4.5,
                 'circle-color': '#ffffff',
                 'circle-stroke-width': 2,
-                'circle-stroke-color': '#00e5ff'
+                'circle-stroke-color': '#0284C7'
             }
         });
+    }
+
+    setTheme(themeName) {
+        const isDark = themeName === 'dark';
+        this.setBasemap(isDark ? 'osm-dark' : 'osm');
     }
 
     _createBBoxGeoJSON(bbox) {

@@ -86,9 +86,15 @@ class AnalysisDashboard {
     this.errorDepthChart = null;
     this.timeSeriesChart = null;
     this.errorMapChart = null;
+
+    // Theme & Playback
+    this.currentTheme = localStorage.getItem('solvx_theme') || 'light';
+    this.isPlaying = false;
+    this.playInterval = null;
   }
 
   async init() {
+    this.initTheme();
     this.updateAreaHeader();
     this.bindUI();
     this.initCharts();
@@ -113,6 +119,80 @@ class AnalysisDashboard {
         }
       }
     });
+  }
+
+  initTheme() {
+    this.setTheme(this.currentTheme);
+    document.getElementById('themeToggleBtn')?.addEventListener('click', () => {
+      const nextTheme = this.currentTheme === 'dark' ? 'light' : 'dark';
+      this.setTheme(nextTheme);
+    });
+  }
+
+  setTheme(themeName) {
+    this.currentTheme = themeName;
+    localStorage.setItem('solvx_theme', themeName);
+    document.documentElement.setAttribute('data-theme', themeName);
+
+    const icon = document.getElementById('themeToggleIcon');
+    if (icon) {
+      icon.textContent = themeName === 'dark' ? '☼' : '☾';
+      icon.title = themeName === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode';
+    }
+
+    if (this.scene) {
+      this.scene.setTheme(themeName);
+    }
+    this.updateChartThemes(themeName === 'dark');
+  }
+
+  getChartThemeColors(isDark) {
+    return {
+      grid: isDark ? '#2C3A48' : '#E2E8F0',
+      ticks: isDark ? '#94A3B8' : '#64748B',
+      title: isDark ? '#CBD5E1' : '#475569',
+      legend: isDark ? '#F1F5F9' : '#0F172A'
+    };
+  }
+
+  updateChartThemes(isDark) {
+    const c = this.getChartThemeColors(isDark);
+    const charts = [this.modelArgoChart, this.errorDepthChart, this.errorMapChart, this.timeSeriesChart];
+    charts.forEach(chart => {
+      if (!chart) return;
+      if (chart.options?.scales?.x) {
+        if (chart.options.scales.x.grid) chart.options.scales.x.grid.color = c.grid;
+        if (chart.options.scales.x.ticks) chart.options.scales.x.ticks.color = c.ticks;
+        if (chart.options.scales.x.title) chart.options.scales.x.title.color = c.title;
+      }
+      if (chart.options?.scales?.y) {
+        if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = c.grid;
+        if (chart.options.scales.y.ticks) chart.options.scales.y.ticks.color = c.ticks;
+        if (chart.options.scales.y.title) chart.options.scales.y.title.color = c.title;
+      }
+      if (chart.options?.plugins?.legend?.labels) {
+        chart.options.plugins.legend.labels.color = c.legend;
+      }
+      chart.update();
+    });
+  }
+
+  togglePlayback() {
+    const playBtn = document.getElementById('btnTimePlay');
+    if (this.isPlaying) {
+      clearInterval(this.playInterval);
+      this.playInterval = null;
+      this.isPlaying = false;
+      if (playBtn) playBtn.textContent = '▶ PLAY';
+    } else {
+      if (!this.timeline.length) return;
+      this.isPlaying = true;
+      if (playBtn) playBtn.textContent = '⏸ PAUSE';
+      this.playInterval = setInterval(() => {
+        const next = (this.index + 1) % this.timeline.length;
+        this.selectTime(next);
+      }, 1500);
+    }
   }
 
   updateAreaHeader() {
@@ -214,9 +294,13 @@ class AnalysisDashboard {
       if (this.scene) this.scene.fitCamera();
     });
 
-    // 3D View mode buttons (3D, TOP, CUT)
+    // 3D View mode buttons (3D, TOP, VERTICAL, HORIZONTAL, RESET)
     document.querySelectorAll('.analysis-view-controls button').forEach(b => {
       b.addEventListener('click', () => {
+        if (b.dataset.action === 'reset') {
+          this.scene?.fitCamera();
+          return;
+        }
         document.querySelectorAll('.analysis-view-controls button').forEach(btn => btn.classList.remove('active'));
         b.classList.add('active');
         this.activeView = b.dataset.view;
@@ -264,6 +348,17 @@ class AnalysisDashboard {
       this.rangeEnd = e.target.value;
       this.updateCharts();
       this.updateKPIStrip();
+    });
+
+    // Time step navigation
+    document.getElementById('btnTimePrev')?.addEventListener('click', () => {
+      if (this.index > 0) this.selectTime(this.index - 1);
+    });
+    document.getElementById('btnTimeNext')?.addEventListener('click', () => {
+      if (this.index < this.timeline.length - 1) this.selectTime(this.index + 1);
+    });
+    document.getElementById('btnTimePlay')?.addEventListener('click', () => {
+      this.togglePlayback();
     });
   }
 
@@ -402,6 +497,8 @@ class AnalysisDashboard {
   }
 
   initCharts() {
+    const c = this.getChartThemeColors(this.currentTheme === 'dark');
+
     // 1. Model vs Observation Vertical Profile (Section 15.1)
     const ctxModel = document.getElementById('chartModelVsArgo')?.getContext('2d');
     if (ctxModel) {
@@ -415,19 +512,19 @@ class AnalysisDashboard {
           scales: {
             x: {
               position: 'top',
-              grid: { color: '#17343f' },
-              ticks: { color: '#6d99a7' },
-              title: { display: true, text: 'Value', color: '#6d99a7' }
+              grid: { color: c.grid },
+              ticks: { color: c.ticks },
+              title: { display: true, text: 'Value', color: c.title }
             },
             y: {
               reverse: true,
-              grid: { color: '#17343f' },
-              ticks: { color: '#6d99a7' },
-              title: { display: true, text: 'Depth (m)', color: '#6d99a7' }
+              grid: { color: c.grid },
+              ticks: { color: c.ticks },
+              title: { display: true, text: 'Depth (m)', color: c.title }
             }
           },
           plugins: {
-            legend: { labels: { color: '#dceff5' } },
+            legend: { labels: { color: c.legend } },
             tooltip: { mode: 'index', intersect: false }
           },
           onClick: (e, elements) => {
@@ -456,19 +553,19 @@ class AnalysisDashboard {
           scales: {
             x: {
               position: 'top',
-              grid: { color: '#17343f' },
-              ticks: { color: '#6d99a7' },
-              title: { display: true, text: 'Difference (Model − Obs)', color: '#6d99a7' }
+              grid: { color: c.grid },
+              ticks: { color: c.ticks },
+              title: { display: true, text: 'Difference (Model − Obs)', color: c.title }
             },
             y: {
               reverse: true,
-              grid: { color: '#17343f' },
-              ticks: { color: '#6d99a7' },
-              title: { display: true, text: 'Depth (m)', color: '#6d99a7' }
+              grid: { color: c.grid },
+              ticks: { color: c.ticks },
+              title: { display: true, text: 'Depth (m)', color: c.title }
             }
           },
           plugins: {
-            legend: { labels: { color: '#dceff5' } },
+            legend: { labels: { color: c.legend } },
             tooltip: { mode: 'index', intersect: false }
           },
           onClick: (e, elements) => {
@@ -495,22 +592,22 @@ class AnalysisDashboard {
           maintainAspectRatio: false,
           scales: {
             x: {
-              title: { display: true, text: 'Longitude (°E)', color: '#6d99a7' },
-              grid: { color: '#17343f' },
-              ticks: { color: '#6d99a7' },
+              title: { display: true, text: 'Longitude (°E)', color: c.title },
+              grid: { color: c.grid },
+              ticks: { color: c.ticks },
               min: this.bbox.min_lon,
               max: this.bbox.max_lon
             },
             y: {
-              title: { display: true, text: 'Latitude (°N)', color: '#6d99a7' },
-              grid: { color: '#17343f' },
-              ticks: { color: '#6d99a7' },
+              title: { display: true, text: 'Latitude (°N)', color: c.title },
+              grid: { color: c.grid },
+              ticks: { color: c.ticks },
               min: this.bbox.min_lat,
               max: this.bbox.max_lat
             }
           },
           plugins: {
-            legend: { display: true, labels: { color: '#6d99a7', boxWidth: 10 } },
+            legend: { display: true, labels: { color: c.legend, boxWidth: 10 } },
             tooltip: {
               callbacks: {
                 label: (ctx) => {
@@ -550,11 +647,11 @@ class AnalysisDashboard {
           responsive: true,
           maintainAspectRatio: false,
           scales: {
-            x: { grid: { color: '#17343f' }, ticks: { color: '#6d99a7' } },
-            y: { grid: { color: '#17343f' }, ticks: { color: '#6d99a7' } }
+            x: { grid: { color: c.grid }, ticks: { color: c.ticks } },
+            y: { grid: { color: c.grid }, ticks: { color: c.ticks } }
           },
           plugins: {
-            legend: { labels: { color: '#dceff5' } }
+            legend: { labels: { color: c.legend } }
           }
         }
       });
@@ -599,6 +696,7 @@ class AnalysisDashboard {
           this.updateCharts();
         }
       });
+      this.scene.setTheme(this.currentTheme);
     }
 
     this.scene.clearScene();
@@ -885,8 +983,10 @@ class AnalysisDashboard {
     if (!this.scene) return;
     if (this.activeView === 'top') {
       this.scene.setView('top');
-    } else if (this.activeView === 'cut') {
-      this.scene.setView('cut');
+    } else if (this.activeView === 'vertical') {
+      this.scene.setView('vertical');
+    } else if (this.activeView === 'horizontal' || this.activeView === 'cut') {
+      this.scene.setView('horizontal');
     } else {
       this.scene.setView('3d');
     }
@@ -1130,23 +1230,26 @@ class AnalysisDashboard {
     if (!sb) return;
 
     const unit = this.getVariableUnit(this.activeVar);
+    const acc = this.summaryData?.model_accuracy || {};
 
     if (this.selectedAnomaly) {
       const a = this.selectedAnomaly;
       const anomUnit = a.unit || unit;
       sb.innerHTML = `
-        <div class="sidebar-row"><label>Target</label><span class="critical">Anomaly Detected</span></div>
-        <div class="sidebar-row"><label>Variable</label><span>${this.prettyVar(a.variable)}</span></div>
-        <div class="sidebar-row"><label>Coordinates</label><span>${a.latitude.toFixed(2)}°N, ${a.longitude.toFixed(2)}°E</span></div>
-        <div class="sidebar-row"><label>Depth</label><span>${a.depth} m</span></div>
-        <div class="sidebar-row"><label>Model Value</label><span>${a.baseline.toFixed(2)} ${anomUnit}</span></div>
-        <div class="sidebar-row"><label>Observed Value</label><span>${a.value.toFixed(2)} ${anomUnit}</span></div>
-        <div class="sidebar-row"><label>Difference (Model − Obs)</label><span class="${a.difference > 0 ? 'critical' : 'negative'}">${a.difference > 0 ? '+' : ''}${a.difference.toFixed(2)} ${anomUnit}</span></div>
-        <div class="sidebar-row"><label>Method</label><span>${a.detection_method || 'Z-Score Analysis'}</span></div>
-        <div class="sidebar-row"><label>Severity</label><span class="critical">${a.severity}</span></div>
-        <div class="sidebar-actions">
-          <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
-          <button class="action-btn" id="btnResetItem">RESET</button>
+        <div class="sidebar-row"><label>TARGET</label><span class="critical">Physical Anomaly</span></div>
+        <div class="sidebar-row"><label>VARIABLE</label><span>${this.prettyVar(a.variable)}</span></div>
+        <div class="sidebar-row"><label>COORDINATES</label><span class="mono">${a.latitude.toFixed(2)}°N, ${a.longitude.toFixed(2)}°E</span></div>
+        <div class="sidebar-row"><label>DEPTH</label><span>${a.depth} m</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-row"><label>MODEL BASELINE</label><span>${a.baseline.toFixed(2)} ${anomUnit}</span></div>
+        <div class="sidebar-row"><label>OBSERVED VALUE</label><span>${a.value.toFixed(2)} ${anomUnit}</span></div>
+        <div class="sidebar-row"><label>DIFFERENCE (MODEL − OBS)</label><span class="${a.difference > 0 ? 'critical' : 'negative'}">${a.difference > 0 ? '+' : ''}${a.difference.toFixed(2)} ${anomUnit}</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-row"><label>DETECTION METHOD</label><span>${a.detection_method || 'Z-Score Analysis (σ > 2.0)'}</span></div>
+        <div class="sidebar-row"><label>SEVERITY</label><span class="critical">${a.severity}</span></div>
+        <div class="sidebar-actions" style="display:flex;gap:8px;margin-top:12px;">
+          <button class="action-btn" id="btnFocusItem" style="flex:1;">FOCUS 3D</button>
+          <button class="action-btn" id="btnResetItem" style="flex:1;">RESET</button>
         </div>
       `;
       this._wireSidebarButtons();
@@ -1158,36 +1261,43 @@ class AnalysisDashboard {
         : null;
 
       const obsVal = nearestPt ? (nearestPt.temp ?? nearestPt.sal ?? nearestPt.value) : null;
+      const modelVal = nearestPt ? nearestPt.model : null;
+      const errorVal = (obsVal != null && modelVal != null) ? (modelVal - obsVal) : null;
 
       sb.innerHTML = `
-        <div class="sidebar-row"><label>Platform</label><span class="positive">${o.platform || 'Argo Profiling Float'}</span></div>
-        <div class="sidebar-row"><label>Float ID / WMO</label><span>#${o.wmo || o.id}</span></div>
-        <div class="sidebar-row"><label>Coordinates</label><span>${o.latitude.toFixed(2)}°N, ${o.longitude.toFixed(2)}°E</span></div>
-        <div class="sidebar-row"><label>Soundings</label><span>${profile.length} depth levels</span></div>
-        <div class="sidebar-row"><label>Active Depth</label><span>${this.activeDepth} m</span></div>
-        ${obsVal != null ? `
-          <div class="sidebar-row"><label>In-Situ Observation</label><span>${Number(obsVal).toFixed(2)} ${unit}</span></div>
-        ` : ''}
-        <div class="sidebar-row"><label>Interpolation Method</label><span style="color:#62d5ee;">Bilinear spatial + 1D vertical interpolation</span></div>
-        <div class="sidebar-actions">
-          <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
-          <button class="action-btn" id="btnResetItem">RESET</button>
+        <div class="sidebar-row"><label>PLATFORM</label><span>${o.platform || 'Apex CTD Float'}</span></div>
+        <div class="sidebar-row"><label>FLOAT ID</label><span class="mono">#${o.wmo || o.id}</span></div>
+        <div class="sidebar-row"><label>LOCATION</label><span class="mono">${o.latitude.toFixed(2)}°N, ${o.longitude.toFixed(2)}°E</span></div>
+        <div class="sidebar-row"><label>ACTIVE DEPTH</label><span>${this.activeDepth} m</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-row"><label>OBSERVATION</label><span>${obsVal != null ? `${Number(obsVal).toFixed(2)} ${unit}` : 'N/A'}</span></div>
+        <div class="sidebar-row"><label>MODEL</label><span>${modelVal != null ? `${Number(modelVal).toFixed(2)} ${unit}` : 'N/A'}</span></div>
+        <div class="sidebar-row"><label>ERROR</label><span class="${errorVal != null ? (errorVal > 0 ? 'critical' : 'negative') : ''}">${errorVal != null ? `${errorVal > 0 ? '+' : ''}${errorVal.toFixed(2)} ${unit}` : 'N/A'}</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-row"><label>RMSE</label><span>${acc.overall_rmse != null ? `${acc.overall_rmse.toFixed(2)} ${unit}` : 'N/A'}</span></div>
+        <div class="sidebar-row"><label>BIAS</label><span>${acc.overall_bias != null ? `${acc.overall_bias > 0 ? '+' : ''}${acc.overall_bias.toFixed(2)} ${unit}` : 'N/A'}</span></div>
+        <div class="sidebar-row"><label>MAE</label><span>${acc.overall_mae != null ? `${acc.overall_mae.toFixed(2)} ${unit}` : 'N/A'}</span></div>
+        <div class="sidebar-row"><label>METHOD</label><span style="color:var(--primary);font-size:11px;font-weight:600;">Bilinear spatial + 1D vertical interpolation</span></div>
+        <div class="sidebar-actions" style="display:flex;gap:8px;margin-top:12px;">
+          <button class="action-btn" id="btnFocusItem" style="flex:1;">FOCUS 3D</button>
+          <button class="action-btn" id="btnResetItem" style="flex:1;">RESET</button>
         </div>
       `;
       this._wireSidebarButtons();
     } else if (this.selectedRegion) {
       const r = this.selectedRegion;
       sb.innerHTML = `
-        <div class="sidebar-row"><label>Target</label><span class="critical">Abnormal Region</span></div>
-        <div class="sidebar-row"><label>Region Name</label><span>${r.name || r.id}</span></div>
-        <div class="sidebar-row"><label>Variable</label><span>${this.prettyVar(r.variable)}</span></div>
-        <div class="sidebar-row"><label>Depth Range</label><span>${r.depth_range_m?.[0] ?? 0}m – ${r.depth_range_m?.[1] ?? 500}m</span></div>
-        <div class="sidebar-row"><label>Anomaly Count</label><span>${r.anomaly_count || 0}</span></div>
-        <div class="sidebar-row"><label>Mean Magnitude</label><span>${(r.anomaly_magnitude_mean || 0).toFixed(2)}</span></div>
-        <div class="sidebar-row"><label>Severity</label><span class="critical">${r.severity}</span></div>
-        <div class="sidebar-actions">
-          <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
-          <button class="action-btn" id="btnResetItem">RESET</button>
+        <div class="sidebar-row"><label>TARGET</label><span class="critical">Abnormal Region</span></div>
+        <div class="sidebar-row"><label>REGION NAME</label><span>${r.name || r.id}</span></div>
+        <div class="sidebar-row"><label>VARIABLE</label><span>${this.prettyVar(r.variable)}</span></div>
+        <div class="sidebar-row"><label>DEPTH RANGE</label><span>${r.depth_range_m?.[0] ?? 0}m – ${r.depth_range_m?.[1] ?? 500}m</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-row"><label>ANOMALY COUNT</label><span>${r.anomaly_count || 0}</span></div>
+        <div class="sidebar-row"><label>MEAN MAGNITUDE</label><span>${(r.anomaly_magnitude_mean || 0).toFixed(2)}</span></div>
+        <div class="sidebar-row"><label>SEVERITY</label><span class="critical">${r.severity}</span></div>
+        <div class="sidebar-actions" style="display:flex;gap:8px;margin-top:12px;">
+          <button class="action-btn" id="btnFocusItem" style="flex:1;">FOCUS 3D</button>
+          <button class="action-btn" id="btnResetItem" style="flex:1;">RESET</button>
         </div>
       `;
       this._wireSidebarButtons();
@@ -1197,23 +1307,24 @@ class AnalysisDashboard {
       const modelVal = ptVals[this.activeVar] ?? ptVals[this.getBaseVar(this.activeVar)];
 
       sb.innerHTML = `
-        <div class="sidebar-row"><label>Target</label><span>Ocean Grid Cell</span></div>
-        <div class="sidebar-row"><label>Coordinates</label><span>${c.lat.toFixed(3)}°N, ${c.lon.toFixed(3)}°E</span></div>
-        <div class="sidebar-row"><label>Seabed Depth</label><span>${(c.depthM || 0).toFixed(1)} m</span></div>
-        <div class="sidebar-row"><label>Scientific Depth</label><span>${this.activeDepth} m</span></div>
-        <div class="sidebar-row"><label>Variable</label><span>${this.prettyVar(this.activeVar)}</span></div>
+        <div class="sidebar-row"><label>TARGET</label><span>Ocean Grid Cell</span></div>
+        <div class="sidebar-row"><label>COORDINATES</label><span class="mono">${c.lat.toFixed(3)}°N, ${c.lon.toFixed(3)}°E</span></div>
+        <div class="sidebar-row"><label>SEABED DEPTH</label><span>${(c.depthM || 0).toFixed(1)} m</span></div>
+        <div class="sidebar-row"><label>ACTIVE DEPTH</label><span>${this.activeDepth} m</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-row"><label>VARIABLE</label><span>${this.prettyVar(this.activeVar)}</span></div>
         ${modelVal != null ? `
-          <div class="sidebar-row"><label>Model Value</label><span>${Number(modelVal).toFixed(2)} ${unit}</span></div>
+          <div class="sidebar-row"><label>MODEL VALUE</label><span>${Number(modelVal).toFixed(2)} ${unit}</span></div>
         ` : ''}
-        <div class="sidebar-row"><label>Model Method</label><span style="color:#62d5ee;">Bilinear horizontal interpolation</span></div>
-        <div class="sidebar-actions">
-          <button class="action-btn" id="btnFocusItem">FOCUS 3D</button>
-          <button class="action-btn" id="btnResetItem">RESET</button>
+        <div class="sidebar-row"><label>INTERPOLATION</label><span style="color:var(--primary);font-size:11px;font-weight:600;">Bilinear horizontal interpolation</span></div>
+        <div class="sidebar-actions" style="display:flex;gap:8px;margin-top:12px;">
+          <button class="action-btn" id="btnFocusItem" style="flex:1;">FOCUS 3D</button>
+          <button class="action-btn" id="btnResetItem" style="flex:1;">RESET</button>
         </div>
       `;
       this._wireSidebarButtons();
     } else {
-      sb.innerHTML = `<div class="empty-state">Select an ocean cell, Argo, Glider, anomaly or region.</div>`;
+      sb.innerHTML = `<div class="empty-state">Select an ocean cell, Argo, Glider, anomaly or region to inspect soundings and model metrics.</div>`;
     }
   }
 
@@ -1243,17 +1354,17 @@ class AnalysisDashboard {
 
     this.errorMapChart.data.datasets = [
       {
-        label: 'Positive Discrepancy (Obs > Model)',
+        label: 'Positive Discrepancy (Model > Obs)',
         data: pts.filter(p => p.anomaly.difference > 0),
-        backgroundColor: '#ef4444',
-        borderColor: '#ef4444',
+        backgroundColor: '#EF4444',
+        borderColor: '#EF4444',
         pointRadius: 5
       },
       {
-        label: 'Negative Discrepancy (Obs < Model)',
+        label: 'Negative Discrepancy (Model < Obs)',
         data: pts.filter(p => p.anomaly.difference <= 0),
-        backgroundColor: '#22d3ee',
-        borderColor: '#22d3ee',
+        backgroundColor: '#06B6D4',
+        borderColor: '#06B6D4',
         pointRadius: 5
       }
     ];
@@ -1273,43 +1384,57 @@ class AnalysisDashboard {
 
     const density = cov.density_summary || {};
     const totalCells = cov.grid_cells?.length || 1;
+    const maxDepth = this.depthLevels[this.depthLevels.length - 1] || 750;
 
     let html = `
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px;">
-        <div>
-          <div class="sidebar-row"><label>Spatial Basin Coverage</label><span class="positive">${(cov.spatial_coverage_pct || 0).toFixed(1)} %</span></div>
-          <div class="sidebar-row"><label>Total In-Situ Soundings</label><span>${cov.total_observations || 0}</span></div>
-          <div class="sidebar-row"><label>Active Profilers in Basin</label><span>${cov.active_floats_count || 0}</span></div>
+      <div class="coverage-stats-row">
+        <div class="coverage-stat-item">
+          <label>SPATIAL COVERAGE</label>
+          <span class="positive">${(cov.spatial_coverage_pct || 0).toFixed(1)} %</span>
         </div>
+        <div class="coverage-stat-item">
+          <label>TOTAL OBSERVATIONS</label>
+          <span>${cov.total_observations || 0}</span>
+        </div>
+        <div class="coverage-stat-item">
+          <label>DEPTH COVERAGE</label>
+          <span>0 – ${maxDepth} m</span>
+        </div>
+        <div class="coverage-stat-item">
+          <label>ACTIVE PROFILERS</label>
+          <span>${cov.active_floats_count || this.argoData.length || 0}</span>
+        </div>
+      </div>
 
-        <div>
-          <div class="eyebrow" style="margin-bottom:8px;">SPATIAL DENSITY BREAKDOWN</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;">
+        <div class="coverage-bars-grid">
+          <div class="eyebrow">SPATIAL DENSITY BREAKDOWN</div>
           <div class="coverage-row">
-            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>High Density (>15 obs/deg²)</span><span>${density.HIGH || 0} cells</span></div>
-            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.HIGH || 0) / totalCells) * 100}%"></div></div>
+            <div class="coverage-row-meta"><span>High Density (>15 obs/deg²)</span><span class="mono">${density.HIGH || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill high" style="width:${((density.HIGH || 0) / totalCells) * 100}%"></div></div>
           </div>
           <div class="coverage-row">
-            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Moderate (5–15)</span><span>${density.MEDIUM || 0} cells</span></div>
-            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.MEDIUM || 0) / totalCells) * 100}%; background:#f59e0b;"></div></div>
+            <div class="coverage-row-meta"><span>Moderate (5–15)</span><span class="mono">${density.MEDIUM || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill moderate" style="width:${((density.MEDIUM || 0) / totalCells) * 100}%"></div></div>
           </div>
           <div class="coverage-row">
-            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Sparse (1–4)</span><span>${density.LOW || 0} cells</span></div>
-            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.LOW || 0) / totalCells) * 100}%; background:#22d3ee;"></div></div>
+            <div class="coverage-row-meta"><span>Sparse (1–4)</span><span class="mono">${density.LOW || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill sparse" style="width:${((density.LOW || 0) / totalCells) * 100}%"></div></div>
           </div>
           <div class="coverage-row">
-            <div style="display:flex;justify-content:space-between;font-size:10px;"><span>Unmonitored (0)</span><span>${density.NONE || 0} cells</span></div>
-            <div class="coverage-bar"><div class="coverage-fill" style="width:${((density.NONE || 0) / totalCells) * 100}%; background:#ef4444;"></div></div>
+            <div class="coverage-row-meta"><span>Unmonitored (0)</span><span class="mono">${density.NONE || 0} cells</span></div>
+            <div class="coverage-bar"><div class="coverage-fill none" style="width:${((density.NONE || 0) / totalCells) * 100}%"></div></div>
           </div>
         </div>
 
         <div>
           <div class="eyebrow" style="margin-bottom:8px;">IDENTIFIED DATA VOID SECTORS</div>
           ${(gaps?.gap_regions || []).slice(0, 3).map(g => `
-            <div style="font-size:11px; margin-bottom:8px; background:#0b1f2b; padding:6px 10px; border-radius:4px; border-left:3px solid #ef4444;">
-              <strong style="color:#ef4444;">${g.name}</strong><br>
-              <span style="color:#8bb3c2;">${g.recommendation || 'Unmonitored zone.'}</span>
+            <div style="font-size:12px; margin-bottom:8px; background:var(--bg-surface-secondary); padding:10px 14px; border-radius:var(--radius-sm); border:1px solid var(--border); border-left:4px solid var(--danger);">
+              <strong style="color:var(--danger);">${g.name}</strong><br>
+              <span style="color:var(--text-secondary);">${g.recommendation || 'Unmonitored ocean sector requiring autonomous sensor deployment.'}</span>
             </div>
-          `).join('') || '<div class="empty-state">No critical gap sectors identified.</div>'}
+          `).join('') || '<div class="empty-state">No critical gap sectors identified in active basin.</div>'}
         </div>
       </div>
     `;
@@ -1358,17 +1483,18 @@ class AnalysisDashboard {
     this.modelArgoChart.data.labels = points.map(p => Number(p.depth));
     this.modelArgoChart.data.datasets = [
       {
-        label: 'Numerical Model',
+        label: 'Model (Copernicus NEMO)',
         data: points.map(p => Number(p.model)),
-        borderColor: '#62d5ee',
-        backgroundColor: 'transparent',
+        borderColor: '#0284C7',
+        backgroundColor: 'rgba(2, 132, 199, 0.08)',
         borderWidth: 2,
-        pointRadius: 3
+        pointRadius: 3,
+        fill: true
       },
       {
-        label: 'Argo In-Situ Observation',
+        label: 'In-Situ Observation (Argo)',
         data: points.map(p => Number(p.observed)),
-        borderColor: '#f59e0b',
+        borderColor: '#F59E0B',
         backgroundColor: 'transparent',
         borderWidth: 2,
         pointRadius: 3,
@@ -1393,8 +1519,8 @@ class AnalysisDashboard {
       {
         label: 'Model Discrepancy (Model − Obs)',
         data: points.map(p => Number(p.model - p.observed)),
-        borderColor: '#f43f5e',
-        backgroundColor: 'rgba(244, 63, 94, 0.1)',
+        borderColor: '#EF4444',
+        backgroundColor: 'rgba(239, 68, 68, 0.08)',
         borderWidth: 2,
         pointRadius: 3,
         fill: true
@@ -1466,24 +1592,27 @@ class AnalysisDashboard {
     }
 
     const unit = this.getVariableUnit(this.activeVar);
-    this.timeSeriesChart.options.scales.y.title = { display: true, text: `${this.prettyVar(this.activeVar)} (${unit})`, color: '#6d99a7' };
+    const c = this.getChartThemeColors(this.currentTheme === 'dark');
+    this.timeSeriesChart.options.scales.y.title = { display: true, text: `${this.prettyVar(this.activeVar)} (${unit})`, color: c.title };
     this.timeSeriesChart.data.labels = rows.map(r => r.label);
     this.timeSeriesChart.data.datasets = [
       {
         label: 'Model (Depth-averaged)',
         data: rows.map(r => r.model),
-        borderColor: '#62d5ee',
+        borderColor: '#0284C7',
+        backgroundColor: 'rgba(2, 132, 199, 0.08)',
         borderWidth: 2,
         pointRadius: 2,
         fill: false
       },
       {
-        label: 'Argo Observation (Depth-averaged)',
+        label: 'In-Situ Observation (Argo)',
         data: rows.map(r => r.observed),
-        borderColor: '#f59e0b',
+        borderColor: '#F59E0B',
+        backgroundColor: 'transparent',
         borderWidth: 2,
-        pointRadius: 2,
-        fill: false
+        pointRadius: 3,
+        borderDash: [4, 4]
       }
     ];
     this.timeSeriesChart.update();
@@ -1494,7 +1623,8 @@ class AnalysisDashboard {
     this.timeSeriesChart.data.labels = [];
     this.timeSeriesChart.data.datasets = [];
     if (msg) {
-      this.timeSeriesChart.options.scales.x.title = { display: true, text: msg, color: '#6d99a7' };
+      const c = this.getChartThemeColors(this.currentTheme === 'dark');
+      this.timeSeriesChart.options.scales.x.title = { display: true, text: msg, color: c.title };
     }
     this.timeSeriesChart.update();
   }
@@ -1510,14 +1640,43 @@ class AnalysisDashboard {
     const gaps = this.gapsData?.gap_regions || [];
     const anomalies = this.anomaliesCache[this.activeTime] || [];
     const unit = this.getVariableUnit(this.activeVar);
+    const floatsCount = acc.floats_compared || this.argoData.length || 0;
+
+    // Build Scientific Insight section
+    let insightHtml = '';
+    if (floatsCount > 0 && acc.overall_rmse != null) {
+      insightHtml = `
+        <div class="insight-summary-card">
+          <div style="margin-bottom:8px;">
+            <span class="taxonomy-tag observed">OBSERVED</span>
+            <span class="taxonomy-tag computed">COMPUTED</span>
+            <span class="taxonomy-tag inferred">INFERRED</span>
+          </div>
+          The selected basin contains <strong>${floatsCount} matched in-situ profile(s)</strong>.
+          The model-observation RMSE is <strong>${acc.overall_rmse.toFixed(2)} ${unit}</strong> and mean bias is 
+          <strong>${(acc.overall_bias > 0 ? '+' : '')}${(acc.overall_bias || 0).toFixed(2)} ${unit}</strong>.
+          ${acc.overall_rmse > 1.5 ? 'The largest discrepancy occurs around the <strong>50–200 m</strong> thermocline depth range.' : 'Model predictions closely track in-situ observations across surface and subsurface layers.'}
+        </div>
+      `;
+    } else {
+      insightHtml = `
+        <div class="insight-summary-card">
+          <div style="margin-bottom:8px;">
+            <span class="taxonomy-tag observed">OBSERVED</span>
+            <span class="taxonomy-tag computed">COMPUTED</span>
+          </div>
+          No matched in-situ soundings for active parameters in this regional bounding box. Analysis based on Copernicus numerical model output.
+        </div>
+      `;
+    }
 
     // Rule 1: High Thermocline Discrepancy
     if (acc.overall_rmse && acc.overall_rmse > 1.5) {
       this.warnings.push({
         id: 'flag-discrepancy',
         severity: acc.overall_rmse > 3.0 ? 'critical' : 'warning',
-        title: 'Elevated Model Discrepancy (RMSE)',
-        evidence: `Overall basin RMSE is ${acc.overall_rmse.toFixed(2)} ${unit} across ${acc.floats_compared || 0} in-situ Argo profiling floats (Mean Bias: ${acc.overall_bias > 0 ? '+' : ''}${(acc.overall_bias || 0).toFixed(2)} ${unit}). Largest disagreement occurs in the thermocline (50–200m).`
+        title: 'Elevated model discrepancy',
+        evidence: `RMSE ${acc.overall_rmse.toFixed(2)} ${unit} across ${floatsCount} matched profiles (Bias: ${(acc.overall_bias > 0 ? '+' : '')}${(acc.overall_bias || 0).toFixed(2)} ${unit})`
       });
     }
 
@@ -1525,9 +1684,9 @@ class AnalysisDashboard {
     if (cov.spatial_coverage_pct != null && cov.spatial_coverage_pct < 35.0) {
       this.warnings.push({
         id: 'flag-coverage-gap',
-        severity: 'warning',
-        title: 'Critical Observation Void Sector',
-        evidence: `Spatial coverage across the active basin is ${cov.spatial_coverage_pct.toFixed(1)}%. ${gaps.length} major unmonitored sectors detected.`
+        severity: cov.spatial_coverage_pct < 15.0 ? 'warning' : 'info',
+        title: 'Observation coverage gap',
+        evidence: `Spatial coverage: ${(cov.spatial_coverage_pct || 0).toFixed(1)}% across basin. ${gaps.length} unmonitored sectors detected.`
       });
     }
 
@@ -1537,33 +1696,36 @@ class AnalysisDashboard {
       this.warnings.push({
         id: 'flag-anomalies',
         severity: 'critical',
-        title: 'Subsurface Physical Anomaly Cluster',
-        evidence: `${criticalAnoms.length} depth levels exceed 2.0σ z-score deviation. Maximum observed discrepancy is ${criticalAnoms[0].difference > 0 ? '+' : ''}${criticalAnoms[0].difference.toFixed(2)} ${unit} at Float #${criticalAnoms[0].float_id} (${criticalAnoms[0].depth}m depth).`
+        title: 'Subsurface physical anomaly cluster',
+        evidence: `${criticalAnoms.length} depth levels exceed 2.0σ. Max discrepancy: ${criticalAnoms[0].difference > 0 ? '+' : ''}${criticalAnoms[0].difference.toFixed(2)} ${unit} at Float #${criticalAnoms[0].float_id} (${criticalAnoms[0].depth}m).`
       });
     }
 
+    let flagsHtml = '';
     if (this.warnings.length === 0) {
-      container.innerHTML = `
+      flagsHtml = `
         <div class="empty-state">
           No critical analytical flags detected for ${this.prettyVar(this.activeVar)}. Model agreement conforms within typical observational thresholds.
         </div>
       `;
-      return;
+    } else {
+      flagsHtml = `
+        <div class="eyebrow" style="margin: 12px 0 8px 0;">ANALYTICAL FLAGS</div>
+        <div class="analytical-flag-list">
+          ${this.warnings.map(w => `
+            <div class="analytical-flag-card flag-${w.severity}">
+              <div class="flag-header">
+                <span class="flag-indicator-dot"></span>
+                <span class="flag-title">${w.title}</span>
+              </div>
+              <div class="flag-evidence">${w.evidence}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
     }
 
-    container.innerHTML = `
-      <div class="analytical-flag-list">
-        ${this.warnings.map(w => `
-          <div class="analytical-flag-card flag-${w.severity}">
-            <div class="flag-header">
-              <span class="flag-badge">ANALYTICAL FLAG</span>
-              <span class="flag-title">${w.title}</span>
-            </div>
-            <div class="flag-evidence">${w.evidence}</div>
-          </div>
-        `).join('')}
-      </div>
-    `;
+    container.innerHTML = insightHtml + flagsHtml;
   }
 
   // Section 18: Grounded Scientific AI Assistant

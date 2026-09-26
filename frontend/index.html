@@ -13,6 +13,7 @@
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
+  <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles.css?v=4.1.0">
   <script type="importmap">
   {
@@ -119,44 +120,27 @@
     </div>
   </div>
 
-  <!-- Top Scientific Navigation Toolbar -->
-  <header id="topBar" class="top-bar">
-    <div class="top-left">
-      <div class="brand">
-        <span class="brand-title">SOLVX</span>
-        <span class="brand-tag">3D OCEAN EXPLORER</span>
-      </div>
-      <button id="toggleMapBtn" class="top-btn" title="Toggle 2D World Map Region Selector">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
-        <span>2D WORLD MAP</span>
-      </button>
-      <a href="/download" class="top-btn" title="Open Ocean Data Download Manager" style="text-decoration: none;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        <span>DATA DOWNLOADER</span>
-      </a>
+  <!-- Global Navigation Header Shell -->
+  <header id="topBar" class="global-header">
+    <div class="global-brand">
+      <span class="global-brand-title">SOLVX</span>
+      <span class="global-brand-tag">Ocean Intelligence</span>
     </div>
 
-    <!-- Center Warning Banner for Demo / Synthetic Mode -->
-    <div class="top-center">
+    <nav class="global-nav">
+      <button id="navViewer" class="global-nav-link active">Viewer</button>
+      <button id="navMap" class="global-nav-link">2D Map</button>
+      <a href="/analysis.html" id="navAnalysis" class="global-nav-link">Analysis</a>
+      <a href="/download" id="navDownloader" class="global-nav-link">Downloader</a>
+    </nav>
+
+    <div class="global-header-right">
       <div id="demoBadge" class="demo-badge hidden" title="Synthetic scenario active for testing">
         <span class="demo-badge-dot">●</span>
         <span class="demo-badge-text">DEMO / SYNTHETIC DATA</span>
         <button id="disableDemoBtn" class="demo-badge-btn" title="Restore real physical observations">RESTORE REAL DATA</button>
       </div>
-    </div>
-
-    <div class="top-right">
-      <!-- Camera Presets Segmented Toolbar -->
-      <nav id="views" class="segmented-toolbar">
-        <button class="view active" data-view="3d">3D</button>
-        <button class="view" data-view="top">TOP</button>
-        <button class="view" data-view="profile">PROFILE</button>
-        <button class="view" data-view="under">UNDER</button>
-        <span class="toolbar-sep"></span>
-        <a href="/analysis.html" class="view action" title="Open Standalone Ocean Analysis" style="text-decoration:none;">◈ ANALYSIS</a>
-        <button id="reset" class="view action" title="Reset Camera View">RESET</button>
-        <button id="fullscreen" class="view action" title="Toggle Fullscreen">⛶</button>
-      </nav>
+      <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Light/Dark Theme" aria-label="Toggle theme">☼</button>
     </div>
   </header>
 
@@ -168,8 +152,24 @@
     
     <div id="mapOverlay" class="panel">
       <div class="panel-header">
-        <h2>Select Ocean Region</h2>
-        <p>Pan/zoom the world map, draw a bounding box, or choose a major ocean basin preset.</p>
+        <h2>Geographic Region Selection</h2>
+        <p>Select the geographic area that 3D Viewer, Analysis, and Data Downloader operate on.</p>
+      </div>
+
+      <div class="region-info-card">
+        <div class="info-row"><span class="info-label">Latitude:</span> <strong id="regionLatDisplay" class="mono">16.07°N to 23.52°N</strong></div>
+        <div class="info-row"><span class="info-label">Longitude:</span> <strong id="regionLonDisplay" class="mono">84.10°E to 93.00°E</strong></div>
+        <div class="info-row"><span class="info-label">Available Model:</span> <span class="badge badge-success">Yes (Copernicus / INCOIS)</span></div>
+        <div class="info-row"><span class="info-label">In-Situ Data:</span> <span class="badge badge-info">Argo Floats Collocated</span></div>
+        <div id="regionAreaDisplay" class="area-readout">Area: —</div>
+      </div>
+
+      <div class="region-action-buttons">
+        <button id="exploreRegionBtn" class="btn-primary" style="width: 100%;">OPEN VIEWER</button>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px;">
+          <button id="openAnalysisBtn" class="btn-secondary">OPEN ANALYSIS</button>
+          <button id="downloadDataBtn" class="btn-secondary">DOWNLOAD DATA</button>
+        </div>
       </div>
 
       <div class="map-actions-row">
@@ -219,10 +219,7 @@
         </div>
       </div>
 
-      <div id="regionAreaDisplay" class="area-readout">Area: —</div>
       <div id="coordError" class="coord-error hidden"></div>
-
-      <button id="exploreRegionBtn" class="primary-btn">EXPLORE 3D REGION</button>
     </div>
 
     <div class="map-hint">Pan/scroll to navigate · Click "Draw Bounding Box" or hold Shift + drag to draw region</div>
@@ -233,6 +230,16 @@
        ========================================================================= -->
   <div id="sceneView">
     <canvas id="renderCanvas"></canvas>
+
+    <!-- Floating 3D Viewport Controls (Top Right) -->
+    <div id="views" class="viewport-controls">
+      <button class="view active" data-view="3d">3D</button>
+      <button class="view" data-view="top">TOP</button>
+      <button class="view" data-view="profile">PROFILE</button>
+      <button class="view" data-view="under">UNDER</button>
+      <button id="reset" class="view action" title="Reset Camera View">RESET</button>
+      <button id="fullscreenBtn" class="view action" title="Toggle Fullscreen">⛶</button>
+    </div>
 
     <!-- Floating Drawer Toggle Rail Handle -->
     <button id="drawerToggle" class="drawer-toggle-btn" title="Toggle Scientific Controls">
@@ -435,6 +442,7 @@
       </div>
       <div id="readoutGrid" class="readoutGrid"></div>
       <div id="readoutTime" class="readout-time note mono">—</div>
+      <button id="btnOpenAnalysisFromReadout" class="btn-primary" style="width: 100%; margin-top: 10px; font-size: 11px;">OPEN IN ANALYSIS →</button>
     </aside>
 
     <!-- In-Situ Observation & Model Comparison Modal -->
@@ -473,7 +481,9 @@
             </select>
           </div>
 
+          <button id="prevTimeBtn" class="play-btn" title="Previous Timestamp">◀ PREV</button>
           <button id="play" class="play-btn" title="Play / Pause Timeline">PLAY</button>
+          <button id="nextTimeBtn" class="play-btn" title="Next Timestamp">NEXT ▶</button>
         </div>
       </div>
 
@@ -495,7 +505,7 @@
 
 <script>
 window.onerror = function(message, source, lineno, colno, error) {
-    console.log("ONERROR: " + message + " at " + source + ":" + lineno + ":" + colno);
+    console.error("Uncaught error:", message, "at", source, ":", lineno, ":", colno);
 };
 </script>
 <script type="module" src="app.js?v=4.3.0"></script>

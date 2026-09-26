@@ -13,28 +13,33 @@
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
+  <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="download.css">
 </head>
 <body>
-  <!-- Header Bar -->
-  <header class="dl-header">
-    <div class="dl-brand-wrap">
-      <div class="dl-logo">
-        <span class="dl-logo-icon">◈</span>
-        <span>SOLVX</span>
-      </div>
-      <span class="dl-tag">DATA DOWNLOAD MANAGER</span>
+  <!-- Global Header Shell -->
+  <!-- Global Header Shell -->
+  <header class="global-header">
+    <div class="global-brand">
+      <a href="/" style="text-decoration: none; display: flex; align-items: baseline; gap: 8px;">
+        <span class="global-brand-title">SOLVX</span>
+        <span class="global-brand-tag">Ocean Intelligence</span>
+      </a>
     </div>
 
-    <div class="dl-header-actions">
-      <div class="api-status">
-        <span id="apiDot" class="api-dot"></span>
+    <nav class="global-nav">
+      <a href="/" class="global-nav-link">Viewer</a>
+      <a href="/?mode=map" class="global-nav-link">2D Map</a>
+      <a href="/analysis.html" class="global-nav-link">Analysis</a>
+      <a href="/download.html" class="global-nav-link active">Downloader</a>
+    </nav>
+
+    <div class="global-header-right">
+      <div class="api-status-badge">
+        <span id="apiDot" class="status-dot"></span>
         <span id="apiStatusText">API Connected</span>
       </div>
-      <a href="/" class="btn-nav-viewer">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        <span>BACK TO 3D VIEWER</span>
-      </a>
+      <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Light/Dark Theme" aria-label="Toggle theme">☼</button>
     </div>
   </header>
 
@@ -49,7 +54,13 @@
             <span class="step-num">1</span>
             <span>SELECT GEOGRAPHIC AREA</span>
           </div>
-          <span id="areaReadout" class="area-badge">Area: —</span>
+          <div class="card-header-actions">
+            <span id="areaReadout" class="area-badge">Area: —</span>
+            <a href="/?mode=map" class="btn-change-map" title="Switch to full 2D World Map to choose region">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/></svg>
+              <span>CHANGE ON 2D MAP</span>
+            </a>
+          </div>
         </div>
 
         <div class="map-controls-row">

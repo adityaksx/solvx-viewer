@@ -233,6 +233,25 @@ export class TimelineControl {
         this.playBtn?.addEventListener('click', () => {
             this.togglePlay();
         });
+
+        document.getElementById('prevTimeBtn')?.addEventListener('click', () => this.stepPrev());
+        document.getElementById('nextTimeBtn')?.addEventListener('click', () => this.stepNext());
+    }
+
+    stepPrev() {
+        if (!this.filteredTimestamps.length) return;
+        this.currentIndex = (this.currentIndex - 1 + this.filteredTimestamps.length) % this.filteredTimestamps.length;
+        if (this.slider) this.slider.value = String(this.currentIndex);
+        this.updateDisplay();
+        this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
+    }
+
+    stepNext() {
+        if (!this.filteredTimestamps.length) return;
+        this.currentIndex = (this.currentIndex + 1) % this.filteredTimestamps.length;
+        if (this.slider) this.slider.value = String(this.currentIndex);
+        this.updateDisplay();
+        this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
     }
 
     pause() {

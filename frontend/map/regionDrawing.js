@@ -156,6 +156,20 @@ export class RegionDrawer {
                 }
             });
         }
+
+        document.getElementById('openAnalysisBtn')?.addEventListener('click', () => {
+            if (this._validateBBox(this.currentBBox)) {
+                SelectionContext.setArea({ bbox: this.currentBBox });
+                window.location.href = '/analysis.html';
+            }
+        });
+
+        document.getElementById('downloadDataBtn')?.addEventListener('click', () => {
+            if (this._validateBBox(this.currentBBox)) {
+                SelectionContext.setArea({ bbox: this.currentBBox });
+                window.location.href = '/download';
+            }
+        });
     }
 
     setDrawMode(enabled) {
@@ -184,11 +198,16 @@ export class RegionDrawer {
     }
 
     updateAreaDisplay(bbox) {
-        if (!this.areaDisplay) return;
-        const areaKm2 = calculateSphericalAreaKm2(bbox);
-        const areaDeg2 = (bbox.max_lat - bbox.min_lat) * (bbox.max_lon - bbox.min_lon);
-        const formatted = Math.round(areaKm2).toLocaleString();
-        this.areaDisplay.innerHTML = `Area: <b>${formatted} km²</b> <small>(${areaDeg2.toFixed(1)} deg²)</small>`;
+        if (this.areaDisplay) {
+            const areaKm2 = calculateSphericalAreaKm2(bbox);
+            const areaDeg2 = (bbox.max_lat - bbox.min_lat) * (bbox.max_lon - bbox.min_lon);
+            const formatted = Math.round(areaKm2).toLocaleString();
+            this.areaDisplay.innerHTML = `Area: <b>${formatted} km²</b> <small>(${areaDeg2.toFixed(1)} deg²)</small>`;
+        }
+        const latEl = document.getElementById('regionLatDisplay');
+        if (latEl) latEl.textContent = `${bbox.min_lat.toFixed(2)}°N to ${bbox.max_lat.toFixed(2)}°N`;
+        const lonEl = document.getElementById('regionLonDisplay');
+        if (lonEl) lonEl.textContent = `${bbox.min_lon.toFixed(2)}°E to ${bbox.max_lon.toFixed(2)}°E`;
     }
 
     _validateBBox(bbox) {

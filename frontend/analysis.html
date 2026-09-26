@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>SOLVX — Ocean Intelligence & Model Validation</title>
+  <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="analysis/analysisPage.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="importmap">
   {
@@ -21,27 +22,38 @@
 <body>
   <div class="analysis-page">
     <header class="analysis-topbar">
-      <div class="analysis-brand">SOLVX / OCEAN INTELLIGENCE</div>
+      <a href="/" class="brand-wrapper">
+        <span class="brand-title">SOLVX</span>
+        <span class="brand-subtitle">Ocean Intelligence</span>
+      </a>
+
       <nav class="top-nav">
         <a href="/">VIEWER</a>
         <a href="/?mode=map">2D MAP</a>
         <a href="/analysis.html" class="active">ANALYSIS</a>
-        <a href="/download.html">DOWNLOADER</a>
+        <a href="/download">DOWNLOADER</a>
       </nav>
-      <div class="provenance-indicator" id="provenanceData">
-        DATA: Copernicus NEMO + WMO Argo | Updated: —
+
+      <div class="topbar-right-tools">
+        <div class="provenance-indicator" id="provenanceData">
+          DATA: Copernicus NEMO + WMO Argo | Updated: —
+        </div>
+        <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Light/Dark Theme" aria-label="Toggle theme">
+          <span id="themeToggleIcon">☼</span>
+        </button>
       </div>
     </header>
     
     <!-- Top Toolbar: Variable != Analysis Separation, Shared Area, Time, Depth, Data -->
     <section class="analysis-toolbar">
       <div class="toolbar-area-badge">
-        <span class="toolbar-area-label">AREA</span>
+        <span class="toolbar-field-label">AREA</span>
         <strong id="displayAreaName">Bay of Bengal</strong>
         <a href="/?mode=map" class="toolbar-change-map-btn" title="Select different ocean region on 2D World Map">CHANGE IN 2D MAP</a>
       </div>
 
-      <label>VARIABLE 
+      <div class="toolbar-field">
+        <span class="toolbar-field-label">VARIABLE</span>
         <select id="analysisVariable">
           <option value="ocean_temperature">Temperature (°C)</option>
           <option value="salinity">Salinity (PSU)</option>
@@ -49,9 +61,10 @@
           <option value="sea_level">Sea Level (m)</option>
           <option value="currents">Currents (m/s)</option>
         </select>
-      </label>
+      </div>
 
-      <label>ANALYSIS 
+      <div class="toolbar-field">
+        <span class="toolbar-field-label">ANALYSIS</span>
         <select id="analysisModeSelect">
           <option value="obs_vs_model">OBS VS MODEL</option>
           <option value="error">ERROR</option>
@@ -60,30 +73,34 @@
           <option value="anomaly">ANOMALY</option>
           <option value="observation_gap">OBSERVATION GAP</option>
         </select>
-      </label>
+      </div>
 
-      <label>TIME 
+      <div class="toolbar-field">
+        <span class="toolbar-field-label">TIME</span>
         <select id="analysisTimeMode">
           <option value="0">Loading available times…</option>
         </select>
-      </label>
+      </div>
 
-      <label>DEPTH 
+      <div class="toolbar-field">
+        <span class="toolbar-field-label">DEPTH</span>
         <select id="analysisDepthSelect">
           <option value="0">0 m (Surface)</option>
         </select>
-      </label>
+      </div>
 
-      <label>DATA 
+      <div class="toolbar-field">
+        <span class="toolbar-field-label">DATA</span>
         <select id="analysisSource">
           <option value="auto">Auto — Model + Argo</option>
           <option value="model">Model Only</option>
           <option value="observations">Observations Only</option>
           <option value="comparison">Model + Observations</option>
         </select>
-      </label>
+      </div>
 
       <div class="analysis-actions">
+        <a href="/download" id="btnDownloadSelectedData" class="toolbar-change-map-btn" style="text-decoration:none;" title="Download underlying data in Downloader">DOWNLOAD DATA</a>
         <button id="btnReset" title="Reset camera, selections and filters">RESET</button>
       </div>
     </section>
@@ -94,23 +111,30 @@
         <!-- Top Section: 3D Ocean and Investigation Sidebar -->
         <div class="analysis-top-row">
           <section class="analysis-stage-container">
-            <div class="analysis-stage" style="flex-grow: 1;">
+            <div class="analysis-stage">
               <canvas id="analysisCanvas"></canvas>
               
+              <!-- Floating Scientific Legend -->
               <div class="analysis-overlay analysis-field">
                 <div class="eyebrow" id="legendEyebrow">ACTIVE FIELD</div>
-                <strong id="legendVariable">TEMPERATURE</strong>
-                <div id="legendUnits">°C</div>
-                <div id="legendRange">—</div>
+                <div class="legend-title" id="legendVariable">TEMPERATURE</div>
+                <div class="legend-meta-row">
+                  <span id="legendUnits">°C</span>
+                  <span id="legendRange">—</span>
+                </div>
                 <div id="legendBar" class="analysis-gradient"></div>
               </div>
 
+              <!-- Top-Right 3D Controls -->
               <div class="analysis-overlay analysis-view-controls">
                 <button data-view="3d" class="active">3D</button>
                 <button data-view="top">TOP</button>
-                <button data-view="cut">CUT</button>
+                <button data-view="vertical">VERTICAL</button>
+                <button data-view="horizontal">HORIZONTAL</button>
+                <button data-action="reset">RESET</button>
               </div>
               
+              <!-- Bottom-Left Data Layer Checkboxes -->
               <div class="analysis-overlay analysis-layer-controls">
                 <div class="eyebrow">DATA LAYERS</div>
                 <label><input type="checkbox" id="layerModel" checked> Model Field</label>
@@ -119,15 +143,16 @@
                 <label><input type="checkbox" id="layerAbnormal" checked> Abnormal Regions</label>
               </div>
               
+              <!-- Bottom-Right Observation Key -->
               <div class="analysis-overlay analysis-obs-key">
-                <div><span class="legend-dot argo"></span>ARGO FLOAT</div>
-                <div><span class="legend-dot glider"></span>GLIDER</div>
+                <div><span class="legend-dot argo"></span>Argo Float</div>
+                <div><span class="legend-dot glider"></span>Glider</div>
               </div>
             </div>
 
             <!-- Vertical Depth Slider Beside 3D Scene -->
             <div class="depth-slider-container">
-              <div class="eyebrow" style="text-align:center;margin-bottom:10px;">DEPTH</div>
+              <div class="depth-slider-title">DEPTH</div>
               <input type="range" id="analysisDepthSlider" class="vertical-slider" min="0" max="0" value="0" step="1" orient="vertical">
               <div id="currentDepthLabel" class="depth-slider-label">0.49 m</div>
             </div>
@@ -167,8 +192,13 @@
           </div>
 
           <div class="ctrl-col">
-            <span class="ctrl-label">CURRENT TIME</span>
-            <div class="ctrl-readout mono" id="readoutCurrentTime">—</div>
+            <span class="ctrl-label">TIME NAVIGATION</span>
+            <div class="ctrl-row">
+              <button id="btnTimePrev" class="time-step-btn" title="Previous timestamp">◀ PREV</button>
+              <button id="btnTimePlay" class="time-step-btn" title="Play timeline">▶ PLAY</button>
+              <button id="btnTimeNext" class="time-step-btn" title="Next timestamp">NEXT ▶</button>
+              <div class="ctrl-readout mono" id="readoutCurrentTime">—</div>
+            </div>
           </div>
 
           <div class="ctrl-col">

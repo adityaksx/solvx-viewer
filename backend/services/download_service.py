@@ -45,13 +45,14 @@ def format_bytes(size_bytes: int) -> str:
 
 
 _INVENTORY_CACHE = {'time': 0, 'data': None}
+_FILE_META_CACHE = {}
 
 
 def get_download_inventory(force_refresh: bool = False) -> Dict[str, Any]:
     """Scans local disk to return an inventory of all downloaded ocean datasets, geography, and bathymetry."""
     import time
     now = time.time()
-    if not force_refresh and _INVENTORY_CACHE['data'] is not None and (now - _INVENTORY_CACHE['time']) < 15:
+    if not force_refresh and _INVENTORY_CACHE['data'] is not None and (now - _INVENTORY_CACHE['time']) < 120:
         return _INVENTORY_CACHE['data']
 
     ocean_items = []
@@ -68,6 +69,11 @@ def get_download_inventory(force_refresh: bool = False) -> Dict[str, Any]:
             mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
             fname = os.path.basename(fpath)
             total_bytes += fsize
+
+            cache_key = fpath
+            if not force_refresh and cache_key in _FILE_META_CACHE and _FILE_META_CACHE[cache_key]['st_mtime'] == stat.st_mtime:
+                ocean_items.append(_FILE_META_CACHE[cache_key]['item'])
+                continue
 
             var_name = "ocean_variable"
             bbox = None
@@ -113,7 +119,7 @@ def get_download_inventory(force_refresh: bool = False) -> Dict[str, Any]:
                 except Exception:
                     pass
 
-            ocean_items.append({
+            item = {
                 'filename': fname,
                 'path': str(fpath),
                 'variable': var_name,
@@ -123,7 +129,12 @@ def get_download_inventory(force_refresh: bool = False) -> Dict[str, Any]:
                 'size_formatted': format_bytes(fsize),
                 'modified_at': mtime,
                 'status': 'READY'
-            })
+            }
+            _FILE_META_CACHE[cache_key] = {
+                'st_mtime': stat.st_mtime,
+                'item': item
+            }
+            ocean_items.append(item)
         except Exception as err:
             logger.debug("Failed inspecting cached file %s: %s", fpath, err)
 

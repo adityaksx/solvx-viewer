@@ -1,52 +1,73 @@
-/* ==============================================================================
-   SolvX 3D Ocean Explorer — Scientific Design System & Interface Styling
-   ============================================================================== */
+@import url('./styles/tokens.css');
 
 :root {
-  --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-main: var(--font-sans);
+  --font-mono: var(--font-mono);
 
-  /* Scientific Deep Ocean Color Palette */
-  --bg: #050d15;
-  --bg-surface: #07131e;
-  --panel-bg: rgba(8, 20, 32, 0.82);
-  --panel-border: rgba(36, 80, 115, 0.4);
-  --panel-border-hover: rgba(0, 210, 255, 0.5);
-  --panel-shadow: 0 16px 40px rgba(0, 8, 16, 0.55);
+  /* Scientific Ocean Palette Tokens mapped from tokens.css */
+  --bg: var(--bg-page);
+  --bg-surface: var(--bg-surface);
+  --panel-bg: var(--bg-surface);
+  --panel-border: var(--border);
+  --panel-border-hover: var(--primary);
+  --panel-shadow: var(--shadow-sm);
 
-  --ink: #e2f1f8;
-  --ink-bright: #ffffff;
-  --ink-muted: #84a6b8;
-  --ink-subtle: #4b6a7a;
+  --ink: var(--text-primary);
+  --ink-bright: var(--text-primary);
+  --ink-muted: var(--text-secondary);
+  --ink-subtle: var(--text-muted);
 
-  --line: rgba(36, 80, 115, 0.35);
-  --line-strong: rgba(36, 80, 115, 0.6);
+  --line: var(--border);
+  --line-strong: var(--border-strong);
 
   /* Scientific Accents */
-  --accent: #00d2ff;
-  --accent-hover: #38e1ff;
-  --accent-light: rgba(0, 210, 255, 0.12);
-  --accent-border: rgba(0, 210, 255, 0.45);
-  --accent-glow: 0 0 16px rgba(0, 210, 255, 0.25);
+  --accent: var(--primary);
+  --accent-hover: var(--primary-hover);
+  --accent-light: var(--primary-soft);
+  --accent-border: var(--primary);
+  --accent-glow: none;
 
   /* Status Tokens */
-  --ok: #10b981;
-  --ok-glow: rgba(16, 185, 129, 0.25);
-  --warning: #f59e0b;
-  --warning-glow: rgba(245, 158, 11, 0.25);
-  --danger: #ef4444;
-  --danger-glow: rgba(239, 68, 68, 0.3);
+  --ok: var(--success);
+  --ok-glow: none;
+  --warning: var(--warning);
+  --warning-glow: none;
+  --danger: var(--danger);
+  --danger-glow: none;
 
   /* Radii & Spacing Scale */
-  --radius-xl: 20px;
-  --radius-lg: 16px;
-  --radius-md: 12px;
+  --radius-xl: 14px;
+  --radius-lg: 12px;
+  --radius-md: 10px;
   --radius-sm: 8px;
   --radius-xs: 4px;
 
-  --trans-fast: 150ms ease;
-  --trans-base: 220ms ease;
-  --trans-smooth: 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  --trans-fast: 140ms ease;
+  --trans-base: 200ms ease;
+  --trans-smooth: 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] {
+  --bg: var(--bg-page);
+  --bg-surface: var(--bg-surface);
+  --panel-bg: var(--bg-surface);
+  --panel-border: var(--border);
+  --panel-border-hover: var(--primary);
+  --panel-shadow: var(--shadow-sm);
+
+  --ink: var(--text-primary);
+  --ink-bright: var(--text-primary);
+  --ink-muted: var(--text-secondary);
+  --ink-subtle: var(--text-muted);
+
+  --line: var(--border);
+  --line-strong: var(--border-strong);
+
+  --accent: var(--primary);
+  --accent-hover: var(--primary-hover);
+  --accent-light: var(--primary-soft);
+  --accent-border: var(--primary);
+  --accent-glow: none;
 }
 
 * {
@@ -590,30 +611,30 @@ html, body, #app {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(14, 30, 48, 0.45);
-  color: var(--ink);
+  background: var(--bg-surface-secondary);
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
   transition: all var(--trans-fast);
 }
 
 .var:hover {
-  background: rgba(18, 42, 66, 0.7);
-  border-color: var(--panel-border-hover);
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
   transform: translateX(2px);
 }
 
 .var.active {
-  background: var(--accent-light);
-  border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(0, 210, 255, 0.18);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  box-shadow: none;
 }
 
 .var.active .vicon {
-  background: var(--accent);
-  color: #04101a;
+  background: var(--primary);
+  color: #FFFFFF;
   font-weight: 800;
 }
 
@@ -628,12 +649,13 @@ html, body, #app {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(36, 80, 115, 0.3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--primary);
   transition: all var(--trans-fast);
 }
 
@@ -641,13 +663,13 @@ html, body, #app {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--text-primary);
 }
 
 .var span small {
   display: block;
   font-size: 10px;
-  color: var(--ink-muted);
+  color: var(--text-muted);
 }
 
 .var .dot {
@@ -1295,33 +1317,34 @@ html, body, #app {
 
 .res-buttons {
   display: flex;
-  background: rgba(6, 16, 26, 0.6);
-  border: 1px solid var(--line);
+  background: var(--bg-surface-secondary);
+  border: 1px solid var(--border);
   padding: 2px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   gap: 2px;
 }
 
 .res-btn {
   border: none;
   background: transparent;
-  color: var(--ink-muted);
-  font-size: 9px;
+  color: var(--text-secondary);
+  font-size: 10px;
   font-weight: 700;
   padding: 4px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all var(--trans-fast);
 }
 
 .res-btn:hover {
-  color: var(--ink);
+  color: var(--text-primary);
+  background: var(--bg-surface);
 }
 
 .res-btn.active {
-  background: var(--accent-light);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid var(--primary);
 }
 
 .res-btn.disabled {
@@ -1334,38 +1357,42 @@ html, body, #app {
   align-items: center;
   gap: 6px;
   font-size: 10px;
-  color: var(--ink-muted);
+  color: var(--text-muted);
   font-weight: 700;
 }
 
 .speed-select {
-  background: rgba(14, 30, 48, 0.8);
-  border: 1px solid var(--line);
-  color: var(--ink);
+  background: var(--bg-surface-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 10px;
-  padding: 3px 6px;
-  border-radius: var(--radius-xs);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
   outline: none;
   cursor: pointer;
 }
 
 .play-btn {
-  background: var(--accent);
-  color: #04121d;
+  background: var(--primary);
+  color: #FFFFFF;
   font-size: 11px;
-  font-weight: 800;
-  padding: 6px 14px;
+  font-weight: 700;
+  padding: 6px 12px;
   border: none;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 210, 255, 0.25);
+  box-shadow: var(--shadow-sm);
   transition: all var(--trans-fast);
 }
 
 .play-btn:hover {
-  background: var(--accent-hover);
-  transform: scale(1.03);
+  background: var(--primary-hover);
+}
+
+.play-btn.playing {
+  background: var(--warning);
+  color: #FFFFFF;
 }
 
 .timelineRow {
@@ -1594,7 +1621,7 @@ html, body, #app {
   width: 100vw;
   height: calc(100vh - 56px);
   overflow: hidden;
-  background: #050d15;
+  background: var(--bg-page);
 }
 
 #renderCanvas {
@@ -1606,20 +1633,59 @@ html, body, #app {
   display: block;
 }
 
+/* Floating 3D Viewport Controls (Top-Right) */
+.viewport-controls {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  padding: 4px;
+  border-radius: var(--radius-pill);
+}
+
+.viewport-controls .view {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all var(--trans-fast);
+}
+
+.viewport-controls .view:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-secondary);
+}
+
+.viewport-controls .view.active {
+  background: var(--primary);
+  color: #FFFFFF;
+}
+
 /* ==============================================================================
    Interactive 2D World Map Region Selector View
    ============================================================================== */
 
 #mapView {
   position: absolute;
-  top: 0;
+  top: 56px;
   left: 0;
   right: 0;
   bottom: 0;
   width: 100vw;
-  height: 100vh;
+  height: calc(100vh - 56px);
   z-index: 10;
-  background: #050d15;
+  background: var(--bg-page);
   overflow: hidden;
 }
 
@@ -1633,22 +1699,48 @@ html, body, #app {
 
 #mapOverlay {
   position: absolute;
-  top: 74px;
-  left: 20px;
+  top: 16px;
+  right: 20px;
   width: 380px;
-  max-height: calc(100vh - 96px);
+  max-height: calc(100vh - 88px);
   overflow-y: auto;
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   z-index: 20;
-  background: rgba(8, 20, 34, 0.92);
-  border: 1px solid var(--panel-border);
-  box-shadow: 0 16px 40px rgba(0, 8, 16, 0.65);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+}
+
+.region-info-card {
+  background: var(--bg-surface-secondary);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.region-info-card .info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.region-info-card .info-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.region-action-buttons {
+  margin-top: 2px;
+  margin-bottom: 4px;
 }
 
 #mapOverlay::-webkit-scrollbar {
@@ -1689,30 +1781,29 @@ html, body, #app {
 }
 
 .draw-btn {
-  background: var(--accent-light);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
+  background: var(--bg-surface-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   font-family: var(--font-main);
-  font-size: 10px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 700;
   letter-spacing: 0.04em;
   padding: 8px 12px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--trans-fast);
 }
 
 .draw-btn:hover {
-  background: var(--accent);
-  color: #04121d;
-  box-shadow: 0 0 12px rgba(0, 210, 255, 0.3);
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: var(--primary);
 }
 
 .draw-btn.active {
-  background: var(--warning);
-  color: #04121d;
+  background: var(--warning-soft);
+  color: var(--warning);
   border-color: var(--warning);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
 }
 
 .toggle-control {
@@ -1720,7 +1811,7 @@ html, body, #app {
   align-items: center;
   gap: 7px;
   font-size: 11px;
-  color: var(--ink-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
 }
@@ -1730,9 +1821,9 @@ html, body, #app {
   -webkit-appearance: none;
   width: 15px;
   height: 15px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
-  background: rgba(14, 30, 48, 0.8);
+  background: var(--bg-surface-secondary);
   cursor: pointer;
   position: relative;
   transition: all var(--trans-fast);
@@ -1740,8 +1831,8 @@ html, body, #app {
 }
 
 .toggle-control input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--primary);
+  border-color: var(--primary);
 }
 
 .toggle-control input[type="checkbox"]:checked::after {
@@ -1751,7 +1842,7 @@ html, body, #app {
   top: 1px;
   width: 4px;
   height: 8px;
-  border: solid #050d15;
+  border: solid #ffffff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -1766,19 +1857,19 @@ html, body, #app {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-subtle);
-  margin-top: 2px;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 
 .dropdown-select {
   width: 100%;
-  background: rgba(14, 30, 48, 0.85);
-  border: 1px solid var(--line);
-  color: var(--ink);
+  background: var(--bg-surface-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
   font-family: var(--font-main);
   font-size: 12px;
   padding: 8px 10px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   outline: none;
   cursor: pointer;
   transition: border-color var(--trans-fast);
@@ -1786,12 +1877,12 @@ html, body, #app {
 
 .dropdown-select:hover,
 .dropdown-select:focus {
-  border-color: var(--accent-border);
+  border-color: var(--primary);
 }
 
 .dropdown-select option {
-  background: #0a1623;
-  color: var(--ink);
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }
 
 .preset-list {
@@ -1807,52 +1898,52 @@ html, body, #app {
   width: 4px;
 }
 .preset-list::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
+  background: var(--border-strong);
   border-radius: 2px;
 }
 
 .preset-card {
-  background: rgba(10, 24, 38, 0.7);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
-  padding: 7px 9px;
+  background: var(--bg-surface-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   text-align: left;
   transition: all var(--trans-fast);
-  color: var(--ink);
+  color: var(--text-primary);
   font-family: var(--font-main);
 }
 
 .preset-card:hover {
-  background: rgba(14, 34, 56, 0.9);
-  border-color: var(--accent-border);
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
   transform: translateY(-1px);
 }
 
 .preset-card.active {
-  background: rgba(0, 210, 255, 0.12);
-  border-color: var(--accent);
-  box-shadow: 0 0 10px rgba(0, 210, 255, 0.2);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .preset-card b {
   font-size: 11px;
   font-weight: 700;
-  color: var(--ink-bright);
+  color: var(--text-primary);
   margin-bottom: 2px;
   display: block;
 }
 
 .preset-card.active b {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .preset-card span {
   font-size: 9.5px;
-  color: var(--ink-muted);
+  color: var(--text-muted);
   display: block;
   line-height: 1.2;
 }

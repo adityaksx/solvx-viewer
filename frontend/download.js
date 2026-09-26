@@ -3,6 +3,8 @@
 // cache status verification, batch download orchestration, and storage inventory.
 
 import { ApiClient } from './api/apiClient.js';
+import { themeManager } from './context/themeManager.js';
+import { SelectionContext } from './context/selectionContext.js';
 
 class DownloadManager {
     constructor() {
@@ -10,12 +12,24 @@ class DownloadManager {
         this.isDrawing = false;
         this.drawMode = false;
         this.startLngLat = null;
-        this.currentBBox = {
-            min_lat: 16.07,
-            max_lat: 23.52,
-            min_lon: 84.10,
-            max_lon: 93.00
-        };
+
+        // Initialize from SelectionContext if available, otherwise default to Bay of Bengal
+        const savedArea = SelectionContext.getArea();
+        if (savedArea && savedArea.min_lat != null && savedArea.max_lat != null && savedArea.min_lon != null && savedArea.max_lon != null) {
+            this.currentBBox = {
+                min_lat: Number(savedArea.min_lat),
+                max_lat: Number(savedArea.max_lat),
+                min_lon: Number(savedArea.min_lon),
+                max_lon: Number(savedArea.max_lon)
+            };
+        } else {
+            this.currentBBox = {
+                min_lat: 16.07,
+                max_lat: 23.52,
+                min_lon: 84.10,
+                max_lon: 93.00
+            };
+        }
 
         this.inventoryData = null;
         this.checkDebounce = null;
@@ -58,6 +72,7 @@ class DownloadManager {
 
     async init() {
         this._initTimelineDates();
+        this.updateInputs(this.currentBBox);
         this._initMap();
         this._bindEvents();
         await this.loadInventory();
@@ -74,6 +89,7 @@ class DownloadManager {
     }
 
     _initMap() {
+        const currentTheme = themeManager.getTheme();
         const osmStyle = {
             version: 8,
             sources: {
@@ -82,21 +98,50 @@ class DownloadManager {
                     tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
                     tileSize: 256,
                     attribution: '&copy; OpenStreetMap contributors'
+                },
+                'carto-dark': {
+                    type: 'raster',
+                    tiles: [
+                        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                        'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+                    ],
+                    tileSize: 256,
+                    attribution: '&copy; OpenStreetMap &copy; CARTO'
                 }
             },
-            layers: [{
-                id: 'osm-layer',
-                type: 'raster',
-                source: 'osm-raster',
-                minzoom: 0,
-                maxzoom: 19
-            }]
+            layers: [
+                {
+                    id: 'osm-layer',
+                    type: 'raster',
+                    source: 'osm-raster',
+                    layout: {
+                        visibility: currentTheme === 'dark' ? 'none' : 'visible'
+                    },
+                    minzoom: 0,
+                    maxzoom: 19
+                },
+                {
+                    id: 'carto-dark-layer',
+                    type: 'raster',
+                    source: 'carto-dark',
+                    layout: {
+                        visibility: currentTheme === 'dark' ? 'visible' : 'none'
+                    },
+                    minzoom: 0,
+                    maxzoom: 19
+                }
+            ]
         };
+
+        const centerLon = (this.currentBBox.min_lon + this.currentBBox.max_lon) / 2;
+        const centerLat = (this.currentBBox.min_lat + this.currentBBox.max_lat) / 2;
 
         this.map = new maplibregl.Map({
             container: 'dlMapContainer',
             style: osmStyle,
-            center: [88.55, 19.8],
+            center: [centerLon, centerLat],
             zoom: 4,
             attributionControl: false
         });
@@ -106,7 +151,20 @@ class DownloadManager {
             this.updateMapBBox(this.currentBBox, true);
         });
 
+        window.addEventListener('solvx:themeChange', (e) => {
+            const theme = e.detail?.theme || 'light';
+            this._applyMapTheme(theme);
+        });
+
         this._setupMapDrawing();
+    }
+
+    _applyMapTheme(theme) {
+        if (!this.map || !this.map.isStyleLoaded()) return;
+        if (this.map.getLayer('osm-layer') && this.map.getLayer('carto-dark-layer')) {
+            this.map.setLayoutProperty('osm-layer', 'visibility', theme === 'dark' ? 'none' : 'visible');
+            this.map.setLayoutProperty('carto-dark-layer', 'visibility', theme === 'dark' ? 'visible' : 'none');
+        }
     }
 
     _setupMapSources() {
@@ -121,7 +179,7 @@ class DownloadManager {
             type: 'fill',
             source: 'bbox-source',
             paint: {
-                'fill-color': '#00e5a0',
+                'fill-color': '#0284C7',
                 'fill-opacity': 0.15
             }
         });
@@ -131,9 +189,8 @@ class DownloadManager {
             type: 'line',
             source: 'bbox-source',
             paint: {
-                'line-color': '#00e5a0',
-                'line-width': 2.5,
-                'line-dasharray': [2, 1]
+                'line-color': '#0284C7',
+                'line-width': 2.5
             }
         });
     }
@@ -228,6 +285,8 @@ class DownloadManager {
         const lonDist = (bbox.max_lon - bbox.min_lon) * 111 * Math.cos(midLatRad);
         const areaKm2 = Math.round(Math.abs(latDist * lonDist));
         this.areaReadout.textContent = `Area: ~${areaKm2.toLocaleString()} km²`;
+
+        SelectionContext.setArea(bbox);
     }
 
     updateInputs(bbox) {
@@ -449,8 +508,10 @@ class DownloadManager {
     }
 
     async loadInventory(force = false) {
+        console.log('[DL] inside loadInventory, calling ApiClient.getDownloadInventory...');
         try {
             const data = await ApiClient.getDownloadInventory(force);
+            console.log('[DL] loadInventory received data, items count:', (data.ocean_downloads?.length || 0) + (data.local_models?.length || 0));
             this.inventoryData = data;
 
             // Update stats
@@ -458,7 +519,9 @@ class DownloadManager {
             this.statTotalFiles.textContent = data.summary?.total_files || 0;
             this.statOceanFiles.textContent = data.summary?.ocean_files_count || 0;
 
+            console.log('[DL] rendering inventory table...');
             this.renderInventoryTable(this._combineInventoryItems(data));
+            console.log('[DL] rendered inventory table done!');
         } catch (e) {
             console.warn('[DownloadManager] Failed loading inventory:', e);
             this.invTableBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--accent-red); padding: 20px;">Could not connect to API server (${e.message})</td></tr>`;
@@ -553,7 +616,9 @@ class DownloadManager {
     }
 }
 
-// Instantiate upon DOM load
-document.addEventListener('DOMContentLoaded', () => {
+function bootDownloadManager() {
+    if (window.downloadManager) return;
     window.downloadManager = new DownloadManager();
-});
+}
+
+setTimeout(bootDownloadManager, 20);

@@ -43,18 +43,26 @@ export class OceanScene {
         const width = parent ? parent.clientWidth : window.innerWidth;
         const height = parent ? parent.clientHeight : window.innerHeight;
 
+        const initialTheme = (typeof localStorage !== 'undefined' && localStorage.getItem('solvx_theme')) || 'light';
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x06121a);
+        this.scene.background = new THREE.Color(initialTheme === 'dark' ? 0x101a24 : 0xeaf4f7);
 
         this.camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100000);
         this.camera.position.set(250, 180, 350);
 
-        this.renderer = new THREE.WebGLRenderer({
-            canvas: this.canvas,
-            antialias: true,
-            powerPreference: 'high-performance',
-            logarithmicDepthBuffer: true
-        });
+        try {
+            this.renderer = new THREE.WebGLRenderer({
+                canvas: this.canvas,
+                antialias: true,
+                powerPreference: 'high-performance'
+            });
+        } catch (_) {
+            this.renderer = new THREE.WebGLRenderer({
+                canvas: this.canvas,
+                antialias: false,
+                powerPreference: 'default'
+            });
+        }
         // Cap DPR at 1.5 for balanced performance and sharpness
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
         this.renderer.setSize(width, height);
@@ -63,10 +71,12 @@ export class OceanScene {
         // Lighting
         const hemi = new THREE.HemisphereLight(0xffffff, 0x6b7b73, 1.5);
         this.scene.add(hemi);
+        this.hemiLight = hemi;
 
         const sun = new THREE.DirectionalLight(0xffffff, 1.8);
         sun.position.set(-350, 900, 500);
         this.scene.add(sun);
+        this.sunLight = sun;
 
         const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
         fillLight.position.set(300, -200, -200);
@@ -164,6 +174,10 @@ export class OceanScene {
     }
 
     setView(viewName) {
+        if (viewName === 'reset') {
+            this.fitCamera();
+            return;
+        }
         const box = new THREE.Box3().setFromObject(this.root);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
@@ -171,9 +185,9 @@ export class OceanScene {
 
         if (viewName === 'top') {
             this.camera.position.set(center.x, center.y + radius * 1.65, center.z + 0.001);
-        } else if (viewName === 'cut') {
+        } else if (viewName === 'cut' || viewName === 'horizontal') {
             this.camera.position.set(center.x + radius * 1.3, center.y * 0.1, center.z + radius * 0.1);
-        } else if (viewName === 'profile') {
+        } else if (viewName === 'profile' || viewName === 'vertical') {
             this.camera.position.set(center.x + radius * 1.55, center.y, center.z);
         } else if (viewName === 'under') {
             this.camera.position.set(center.x + radius * 0.7, center.y - radius * 0.65, center.z - radius * 1.2);
@@ -182,6 +196,20 @@ export class OceanScene {
         }
         this.controls.target.copy(center);
         this.controls.update();
+    }
+
+    setTheme(themeName = 'light') {
+        const isDark = themeName === 'dark';
+        if (this.scene) {
+            this.scene.background = new THREE.Color(isDark ? 0x101a24 : 0xeaf4f7);
+        }
+        if (this.hemiLight) {
+            this.hemiLight.groundColor.setHex(isDark ? 0x6b7b73 : 0xb8cdd8);
+            this.hemiLight.intensity = isDark ? 1.5 : 1.8;
+        }
+        if (this.sunLight) {
+            this.sunLight.intensity = isDark ? 1.8 : 2.0;
+        }
     }
 
     setExaggeration(ex) {
@@ -265,11 +293,18 @@ export class OceanScene {
 
     animate(timestamp) {
         this.animId = requestAnimationFrame(this.animate.bind(this));
+        if (this._lastFrameTime && (timestamp - this._lastFrameTime) < 30) {
+            return;
+        }
+        this._lastFrameTime = timestamp;
+
         for (const cb of this.updateCallbacks) {
             cb(timestamp);
         }
-        this.controls.update();
-        this.renderer.render(this.scene, this.camera);
+        this.controls?.update();
+        if (this.renderer && this.scene && this.camera && this.root && this.root.children.length > 0) {
+            this.renderer.render(this.scene, this.camera);
+        }
     }
 
     destroy() {

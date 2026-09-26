@@ -247,6 +247,48 @@ def get_comparison_field(
         min_lon=bmin_lon, max_lon=bmax_lon,
         min_lat=bmin_lat, max_lat=bmax_lat
     )
+    # For the observation-gap mode, coverage is the signal; it must not depend
+    # on the selected scientific variable having in-situ measurements.
+    if metric == 'observation_gap':
+        samples = [
+            {
+                'lat': float(obs.get('latitude', 0.0)),
+                'lon': float(obs.get('longitude', 0.0)),
+                'value': 1.0
+            }
+            for obs in obs_list
+        ]
+        lats = [float(v) for v in (res.get('latitude') or [])]
+        lons = [float(v) for v in (res.get('longitude') or [])]
+        field = []
+        obs_cells = set()
+        for s in samples:
+            if lats and lons:
+                jj = min(range(len(lats)), key=lambda j: abs(lats[j] - s['lat']))
+                ii = min(range(len(lons)), key=lambda i: abs(lons[i] - s['lon']))
+                obs_cells.add((jj, ii))
+        field = [[0.0 if (j, i) in obs_cells else 1.0 for i in range(len(lons))] for j in range(len(lats))]
+        valid = [float(v) for row in field for v in row]
+        return {
+            'variable': variable,
+            'metric': metric,
+            'time': time,
+            'depth': float(depth or 0.0),
+            'latitude': lats,
+            'longitude': lons,
+            'values': field,
+            'units': 'coverage-gap',
+            'model_observation_pairs': len(samples),
+            'model_minus_observation': False,
+            'min_val': min(valid) if valid else None,
+            'max_val': max(valid) if valid else None,
+            'metadata': {
+                'grid_res_deg': grid_res_deg,
+                'observation_collocation': 'observation presence mask',
+                'missing_observation_cells': True,
+                'metric_definition': '0 = observed cell, 1 = observation gap'
+            }
+        }
 
     obs_key = {
         'temperature': ('temperature', 'temp'),

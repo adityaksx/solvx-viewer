@@ -221,9 +221,10 @@ METRIC_DEFINITIONS: Dict[str, Dict[str, str]] = {
     },
     "bias": {
         "name": "Mean Model Bias",
-        "description": "Average difference (observed - model). Positive means observations exceed model; negative means model overestimates.",
+        "description": "Average signed residual (model - observation). Positive means the model exceeds observations; negative means the model is below observations.",
         "temperature_unit": "°C",
-        "salinity_unit": "PSU"
+        "salinity_unit": "PSU",
+        "chlorophyll_unit": "mg/m³"
     },
     "mae": {
         "name": "Mean Absolute Error",

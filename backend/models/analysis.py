@@ -14,7 +14,7 @@ class ComparisonPoint(BaseModel):
     depth: float = Field(..., description="Depth in meters / decibars")
     observed: float = Field(..., description="In-situ observed value (Argo)")
     model: float = Field(..., description="Interpolated numerical model value")
-    diff: float = Field(..., description="Observation minus Model (diff = observed - model)")
+    diff: float = Field(..., description="Signed residual (Model - Observation)")
     abs_diff: float = Field(..., description="Absolute difference |observed - model|")
     qc: int = Field(1, description="Quality control flag (1=good)")
     unit: str = Field("°C", description="Measurement unit (°C or PSU)")
@@ -33,7 +33,7 @@ class ProfileComparisonResponse(BaseModel):
     is_climatology_fallback: bool = Field(False, description="True if reference climatology was used because model data was unavailable")
     points_count: int
     rmse: Optional[float] = Field(None, description="Root Mean Squared Error")
-    bias: Optional[float] = Field(None, description="Mean Model Bias (observed - model)")
+    bias: Optional[float] = Field(None, description="Mean Model Bias (Model - Observation)")
     mae: Optional[float] = Field(None, description="Mean Absolute Error")
     max_diff: Optional[float] = Field(None, description="Maximum absolute difference")
     min_diff: Optional[float] = Field(None, description="Minimum absolute difference")

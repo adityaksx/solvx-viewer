@@ -301,6 +301,9 @@ def compare_regional_floats(
         'temperature': '°C',
         'salinity': 'PSU',
         'chlorophyll': 'mg/m³',
+        'sea_level': 'm',
+        'sea_surface_height': 'm',
+        'currents': 'm/s',
     }.get(variable, '')
     for f in floats:
         try:

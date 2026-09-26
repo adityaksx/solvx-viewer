@@ -152,7 +152,8 @@ def get_ocean_bundle(
     time: Optional[str] = Query(None),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
-    stride: int = Query(1, ge=1, le=20)
+    stride: int = Query(1, ge=1, le=20),
+    variables: Optional[List[str]] = Query(None, description='Optional variable list; e.g. chlorophyll')
 ):
     """Retrieves all core ocean variables (temperature, salinity, currents, sea_surface_height) at once."""
     try:
@@ -166,7 +167,8 @@ def get_ocean_bundle(
             time=time,
             start_time=start_time,
             end_time=end_time,
-            stride=stride
+            stride=stride,
+            variables=variables
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

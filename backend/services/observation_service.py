@@ -323,7 +323,11 @@ def get_observation_comparison(obs_id: str, variable: str = 'temperature', time:
 
     lat = obs['latitude']
     lon = obs['longitude']
-    var_key = 'salinity' if variable in ('salinity', 'sal', 'so') else 'temperature'
+    var_key = (
+        'salinity' if variable in ('salinity', 'sal', 'so')
+        else 'chlorophyll' if variable in ('chlorophyll', 'chl', 'chlor_a')
+        else 'temperature'
+    )
 
     # Query real model vertical profile at (lat, lon)
     pt_data = get_ocean_point(latitude=lat, longitude=lon, time=time or obs.get('timestamp') or obs.get('date'))
@@ -337,6 +341,17 @@ def get_observation_comparison(obs_id: str, variable: str = 'temperature', time:
             model_depths.append(p['depth'])
             model_vals.append(val)
 
+    # Surface-only products such as chlorophyll are not present in the
+    # generic point sounding profile. Retrieve the model surface value directly.
+    if var_key == 'chlorophyll' and not model_vals:
+        point_values = {item.get('id'): item for item in (pt_data.get('values') or []) if isinstance(item, dict)}
+        chl_item = point_values.get('chlorophyll')
+        if chl_item and chl_item.get('value') is not None:
+            value = chl_item.get('value')
+            if np.isscalar(value) and not np.isnan(value):
+                model_depths = [float(pt_data.get('depth') or 0.49)]
+                model_vals = [float(value)]
+
     obs_profile = obs.get('profile', [])
     comp_result = compare_vertical_profiles(model_depths, model_vals, obs_profile, variable=var_key)
     return {
@@ -345,5 +360,5 @@ def get_observation_comparison(obs_id: str, variable: str = 'temperature', time:
         'rmse': comp_result['rmse'],
         'bias': comp_result['bias'],
         'variable': var_key,
-        'unit': 'PSU' if var_key == 'salinity' else '°C'
+        'unit': 'PSU' if var_key == 'salinity' else 'mg/m³' if var_key == 'chlorophyll' else '°C'
     }

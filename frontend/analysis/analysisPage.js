@@ -1073,7 +1073,11 @@ class AnalysisDashboard {
         ? {
             values: derived.values,
             units: derived.units || this.getVariableUnit(this.activeVar),
-            metadata: { depth_levels: [this.activeDepth] }
+            metadata: {
+              depth_levels: [this.activeDepth],
+              analysis_metric: this.analysisMode,
+              analysis_variable: this.activeVar
+            }
           }
         : this.resolveVar(vars, this.activeVar);
 

@@ -424,7 +424,7 @@ class AnalysisDashboard {
         .forEach(k => { delete this.comparisonFieldCache[k]; });
     }
 
-    if (this.activeTime && mode !== 'obs_vs_model') {
+    if (this.activeTime) {
       this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
     }
 
@@ -1027,7 +1027,7 @@ class AnalysisDashboard {
     // The comparison field is a derived product of the selected variable,
     // depth, time and analysis metric; never silently fall back to raw model
     // values once an analysis mode is selected.
-    if (this.analysisMode !== 'obs_vs_model' && this.activeTime && this.comparisonFieldCache) {
+    if (this.activeTime && this.comparisonFieldCache) {
       const comparisonKey = String(this.activeTime || '') + '|' + String(this.activeVar) + '|' + String(this.activeDepth) + '|' + String(this.analysisMode);
       if (!(comparisonKey in this.comparisonFieldCache)) {
         this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
@@ -1059,9 +1059,6 @@ class AnalysisDashboard {
     const comparisonKey = String(this.activeTime || '') + '|' + String(this.activeVar) + '|' + String(this.activeDepth) + '|' + String(this.analysisMode);
     const derived = this.comparisonFieldCache?.[comparisonKey];
 
-    if (this.analysisMode !== 'obs_vs_model' && this.activeTime && !derived && this.comparisonFieldCache) {
-      this.fetchComparisonField(this.activeTime).then(() => this.updateAnalysisView());
-    }
 
     if (this.activeVar === 'currents' && !derived) {
       const curData = this.resolveVar(vars, 'currents');

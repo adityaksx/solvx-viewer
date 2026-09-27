@@ -729,6 +729,17 @@ class AnalysisDashboard {
           this.updateCharts();
         }
       });
+      let lastTimeMs = performance.now();
+      this.scene.onUpdate(timeMs => {
+        const now = timeMs || performance.now();
+        const delta = Math.min(0.05, Math.max(0.001, (now - lastTimeMs) / 1000.0));
+        lastTimeMs = now;
+        if (this.currentVectorsGroup) {
+          for (const child of this.currentVectorsGroup.children) {
+            child.update?.(delta, now / 1000.0);
+          }
+        }
+      });
       this.scene.setTheme(this.currentTheme);
     }
 

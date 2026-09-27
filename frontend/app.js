@@ -162,8 +162,15 @@ class SolvXApp {
         this.setupCurrentControls();
         this.setupPointInspector();
 
+        let lastUpdateMs = performance.now();
         this.scene.onUpdate((timeMs) => {
-            this.currentParticles?.update(0.016);
+            const now = timeMs || performance.now();
+            const delta = Math.min(0.05, Math.max(0.001, (now - lastUpdateMs) / 1000.0));
+            lastUpdateMs = now;
+            if (this.activeVar === 'currents') {
+                this.currentVectorsGroup?.update?.(delta, now / 1000.0, this.scene.camera);
+            }
+            this.currentParticles?.update(delta);
         });
 
         await this.loadRegion(this.currentBBox);
@@ -391,6 +398,9 @@ class SolvXApp {
             if (this.water?.instancedVolume) this.water.instancedVolume.visible = visible;
         } else if (layer === 'observations') {
             if (this.argoMarkersGroup) this.argoMarkersGroup.visible = visible;
+        } else if (layer === 'currents') {
+            const actualVisible = (this.activeVar === 'currents') && visible;
+            this.scene.setLayerVisibility('currents', actualVisible);
         } else {
             this.scene.setLayerVisibility(layer, visible);
         }
@@ -896,6 +906,14 @@ class SolvXApp {
         this.activeVar = varId;
         this.status(`Switching to ${varId}…`);
 
+        if (varId !== 'currents') {
+            if (this.currentVectorsGroup) {
+                this.scene.disposeObject(this.currentVectorsGroup);
+                this.currentVectorsGroup = null;
+            }
+            this.scene.setLayerVisibility('currents', false);
+        }
+
         try {
             const depthData = await ApiClient.getOceanDepths(varId);
             if (depthData?.depths) {
@@ -1035,9 +1053,23 @@ class SolvXApp {
         if (isCurrentsActive) {
             const curData = this._resolveVarData(variables, 'currents');
             if (curData && !curData.error) {
+                if (!curData.values && curData.u && curData.v) {
+                    const u = curData.u;
+                    const v = curData.v;
+                    curData.values = u.map((row, j) => row.map((uu, i) => {
+                        const vv = v[j]?.[i];
+                        return (uu != null && vv != null) ? Math.hypot(uu, vv) : null;
+                    }));
+                }
+                this.lastOceanData = curData;
+                this.scalarViz?.apply('currents', curData, this.activeDepth, this.activeDepthMode);
                 this.renderCurrents(curData, true);
             }
         } else {
+            if (this.currentVectorsGroup) {
+                this.scene.disposeObject(this.currentVectorsGroup);
+                this.currentVectorsGroup = null;
+            }
             const varData = this._resolveVarData(variables, this.activeVar);
             if (varData && !varData.error) {
                 this.lastOceanData = varData;
@@ -1048,7 +1080,7 @@ class SolvXApp {
 
             // Update particle flow in background without overriding active scalar variable or legend
             const curData = this._resolveVarData(variables, 'currents');
-            if (curData && !curData.error && (this.layerState.particles || this.layerState.currents)) {
+            if (curData && !curData.error && this.layerState.particles) {
                 this.renderCurrents(curData, false);
             }
         }
@@ -1073,10 +1105,16 @@ class SolvXApp {
         }
         this.currentGrid = data;
         const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
+        const depthY = this.activeDepth ? (this.scene.depthY(this.activeDepth) + 0.8) : 1.2;
 
-        // Build 3D vector arrows with vectorScale
-        this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds, isPrimary, this.vectorScale, 0.4);
-        this.scene.setLayer('currents', this.currentVectorsGroup);
+        // Build 3D vector arrows ONLY if currents is the actively selected variable
+        if (this.activeVar === 'currents') {
+            this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds, isPrimary, this.vectorScale, depthY);
+            this.scene.setLayer('currents', this.currentVectorsGroup);
+            this.scene.setLayerVisibility('currents', this.layerState.currents);
+        } else {
+            this.scene.setLayerVisibility('currents', false);
+        }
 
         // Build animated particles with flowSpeed, particleDensity, vectorScale
         this.currentParticles = new CurrentParticles(data, bounds, {
@@ -1085,9 +1123,10 @@ class SolvXApp {
             vectorScale: this.vectorScale,
             paused: this.particlesPaused,
             animated: this.particlesEnabled,
-            depthY: 0.6
+            depthY: depthY + 0.3
         });
         this.scene.setLayer('particles', this.currentParticles.group);
+        this.scene.setLayerVisibility('particles', this.layerState.particles);
     }
 
     async loadActiveVariable() {
@@ -1176,6 +1215,17 @@ class SolvXApp {
             }
 
             if (depthNotice) depthNotice.classList.add('hidden');
+            if (this.activeVar === 'currents') {
+                if (!data.values && data.u && data.v) {
+                    const u = data.u;
+                    const v = data.v;
+                    data.values = u.map((row, j) => row.map((uu, i) => {
+                        const vv = v[j]?.[i];
+                        return (uu != null && vv != null) ? Math.hypot(uu, vv) : null;
+                    }));
+                }
+                this.scalarViz?.apply('currents', data, this.activeDepth, this.activeDepthMode);
+            }
             this.renderCurrents(data, this.activeVar === 'currents');
             this.status('Ocean currents & flow particles loaded.');
         } catch (e) {
@@ -1283,6 +1333,7 @@ class SolvXApp {
                 btnToggle.textContent = this.particlesEnabled ? 'ON' : 'OFF';
                 btnToggle.classList.toggle('active', this.particlesEnabled);
                 this.currentParticles?.toggleAnimation(this.particlesEnabled);
+                this.currentVectorsGroup?.toggleAnimation?.(this.particlesEnabled);
             };
         }
 
@@ -1292,6 +1343,7 @@ class SolvXApp {
                 btnPause.textContent = this.particlesPaused ? 'RESUME' : 'PAUSE';
                 btnPause.classList.toggle('active', this.particlesPaused);
                 this.currentParticles?.setPaused(this.particlesPaused);
+                this.currentVectorsGroup?.setPaused?.(this.particlesPaused);
             };
         }
 
@@ -1300,6 +1352,7 @@ class SolvXApp {
                 this.currentFlowSpeed = parseFloat(e.target.value);
                 if (speedVal) speedVal.textContent = `${this.currentFlowSpeed.toFixed(1)}×`;
                 this.currentParticles?.setFlowSpeed(this.currentFlowSpeed);
+                this.currentVectorsGroup?.setFlowSpeed?.(this.currentFlowSpeed);
             };
         }
 

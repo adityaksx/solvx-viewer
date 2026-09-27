@@ -42,11 +42,11 @@ export const PALETTES = {
         [0xffe600, 1.0]
     ],
     currents: [
-        [0x0a194f, 0.0],
-        [0x0066cc, 0.25],
-        [0x00cc99, 0.50],
-        [0xffcc00, 0.75],
-        [0xff3300, 1.0]
+        [0xffea00, 0.0],   // Bright Electric Gold / Yellow (opposite high-contrast against blue ocean)
+        [0xff9d00, 0.35],  // Radiant Amber
+        [0xff5500, 0.65],  // Vibrant Sunset Orange
+        [0xff1144, 0.88],  // Hot Neon Coral
+        [0xffffff, 1.0]    // Luminous White-Gold
     ],
     analysis_diverging: [
         [0x06349e, 0.0],
@@ -147,6 +147,9 @@ export function getPaletteStops(variable) {
     }
     if (v === 'observation_gap') {
         return PALETTES.observation_gap;
+    }
+    if (v === 'currents' || v === 'ocean_currents' || v === 'current') {
+        return PALETTES.currents;
     }
     return PALETTES[v] || PALETTES.fallback;
 }

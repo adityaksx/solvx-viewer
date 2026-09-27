@@ -122,15 +122,17 @@ export class CurrentParticles {
         ptGeom.setAttribute('color', new THREE.BufferAttribute(pointColors, 3));
 
         const ptMat = new THREE.PointsMaterial({
-            size: 3.2,
+            size: 2.2,
+            sizeAttenuation: true,
             vertexColors: true,
             transparent: true,
-            opacity: 0.95,
+            opacity: 0.85,
             blending: THREE.AdditiveBlending,
             depthWrite: false
         });
 
         this.particleMesh = new THREE.Points(ptGeom, ptMat);
+        this.particleMesh.renderOrder = 60;
         this.group.add(this.particleMesh);
 
         // 2. Animated Flow Trails (Streamlets)
@@ -147,20 +149,23 @@ export class CurrentParticles {
         });
 
         this.trailMesh = new THREE.LineSegments(trailGeom, trailMat);
+        this.trailMesh.renderOrder = 59;
         this.group.add(this.trailMesh);
     }
 
     _getFlowColor(speed) {
-        // Cyan-blue (slow) -> bright turquoise -> electric yellow/amber (fast)
+        // High-contrast opposite warm spectrum against translucent blue ocean:
+        // Electric Gold / Yellow (slow) -> Vibrant Amber / Orange (medium) -> Radiant Coral / White (fast)
         const norm = Math.min(1.0, Math.max(0.0, speed / 0.8));
-        if (norm < 0.3) {
-            return { r: 0.1, g: 0.6 + norm, b: 0.95 };
-        } else if (norm < 0.7) {
-            const t = (norm - 0.3) / 0.4;
-            return { r: 0.1 + 0.8 * t, g: 0.9, b: 0.95 - 0.5 * t };
+        if (norm < 0.35) {
+            const t = norm / 0.35;
+            return { r: 1.0, g: 0.92 - 0.18 * t, b: 0.12 * (1.0 - t) }; // #ffea00 -> #ffbd00
+        } else if (norm < 0.75) {
+            const t = (norm - 0.35) / 0.4;
+            return { r: 1.0, g: 0.74 - 0.42 * t, b: 0.05 * t }; // #ffbd00 -> #ff5200
         } else {
-            const t = (norm - 0.7) / 0.3;
-            return { r: 0.95 + 0.05 * t, g: 0.9 - 0.2 * t, b: 0.45 - 0.3 * t };
+            const t = (norm - 0.75) / 0.25;
+            return { r: 1.0, g: 0.32 + 0.68 * t, b: 0.2 + 0.8 * t }; // #ff5200 -> #ffffff
         }
     }
 
@@ -229,7 +234,7 @@ export class CurrentParticles {
 
         const b = this.boundsKm;
         const pData = this.particleData;
-        const baseSpeedScale = 18.0 * this.flowSpeed;
+        const baseSpeedScale = 55.0 * this.flowSpeed;
 
         const bMinX = b.minX;
         const bMaxX = b.maxX;
@@ -285,7 +290,7 @@ export class CurrentParticles {
 
             // Update Trail (Connecting previous point to current point with direction tail)
             const trailIdx = i * 6;
-            const trailLen = Math.max(1.5, Math.min(12.0, speed * 20.0 * this.vectorScale));
+            const trailLen = Math.max(2.0, Math.min(18.0, speed * 30.0 * this.vectorScale));
             const tailX = px - (vel.v / Math.max(0.001, speed)) * trailLen;
             const tailZ = pz - (vel.u / Math.max(0.001, speed)) * trailLen;
 

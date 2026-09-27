@@ -192,7 +192,25 @@ export class ScalarVisualizer {
     }
 
     applyVolumeColors(depthM = 0) {
-        if (!this.currentData || !this.water || !this.water.cells) return;
+        if (!this.water || !this.water.cells) return;
+
+        // When currents variable is selected: Render ocean water in beautiful translucent marine blue
+        if (this.variable === 'currents') {
+            const maxH = Math.max(...this.water.cells.map(c => c.h), 1);
+            this.water.recolorCells(c => {
+                const depthFrac = Math.min(c.h / maxH, 1.0);
+                // Clean translucent marine sapphire / cyan-blue depth gradient
+                const r = 0.04 + (1.0 - depthFrac) * 0.06;
+                const g = 0.28 + (1.0 - depthFrac) * 0.22;
+                const b = 0.62 + (1.0 - depthFrac) * 0.28;
+                _reusableColor.setRGB(r, g, b);
+                return _reusableColor;
+            }, depthM);
+            this.water.setOpacity(0.55);
+            return;
+        }
+
+        if (!this.currentData) return;
         const vals = this.currentData.values;
         if (!vals || !vals.length) return;
         
@@ -236,6 +254,12 @@ export class ScalarVisualizer {
     }
 
     updateSliceTexture(depthM, mode = 'slice') {
+        if (this.variable === 'currents') {
+            if (this.sliceMesh) this.sliceMesh.visible = false;
+            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            return;
+        }
+
         if (!this.currentData && !(this.customVerticalCoords && this.customVerticalCoords.transectData)) {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;

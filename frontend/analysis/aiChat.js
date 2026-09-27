@@ -7,12 +7,14 @@
 // 4. Safe command validation before dispatching to window.solvxViewer.executeCommand()
 
 import { ApiClient } from '../api/apiClient.js';
+import { renderChartSvg } from '../ai/assistantDock.js';
 
 let _vc = null;
 let _container = null;
 let _aiAvailable = false;
 let _aiModel = 'gemini-2.0-flash';
 let _sessionApiKey = '';
+let _sessionId = null;
 
 export const AiChat = {
     /**
@@ -24,6 +26,11 @@ export const AiChat = {
         _vc = viewerController;
         _container = containerElement;
         _sessionApiKey = sessionStorage.getItem('solvx_gemini_key') || '';
+        _sessionId = sessionStorage.getItem('solvx_ai_session_id');
+        if (!_sessionId) {
+            _sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `sess_${Date.now()}`;
+            sessionStorage.setItem('solvx_ai_session_id', _sessionId);
+        }
 
         await _checkStatus();
         _render();
@@ -147,22 +154,10 @@ function _bindEvents() {
         try {
             const isDirectCommand = /^(set|show|focus|go to|view|slice|display)\b/i.test(query);
             const curVar = _vc?.activeVar || 'temperature';
-            const curContext = _vc?.getAnalysisContext ? _vc.getAnalysisContext() : null;
-
-            if (isDirectCommand) {
-                const cmdRes = await ApiClient.parseNLCommand(query, curVar, _sessionApiKey);
-                loadingMsg.remove();
-                _appendCommandMessage(history, cmdRes);
-            } else {
-                const explainRes = await ApiClient.explainAnalysis(query, {
-                    variable: curVar,
-                    method: 'zscore',
-                    context: curContext,
-                    apiKey: _sessionApiKey
-                });
-                loadingMsg.remove();
-                _appendAssistantMessage(history, explainRes);
-            }
+            const curContext = _vc?.getUIContext ? _vc.getUIContext() : (_vc?.getAnalysisContext ? _vc.getAnalysisContext() : null);
+            const res = await ApiClient.sendAIChat(query, curContext, _sessionId, _sessionApiKey);
+            loadingMsg.remove();
+            _appendAssistantMessage(history, res);
         } catch (err) {
             loadingMsg.remove();
             _appendErrorMessage(history, err.message || 'AI request failed');
@@ -185,9 +180,9 @@ function _appendLoadingMessage(history) {
     const msg = document.createElement('div');
     msg.className = 'ai-message ai-message-assistant ai-loading';
     msg.innerHTML = `
-        <div class="ai-message-header">SOLVX AI</div>
+        <div class="ai-message-header">SOLVX AI ASSISTANT</div>
         <div class="ai-message-body">
-            <span class="analysis-spinner"></span> Synthesizing oceanographic analysis…
+            <span class="analysis-spinner"></span> Synthesizing oceanographic analysis & executing tools…
         </div>
     `;
     history.appendChild(msg);
@@ -199,31 +194,99 @@ function _appendAssistantMessage(history, res) {
     const msg = document.createElement('div');
     msg.className = 'ai-message ai-message-assistant';
 
-    let actionBtnHtml = '';
-    if (res.command) {
-        actionBtnHtml = `
-            <div class="ai-action-box">
-                <span class="ai-action-label">Recommended 3D Action:</span>
-                <button class="focus-btn ai-exec-btn" data-cmd="${encodeURIComponent(JSON.stringify(res.command))}">
-                    ⬡ APPLY 3D COMMAND (${res.command.action})
-                </button>
+    // Tool Call Badges
+    let toolsHtml = '';
+    if (res.tool_calls && res.tool_calls.length > 0) {
+        const badges = res.tool_calls.map(t => {
+            const statusClass = t.status === 'success' ? 'status-ok' : (t.status === 'error' ? 'status-err' : 'status-empty');
+            return `<span class="ai-tool-pill ${statusClass}">⚙ ${t.tool}: ${t.status}</span>`;
+        }).join(' ');
+        toolsHtml = `<div class="ai-tools-row">${badges}</div>`;
+    }
+
+    // Inline Charts
+    let chartsHtml = '';
+    if (res.charts && res.charts.length > 0) {
+        chartsHtml = `<div class="ai-charts-container">${res.charts.map(c => renderChartSvg(c)).join('')}</div>`;
+    }
+
+    // Action Buttons
+    let actionsHtml = '';
+    const allActions = res.vis_actions || (res.command ? [res.command] : []);
+    if (allActions.length > 0) {
+        actionsHtml = `
+            <div class="ai-actions-shelf">
+                <span class="ai-action-shelf-title">3D Visualization Actions:</span>
+                <div class="ai-action-btn-group">
+                    ${allActions.map(cmd => {
+                        const cmdStr = encodeURIComponent(JSON.stringify(cmd));
+                        const label = (cmd.action || 'APPLY').replace('_', ' ').toUpperCase();
+                        return `<button class="focus-btn ai-exec-btn" data-cmd="${cmdStr}">⬡ APPLY 3D ACTION (${label})</button>`;
+                    }).join('')}
+                </div>
             </div>
         `;
     }
 
-    const sources = (res.data_sources || []).join(' · ');
+    // Provenance
+    let provHtml = '';
+    if (res.provenance) {
+        const p = res.provenance;
+        const models = (p.models_used || []).join(', ');
+        const obs = (p.observations_used || []).join(', ');
+        const floats = (p.float_ids || []).slice(0, 4).join(', ') + ((p.float_ids?.length || 0) > 4 ? '…' : '');
+        provHtml = `
+            <div class="ai-provenance-box">
+                <span><strong>Models:</strong> ${_escape(models || 'Copernicus NEMO')}</span>
+                ${obs ? `<span><strong>Obs:</strong> ${_escape(obs)}</span>` : ''}
+                ${floats ? `<span><strong>Floats:</strong> ${_escape(floats)}</span>` : ''}
+            </div>
+        `;
+    } else {
+        const sources = (res.data_sources || []).join(' · ');
+        provHtml = `
+            <div class="ai-message-meta">
+                <span>Sources: ${sources || 'Copernicus NEMO / WMO Argo'}</span>
+                <span>Confidence: ${res.confidence || 'verified'}</span>
+            </div>
+        `;
+    }
+
+    // Follow-ups
+    let followUpsHtml = '';
+    if (res.follow_up_suggestions && res.follow_up_suggestions.length > 0) {
+        followUpsHtml = `
+            <div class="ai-followup-chips">
+                ${res.follow_up_suggestions.map(s => `<button class="ai-chip" data-prompt="${_escape(s)}">${_escape(s)}</button>`).join('')}
+            </div>
+        `;
+    }
 
     msg.innerHTML = `
         <div class="ai-message-header">SOLVX AI SCIENCE ASSISTANT</div>
+        ${toolsHtml}
         <div class="ai-message-body">${_formatMarkdown(res.explanation)}</div>
-        ${actionBtnHtml}
-        <div class="ai-message-meta">
-            <span>Sources: ${sources || 'Copernicus NEMO / WMO Argo'}</span>
-            <span>Confidence: ${res.confidence || 'verified'}</span>
-        </div>
+        ${chartsHtml}
+        ${actionsHtml}
+        ${provHtml}
+        ${followUpsHtml}
     `;
 
     _wireActionButtons(msg);
+
+    // Wire follow-up prompt chips
+    msg.querySelectorAll('.ai-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const p = chip.getAttribute('data-prompt');
+            const input = document.getElementById('aiChatInput');
+            const form = document.getElementById('aiInputForm');
+            if (p && input && form) {
+                input.value = p;
+                form.dispatchEvent(new Event('submit'));
+            }
+        });
+    });
+
     history.appendChild(msg);
     history.scrollTop = history.scrollHeight;
 }

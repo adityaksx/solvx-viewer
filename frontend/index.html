@@ -140,6 +140,10 @@
         <span class="demo-badge-text">DEMO / SYNTHETIC DATA</span>
         <button id="disableDemoBtn" class="demo-badge-btn" title="Restore real physical observations">RESTORE REAL DATA</button>
       </div>
+      <button id="aiAssistantToggleBtn" class="ai-assistant-toggle-btn" title="AI Scientific Assistant (Alt+A)">
+        <span class="ai-btn-icon">🤖</span>
+        <span class="ai-btn-text">AI ASSISTANT</span>
+      </button>
       <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Light/Dark Theme" aria-label="Toggle theme">☼</button>
     </div>
   </header>
@@ -546,6 +550,64 @@
       </div>
       <div id="obsStats" class="obs-stats"></div>
       <div id="obsBody"></div>
+    </div>
+
+    <!-- AI Scientific Assistant Floating Dock -->
+    <div id="aiAssistantDrawer" class="ai-assistant-dock hidden">
+      <div class="ai-dock-header">
+        <div class="ai-dock-title-group">
+          <span class="ai-dock-icon">🤖</span>
+          <div class="ai-dock-title-text">
+            <h3>SolvX AI Scientific Assistant</h3>
+            <span class="ai-dock-subtitle">Copernicus NEMO · WMO Argo · INCOIS Data Layer</span>
+          </div>
+        </div>
+        <div class="ai-dock-header-actions">
+          <button id="aiDockSettingsBtn" class="ai-header-btn" title="Configure API Key">⚙</button>
+          <button id="aiDockCloseBtn" class="ai-header-btn" title="Close Assistant">✕</button>
+        </div>
+      </div>
+
+      <!-- Live Context Bar -->
+      <div id="aiContextBar" class="ai-context-bar">
+        <span class="ai-context-item" id="aiCtxRegion">📍 <strong>Region:</strong> Bay of Bengal</span>
+        <span class="ai-context-item" id="aiCtxTime">📅 <strong>Time:</strong> Active</span>
+        <span class="ai-context-item" id="aiCtxDepth">🌊 <strong>Depth:</strong> 0m</span>
+        <span class="ai-context-item" id="aiCtxVar">📊 <strong>Var:</strong> Temperature</span>
+      </div>
+
+      <!-- API Key Row -->
+      <div id="aiDockKeyRow" class="ai-key-input-row hidden">
+        <input type="password" id="aiDockApiKey" class="ai-chat-input" placeholder="Gemini API Key (optional)">
+        <button id="aiDockSaveKey" class="compact-btn">SAVE</button>
+      </div>
+
+      <!-- Prompt Suggestion Chips -->
+      <div class="ai-prompt-chips" id="aiPromptChips">
+        <button class="ai-chip" data-prompt="What is the sea surface temperature at 18°N, 88°E?">Point Temp 18°N, 88°E</button>
+        <button class="ai-chip" data-prompt="Compare model salinity to Argo observations in this region.">Model vs Argo Salinity</button>
+        <button class="ai-chip" data-prompt="Show temperature profile at 18.5°N, 88.5°E down to 1000m.">Depth Profile</button>
+        <button class="ai-chip" data-prompt="Are there any observation gaps in this region?">Observation Gaps</button>
+        <button class="ai-chip" data-prompt="Show me chlorophyll data.">Test Chemical Var</button>
+      </div>
+
+      <!-- Conversation Message Stream -->
+      <div id="aiMessageStream" class="ai-message-stream">
+        <div class="ai-message ai-message-assistant">
+          <div class="ai-message-header">SOLVX AI ASSISTANT</div>
+          <div class="ai-message-body">
+            Welcome to the <strong>SolvX AI Scientific Assistant</strong>. Ask natural-language oceanographic questions, explore model-vs-observation differences, inspect soundings, or control the 3D scene.
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Bar -->
+      <form id="aiChatDockForm" class="ai-input-form">
+        <input type="text" id="aiDockInput" class="ai-chat-input" placeholder="Ask about ocean physics, Argo floats, or 3D views..." autocomplete="off">
+        <button type="submit" id="aiDockSubmit" class="ai-send-btn">
+          <span>ASK</span>
+        </button>
+      </form>
     </div>
 
     <!-- Bottom Multi-Resolution Timeline Dock -->

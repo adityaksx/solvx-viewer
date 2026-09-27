@@ -797,6 +797,30 @@ export const ApiClient = {
             }),
             noCache: true
         });
+    },
+
+    /**
+     * Sends a natural language query to the full AI Scientific Assistant orchestration layer.
+     * @param {string} message - User natural-language question or instruction
+     * @param {Object} [uiContext] - { region, timeline, depth, visualization }
+     * @param {string} [sessionId] - Multi-turn session ID
+     * @param {string} [apiKey] - Optional custom Gemini API key
+     */
+    async sendAIChat(message, uiContext = null, sessionId = null, apiKey = null) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) {
+            headers['X-Gemini-Key'] = apiKey;
+        }
+        return request('/api/ai/chat', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                message,
+                ui_context: uiContext,
+                session_id: sessionId
+            }),
+            noCache: true
+        });
     }
 };
 

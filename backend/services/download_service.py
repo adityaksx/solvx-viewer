@@ -647,7 +647,8 @@ def create_regional_download_package(
                     coords={'latitude': lats, 'longitude': lons},
                     attrs={'units': res.get('units', ''), 'source': res.get('provider', 'SolvX')}
                 )
-                ds.to_netcdf(str(out_file))
+                with NETCDF_LOCK:
+                    ds.to_netcdf(str(out_file))
             else:
                 import numpy as np
                 import xarray as xr
@@ -658,7 +659,8 @@ def create_regional_download_package(
                     coords={'latitude': lats, 'longitude': lons},
                     attrs={'units': res.get('units', ''), 'note': 'Regional subset archive'}
                 )
-                ds.to_netcdf(str(out_file))
+                with NETCDF_LOCK:
+                    ds.to_netcdf(str(out_file))
 
             return {'var': var, 'file': str(out_file), 'size': os.path.getsize(out_file)}
         except Exception as e:
@@ -688,7 +690,8 @@ def create_regional_download_package(
                 coords={'latitude': lats, 'longitude': lons},
                 attrs={'units': res.get('units', ''), 'source': 'Open-Meteo Atmospheric Model'}
             )
-            ds.to_netcdf(str(out_file))
+            with NETCDF_LOCK:
+                ds.to_netcdf(str(out_file))
             return {'var': var, 'file': str(out_file), 'size': os.path.getsize(out_file)}
         except Exception as e:
             logger.error("Download failed for atmos var '%s': %s", var, e)

@@ -26,6 +26,7 @@ import { SelectionContext } from './context/selectionContext.js';
 import { themeManager } from './context/themeManager.js';
 import { ViewerController } from './viewer/viewerController.js';
 import { ProfileViewer } from './profiles/profileViewer.js';
+import { AssistantDock } from './ai/assistantDock.js';
 
 
 class SolvXApp {
@@ -161,6 +162,7 @@ class SolvXApp {
         this.setupLayerToggles();
         this.setupCurrentControls();
         this.setupPointInspector();
+        AssistantDock.init(this.viewerController, this);
 
         let lastUpdateMs = performance.now();
         this.scene.onUpdate((timeMs) => {
@@ -927,12 +929,14 @@ class SolvXApp {
             if (cachedVar) {
                 this.applyBundleData(this.bundleCache[this.activeTime]);
                 this.status(`Ready · Showing ${varId}`);
+                AssistantDock.updateContextBar();
                 return;
             }
         }
 
         // Otherwise fetch this specific variable directly
         await this.loadActiveVariable();
+        AssistantDock.updateContextBar();
     }
 
     async loadTimelineBundle(timeIso) {
@@ -1291,6 +1295,7 @@ class SolvXApp {
             this.inspectPoint({ ...this.activeInspectedPoint, depthM });
         }
         this.updateProvenanceUI();
+        AssistantDock.updateContextBar();
     }
 
     onDepthModeChange(mode, depthM) {
@@ -1302,6 +1307,7 @@ class SolvXApp {
             this.onDepthChange(depthM);
         }
         this.updateProvenanceUI();
+        AssistantDock.updateContextBar();
     }
 
     async onTimeChange(idx, timeIso, meta) {
@@ -1315,6 +1321,7 @@ class SolvXApp {
         if (this.activeInspectedPoint && !document.getElementById('readout')?.classList.contains('hidden')) {
             this.inspectPoint(this.activeInspectedPoint);
         }
+        AssistantDock.updateContextBar();
     }
 
     setupCurrentControls() {

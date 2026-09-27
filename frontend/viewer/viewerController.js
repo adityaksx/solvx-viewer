@@ -167,39 +167,102 @@ export class ViewerController {
 
     /**
      * Dispatches a structured visualization command JSON to the viewer.
+    /**
+     * Extracts structured UI context compliant with SolvX AI Assistant schemas.
+     * @returns {Object}
+     */
+    getUIContext() {
+        const bbox = this.app?.currentBBox || { min_lat: 16.07, max_lat: 23.52, min_lon: 84.10, max_lon: 93.00 };
+        return {
+            region: {
+                name: this.app?.currentRegionName || "Active Region",
+                min_lat: Number(bbox.min_lat),
+                max_lat: Number(bbox.max_lat),
+                min_lon: Number(bbox.min_lon),
+                max_lon: Number(bbox.max_lon)
+            },
+            timeline: {
+                current_time: this.app?.activeTime || new Date().toISOString(),
+                start_time: this.app?.timelineStart || null,
+                end_time: this.app?.timelineEnd || null,
+                resolution: this.app?.timelineResolution || "daily"
+            },
+            depth: {
+                current_depth: Number(this.app?.activeDepth ?? 0),
+                depth_mode: this.app?.depthMode || "volume",
+                selected_layer: Number(this.app?.activeDepth ?? 0)
+            },
+            visualization: {
+                active_variable: this.app?.activeVar || "temperature",
+                active_layers: Object.keys(this.app?.layerState || {}).filter(k => this.app?.layerState[k]),
+                camera_position: this.app?.scene?.camera ? {
+                    x: this.app.scene.camera.position.x,
+                    y: this.app.scene.camera.position.y,
+                    z: this.app.scene.camera.position.z
+                } : null
+            }
+        };
+    }
+
+    /**
+     * Dispatches a structured visualization command JSON to the viewer.
+     * Supports both flat command objects and AI Assistant action objects with parameters.
      * @param {Object} command
      */
     executeCommand(command) {
         if (!command || typeof command !== 'object') return;
+        const params = command.parameters || command;
         const action = (command.action || '').toUpperCase();
 
-        if (action === 'FOCUS_REGION' || action === 'SHOW_ANOMALY') {
-            const lat = command.latitude ?? command.lat;
-            const lon = command.longitude ?? command.lon;
-            const depth = command.depth;
+        if (action === 'FOCUS_REGION' || action === 'SHOW_ANOMALY' || action === 'HIGHLIGHT_REGION') {
+            const bbox = params.bbox || (params.min_lat != null ? params : null);
+            let lat = params.latitude ?? params.lat;
+            let lon = params.longitude ?? params.lon;
+            if ((lat == null || lon == null) && bbox) {
+                lat = (bbox.min_lat + bbox.max_lat) / 2;
+                lon = (bbox.min_lon + bbox.max_lon) / 2;
+            }
+            const depth = params.depth;
             if (lat != null && lon != null) {
                 this.focusLocation(lat, lon, depth);
             }
-            if (command.variable) this.setVariable(command.variable);
-            if (command.time) this.setTime(command.time);
-            if (depth != null) this.setDepth(depth);
-            if (command.layer) this.showLayer(command.layer, true);
+            if (params.variable) this.setVariable(params.variable);
+            if (params.time) this.setTime(params.time);
+            if (depth != null) this.setDepth(Number(depth));
+            if (params.layer) this.showLayer(params.layer, true);
+        } else if (action === 'FOCUS_LOCATION') {
+            const lat = params.latitude ?? params.lat;
+            const lon = params.longitude ?? params.lon;
+            const depth = params.depth;
+            if (lat != null && lon != null) {
+                this.focusLocation(lat, lon, depth);
+            }
+            if (params.variable) this.setVariable(params.variable);
+            if (depth != null) this.setDepth(Number(depth));
         } else if (action === 'SET_DEPTH') {
-            if (command.depth != null) {
-                this.setDepth(Number(command.depth));
+            const depth = params.depth != null ? params.depth : params.target_depth;
+            if (depth != null) {
+                this.setDepth(Number(depth));
             }
         } else if (action === 'SET_VARIABLE') {
-            if (command.variable) {
-                this.setVariable(command.variable);
+            if (params.variable) {
+                this.setVariable(params.variable);
             }
         } else if (action === 'VERTICAL_SLICE') {
-            if (command.start_lat != null && command.start_lon != null && command.end_lat != null && command.end_lon != null) {
-                this.showVerticalSlice(command.start_lat, command.start_lon, command.end_lat, command.end_lon);
+            if (params.start_lat != null && params.start_lon != null && params.end_lat != null && params.end_lon != null) {
+                this.showVerticalSlice(params.start_lat, params.start_lon, params.end_lat, params.end_lon);
             }
         } else if (action === 'SHOW_LAYER') {
-            if (command.layer) {
-                this.showLayer(command.layer, command.visible !== false);
+            if (params.layer) {
+                this.showLayer(params.layer, params.visible !== false);
             }
+        } else if (action === 'FILTER_ARGO') {
+            if (params.float_id && this.app?.argoManager?.filterFloats) {
+                this.app.argoManager.filterFloats(params.float_id);
+            }
+        } else if (action === 'SHOW_GRAPH') {
+            // Dispatches event for chart display
+            window.dispatchEvent(new CustomEvent('solvx:show-graph', { detail: params }));
         }
     }
 

@@ -17,6 +17,8 @@ from ..models.ai import (
     NLCommandResponse,
     AIStatusResponse
 )
+from ..ai.schemas import ChatRequest, ChatResponse
+from ..ai.assistant import process_chat_message
 from ..services.ai_service import (
     get_ai_status,
     explain_analysis,
@@ -30,6 +32,25 @@ router = APIRouter(prefix='/api/ai', tags=['Scientific AI Assistant'])
 def status():
     """Returns AI Assistant operational status and active model configuration."""
     return get_ai_status()
+
+
+@router.post('/chat', response_model=ChatResponse)
+def chat(
+    request: ChatRequest,
+    x_gemini_key: Optional[str] = Header(None, alias='X-Gemini-Key')
+):
+    """
+    Main conversational orchestration endpoint for the SolvX AI Scientific Assistant.
+    Follows Section 19 of specification:
+    - Interprets natural-language intent.
+    - Decides required datasets/variables.
+    - Deterministically retrieves/processes data via SolvX tools.
+    - Returns structured answer with text, charts, 3D visualization actions, and provenance.
+    """
+    try:
+        return process_chat_message(request, api_key=x_gemini_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI chat orchestration failed: {str(e)}")
 
 
 @router.post('/explain', response_model=AIQueryResponse)

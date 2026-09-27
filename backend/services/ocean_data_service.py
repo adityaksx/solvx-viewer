@@ -137,41 +137,351 @@ def get_ocean_time() -> Dict[str, Any]:
                 }
     return {'file': None, 'variable': None, 'count': 0, 'values': []}
 
-def get_ocean_current_grid(time: Optional[str] = None, depth: Optional[float] = None, stride: int = 3) -> Dict[str, Any]:
+def get_ocean_current_grid(
+    time: Optional[str] = None,
+    depth: Optional[float] = None,
+    stride: int = 3,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None
+) -> Dict[str, Any]:
     f, u_name, v_name = find_current_components()
     if not f:
         raise HTTPException(404, detail='Both eastward and northward current variables are required')
     with safe_open_dataset(f) as ds:
         u, v = ds[u_name], ds[v_name]
+        
+        # Check depth availability
+        depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in u.dims or d in ds.coords), None)
+        if depth is not None and depth_dim and depth_dim in ds.coords:
+            d_vals = ds.coords[depth_dim].values
+            d_min = float(np.min(d_vals))
+            d_max = float(np.max(d_vals))
+            if depth < d_min - 2.0 or depth > d_max + 10.0:
+                return {
+                    'file': f.name,
+                    'available': False,
+                    'reason': f"Selected depth {depth}m is outside available current data range ({d_min:.1f}m to {d_max:.1f}m)",
+                    'depth': depth,
+                    'available_range': [round(d_min, 1), round(d_max, 1)],
+                    'latitude': [],
+                    'longitude': [],
+                    'lat': [],
+                    'lon': [],
+                    'u': [],
+                    'v': [],
+                    'units': u.attrs.get('units') or v.attrs.get('units') or 'm/s'
+                }
+            u = u.sel({depth_dim: depth}, method='nearest')
+            v = v.sel({depth_dim: depth}, method='nearest')
+        else:
+            u, v = select_surface(u), select_surface(v)
+
         if time is not None:
             u, v = select_time(u, time), select_time(v, time)
         elif 'time' in u.dims:
             u, v = u.isel(time=0), v.isel(time=0)
-        if depth is not None:
-            if 'depth' in u.dims:
-                u = u.sel(depth=depth, method='nearest')
-            if 'depth' in v.dims:
-                v = v.sel(depth=depth, method='nearest')
-        else:
-            u, v = select_surface(u), select_surface(v)
+
         yd = 'latitude' if 'latitude' in u.dims else 'lat' if 'lat' in u.dims else None
         xd = 'longitude' if 'longitude' in u.dims else 'lon' if 'lon' in u.dims else None
         if not yd or not xd:
             raise HTTPException(422, detail='Current dataset has no latitude/longitude dimensions')
+
+        # Subsetting by spatial bbox if provided
+        if min_lat is not None and max_lat is not None:
+            lat_arr = ds.coords[yd].values
+            if len(lat_arr) > 1 and lat_arr[0] > lat_arr[-1]:
+                u = u.sel({yd: slice(max_lat, min_lat)})
+                v = v.sel({yd: slice(max_lat, min_lat)})
+            else:
+                u = u.sel({yd: slice(min_lat, max_lat)})
+                v = v.sel({yd: slice(min_lat, max_lat)})
+
+        if min_lon is not None and max_lon is not None:
+            u = u.sel({xd: slice(min_lon, max_lon)})
+            v = v.sel({xd: slice(min_lon, max_lon)})
+
         stride = max(1, min(stride, 20))
         u = u.isel({yd: slice(None, None, stride), xd: slice(None, None, stride)}).squeeze()
         v = v.isel({yd: slice(None, None, stride), xd: slice(None, None, stride)}).squeeze()
         lat, lon = u.coords[yd], u.coords[xd]
+
+        u_data = np.asarray(u.values, dtype=np.float32)
+        v_data = np.asarray(v.values, dtype=np.float32)
+        speeds = np.hypot(u_data, v_data)
+        valid_speeds = speeds[~np.isnan(speeds)]
+        min_s = float(np.min(valid_speeds)) if len(valid_speeds) > 0 else 0.0
+        max_s = float(np.max(valid_speeds)) if len(valid_speeds) > 0 else 1.0
+
+        time_val = str(u.coords['time'].values)[:19] if 'time' in u.coords else (time or '')
+
         return {
             'file': f.name,
+            'available': True,
             'u_variable': u_name,
             'v_variable': v_name,
             'latitude': sanitize(lat.values),
             'longitude': sanitize(lon.values),
-            'u': sanitize(np.asarray(u.values, dtype=np.float32)),
-            'v': sanitize(np.asarray(v.values, dtype=np.float32)),
-            'units': u.attrs.get('units') or v.attrs.get('units')
+            'lat': sanitize(lat.values),
+            'lon': sanitize(lon.values),
+            'u': sanitize(u_data),
+            'v': sanitize(v_data),
+            'u_grid': sanitize(u_data),
+            'v_grid': sanitize(v_data),
+            'speed_grid': sanitize(speeds),
+            'stats': {
+                'min_speed': round(min_s, 3),
+                'max_speed': round(max_s, 3)
+            },
+            'depth': float(depth) if depth is not None else 0.0,
+            'time': time_val,
+            'min_speed': round(min_s, 3),
+            'max_speed': round(max_s, 3),
+            'units': u.attrs.get('units') or v.attrs.get('units') or 'm/s'
         }
+
+
+def get_current_field(
+    dataset: Optional[str] = None,
+    variable: str = 'currents',
+    time: Optional[str] = None,
+    depth: Optional[float] = None,
+    bbox: Optional[str] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    stride: int = 3
+) -> Dict[str, Any]:
+    """Universal API for 2D/3D current vector fields meeting requirement specifications."""
+    if bbox:
+        # Parse "min_lon,min_lat,max_lon,max_lat" or "min_lat,max_lat,min_lon,max_lon"
+        parts = [float(p.strip()) for p in bbox.split(',') if p.strip()]
+        if len(parts) == 4:
+            if parts[0] > parts[1] and parts[0] > 40: # min_lon, min_lat, max_lon, max_lat
+                min_lon, min_lat, max_lon, max_lat = parts[0], parts[1], parts[2], parts[3]
+            else:
+                min_lat, max_lat, min_lon, max_lon = parts[0], parts[1], parts[2], parts[3]
+
+    return get_ocean_current_grid(
+        time=time,
+        depth=depth,
+        stride=stride,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        min_lon=min_lon,
+        max_lon=max_lon
+    )
+
+
+def get_point_profile(
+    latitude: float,
+    longitude: float,
+    time: Optional[str] = None,
+    variable: str = 'temperature',
+    dataset: Optional[str] = None
+) -> Dict[str, Any]:
+    """Retrieves vertical sounding profile for a specific variable against depth."""
+    var_norm = variable.lower().strip()
+    profile_points = []
+    unit_str = '°C'
+
+    if var_norm in ('currents', 'current_speed', 'velocity', 'uo', 'vo'):
+        cf, un, vn = find_current_components()
+        if cf and un and vn:
+            with safe_open_dataset(cf) as ds:
+                depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in ds.dims or d in ds.coords), None)
+                if depth_dim and depth_dim in ds.coords:
+                    depth_vals = [round(float(d), 2) for d in ds.coords[depth_dim].values]
+                    qu = ds[un]
+                    qv = ds[vn]
+                    for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                        if dim in qu.dims:
+                            qu = qu.sel({dim: val}, method='nearest')
+                            qv = qv.sel({dim: val}, method='nearest')
+                    if time is not None:
+                        qu = select_time(qu, time)
+                        qv = select_time(qv, time)
+                    for d in ('time', 't'):
+                        if d in qu.dims:
+                            qu = qu.isel({d: 0})
+                            qv = qv.isel({d: 0})
+
+                    u_arr = qu.values
+                    v_arr = qv.values
+                    speeds = np.hypot(u_arr, v_arr)
+                    for d_val, s_val, u_val, v_val in zip(depth_vals, speeds, u_arr, v_arr):
+                        if not np.isnan(s_val):
+                            profile_points.append({
+                                'depth': d_val,
+                                'value': round(float(s_val), 3),
+                                'current_speed': round(float(s_val), 3),
+                                'u': round(float(u_val), 3),
+                                'v': round(float(v_val), 3)
+                            })
+            unit_str = 'm/s'
+    else:
+        logical = (
+            'salinity' if var_norm in ('salinity', 'so', 'sal')
+            else 'chlorophyll' if var_norm in ('chlorophyll', 'chl', 'chlor_a')
+            else 'sea_level' if var_norm in ('sea_surface_height', 'sea_level', 'zos')
+            else 'temperature'
+        )
+        unit_str = 'PSU' if logical == 'salinity' else 'mg/m³' if logical == 'chlorophyll' else 'm' if logical == 'sea_level' else '°C'
+        m = find_logical(logical)
+        if m:
+            f, n, a, _, _ = m[0]
+            unit_str = a.get('units') or unit_str
+            with safe_open_dataset(f) as ds:
+                da = ds[n]
+                depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in da.dims or d in da.coords), None)
+                if depth_dim and depth_dim in da.coords:
+                    depth_vals = [round(float(d), 2) for d in da.coords[depth_dim].values]
+                    q = da
+                    for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                        if dim in q.dims:
+                            q = q.sel({dim: val}, method='nearest')
+                    if time is not None:
+                        q = select_time(q, time)
+                    for d in ('time', 't'):
+                        if d in q.dims:
+                            q = q.isel({d: 0})
+                    for d_val, val in zip(depth_vals, q.values):
+                        if not np.isnan(val):
+                            profile_points.append({
+                                'depth': d_val,
+                                'value': round(float(val), 3)
+                            })
+                else:
+                    # Surface variable
+                    q = da
+                    for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                        if dim in q.dims:
+                            q = q.sel({dim: val}, method='nearest')
+                    if time is not None:
+                        q = select_time(q, time)
+                    val = float(q.values.flat[0]) if q.size > 0 else None
+                    if val is not None and not np.isnan(val):
+                        profile_points.append({'depth': 0.0, 'value': round(val, 3)})
+
+    # Sort ascending by depth
+    profile_points.sort(key=lambda p: p['depth'])
+
+    return {
+        'latitude': latitude,
+        'longitude': longitude,
+        'time': time,
+        'variable': variable,
+        'units': unit_str,
+        'count': len(profile_points),
+        'profile': profile_points
+    }
+
+
+def get_point_timeseries(
+    latitude: float,
+    longitude: float,
+    depth: Optional[float] = 0.0,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    variable: str = 'temperature',
+    dataset: Optional[str] = None
+) -> Dict[str, Any]:
+    """Retrieves temporal time series of a variable at a specific geographic point and depth."""
+    var_norm = variable.lower().strip()
+    timestamps = []
+    values = []
+    unit_str = '°C'
+
+    if var_norm in ('currents', 'current_speed', 'velocity'):
+        cf, un, vn = find_current_components()
+        if cf and un and vn:
+            with safe_open_dataset(cf) as ds:
+                qu = ds[un]
+                qv = ds[vn]
+                for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                    if dim in qu.dims:
+                        qu = qu.sel({dim: val}, method='nearest')
+                        qv = qv.sel({dim: val}, method='nearest')
+                depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in qu.dims or d in ds.coords), None)
+                if depth_dim and depth is not None and depth_dim in qu.dims:
+                    qu = qu.sel({depth_dim: depth}, method='nearest')
+                    qv = qv.sel({depth_dim: depth}, method='nearest')
+                elif depth_dim and depth_dim in qu.dims:
+                    qu = qu.isel({depth_dim: 0})
+                    qv = qv.isel({depth_dim: 0})
+
+                if 'time' in qu.dims:
+                    t_coord = qu.coords['time'].values
+                    for t_idx, t_val in enumerate(t_coord):
+                        t_iso = pd.Timestamp(t_val).isoformat()
+                        if start and t_iso[:10] < str(start)[:10]:
+                            continue
+                        if end and t_iso[:10] > str(end)[:10]:
+                            continue
+                        u_v = float(qu.isel(time=t_idx).values)
+                        v_v = float(qv.isel(time=t_idx).values)
+                        sp = float(np.hypot(u_v, v_v)) if (not np.isnan(u_v) and not np.isnan(v_v)) else None
+                        timestamps.append(t_iso)
+                        values.append(round(sp, 3) if sp is not None else None)
+            unit_str = 'm/s'
+    else:
+        logical = (
+            'salinity' if var_norm in ('salinity', 'so', 'sal')
+            else 'chlorophyll' if var_norm in ('chlorophyll', 'chl', 'chlor_a')
+            else 'sea_level' if var_norm in ('sea_surface_height', 'sea_level', 'zos')
+            else 'temperature'
+        )
+        unit_str = 'PSU' if logical == 'salinity' else 'mg/m³' if logical == 'chlorophyll' else 'm' if logical == 'sea_level' else '°C'
+        m = find_logical(logical)
+        if m:
+            f, n, a, _, _ = m[0]
+            unit_str = a.get('units') or unit_str
+            with safe_open_dataset(f) as ds:
+                da = ds[n]
+                for dim, val in [('latitude', latitude), ('longitude', longitude), ('lat', latitude), ('lon', longitude)]:
+                    if dim in da.dims:
+                        da = da.sel({dim: val}, method='nearest')
+                depth_dim = next((d for d in ('depth', 'deptht', 'lev', 'level', 'z') if d in da.dims or d in ds.coords), None)
+                if depth_dim and depth is not None and depth_dim in da.dims:
+                    da = da.sel({depth_dim: depth}, method='nearest')
+                elif depth_dim and depth_dim in da.dims:
+                    da = da.isel({depth_dim: 0})
+
+                if 'time' in da.dims:
+                    t_coord = da.coords['time'].values
+                    for t_idx, t_val in enumerate(t_coord):
+                        t_iso = pd.Timestamp(t_val).isoformat()
+                        if start and t_iso[:10] < str(start)[:10]:
+                            continue
+                        if end and t_iso[:10] > str(end)[:10]:
+                            continue
+                        val = float(da.isel(time=t_idx).values)
+                        timestamps.append(t_iso)
+                        values.append(round(val, 3) if not np.isnan(val) else None)
+
+    valid_vals = [v for v in values if v is not None and not np.isnan(v)]
+    stats = {
+        'min': round(float(np.min(valid_vals)), 3) if valid_vals else None,
+        'max': round(float(np.max(valid_vals)), 3) if valid_vals else None,
+        'mean': round(float(np.mean(valid_vals)), 3) if valid_vals else None,
+        'count': len(valid_vals)
+    }
+
+    return {
+        'latitude': latitude,
+        'longitude': longitude,
+        'depth': depth or 0.0,
+        'variable': variable,
+        'units': unit_str,
+        'unit': unit_str,
+        'count': len(timestamps),
+        'timestamps': timestamps,
+        'values': values,
+        'timeseries': [{'time': t, 'value': v} for t, v in zip(timestamps, values)],
+        'stats': stats
+    }
 
 def get_ocean_point(latitude: float, longitude: float, time: Optional[str] = None, depth: Optional[float] = None) -> Dict[str, Any]:
     result = []

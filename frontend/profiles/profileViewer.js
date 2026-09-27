@@ -10,9 +10,29 @@ export class ProfileViewer {
     constructor(app = null) {
         this.app = app;
         this.currentProfile = null;
-        this.activeVariable = 'temperature'; // 'temperature' | 'salinity' | 'chlorophyll' | 'table'
+        this.activeTime = null;
+        this.activeVariable = 'temperature'; // 'temperature' | 'salinity' | 'chlorophyll' | 'compare' | 'table'
         this.modalEl = null;
         this.initDOM();
+    }
+
+    // Robust variable value accessor handling varied property naming across providers
+    getVal(pt, varName) {
+        if (!pt) return null;
+        if (varName === 'temperature') {
+            const v = pt.temperature ?? pt.temp ?? pt.thetao ?? pt.TEMP;
+            return (v != null && !isNaN(v)) ? Number(v) : null;
+        }
+        if (varName === 'salinity') {
+            const v = pt.salinity ?? pt.sal ?? pt.psal ?? pt.so ?? pt.PSAL;
+            return (v != null && !isNaN(v)) ? Number(v) : null;
+        }
+        if (varName === 'chlorophyll') {
+            const v = pt.chlorophyll ?? pt.chl ?? pt.chla ?? pt.CHLA;
+            return (v != null && !isNaN(v)) ? Number(v) : null;
+        }
+        const v = pt[varName];
+        return (v != null && !isNaN(v)) ? Number(v) : null;
     }
 
     initDOM() {
@@ -81,14 +101,21 @@ export class ProfileViewer {
                     <div class="profile-footer">
                         <div class="pv-footer-info" id="pvFooterInfo"></div>
                         <div class="pv-footer-actions">
-                            <button id="pvFocusBtn" class="action-btn secondary">
+                            <button id="pvFocusBtn" class="action-btn secondary pv-action-btn">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <circle cx="12" cy="12" r="10"></circle>
                                     <circle cx="12" cy="12" r="3"></circle>
                                 </svg>
                                 Focus in 3D
                             </button>
-                            <button id="pvExportBtn" class="action-btn secondary">
+                            <button id="pvInspectPointBtn" class="action-btn secondary pv-action-btn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                                Inspect Point
+                            </button>
+                            <button id="pvExportBtn" class="action-btn secondary pv-action-btn">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                     <polyline points="7 10 12 15 17 10"></polyline>
@@ -134,6 +161,18 @@ export class ProfileViewer {
             }
         });
 
+        // Inspect Point in SolvX Point Inspector
+        document.getElementById('pvInspectPointBtn')?.addEventListener('click', () => {
+            if (this.currentProfile) {
+                const lat = this.currentProfile.latitude;
+                const lon = this.currentProfile.longitude;
+                const depth = this.currentProfile.depth ?? 0;
+                if (lat != null && lon != null && this.app?.inspectPoint) {
+                    this.app.inspectPoint({ lat, lon, depthM: depth });
+                }
+            }
+        });
+
         // Export JSON
         document.getElementById('pvExportBtn')?.addEventListener('click', () => {
             if (this.currentProfile) {
@@ -158,19 +197,21 @@ export class ProfileViewer {
     /**
      * Opens the profile viewer for a float profile or float ID.
      * @param {Object|string} profileOrId
+     * @param {string} [activeTime]
      */
-    async show(profileOrId) {
+    async show(profileOrId, activeTime = null) {
         if (!profileOrId) return;
+        this.activeTime = activeTime || this.app?.activeTime || null;
 
         let profile = profileOrId;
         if (typeof profileOrId === 'string' || typeof profileOrId === 'number') {
             try {
-                if (this.app?.status) this.app.status(`Fetching Argo Float #${profileOrId} profile…`, 'busy');
+                if (this.app?.status) this.app.status(`Fetching In-Situ Profile #${profileOrId}…`, 'busy');
                 const { ApiClient } = await import('../api/apiClient.js');
                 profile = await ApiClient.getArgoFloat(String(profileOrId));
             } catch (err) {
                 console.error('Failed fetching float profile:', err);
-                if (this.app?.status) this.app.status(`Failed loading float #${profileOrId}`, 'error');
+                if (this.app?.status) this.app.status(`Failed loading profile #${profileOrId}`, 'error');
                 return;
             }
         }
@@ -182,7 +223,17 @@ export class ProfileViewer {
 
         this.modalEl.classList.remove('hidden');
         if (this.app?.status) {
-            this.app.status(`Viewing Argo Float #${profile.wmo || profile.id} profile`);
+            this.app.status(`Viewing In-Situ Observation #${profile.wmo || profile.id || profile.glider_id || ''}`);
+        }
+    }
+
+    updateActiveTime(timeIso) {
+        this.activeTime = timeIso;
+        if (this.currentProfile && !this.modalEl?.classList.contains('hidden')) {
+            this.renderMetadata();
+            if (this.activeVariable === 'compare') {
+                this.renderComparison();
+            }
         }
     }
 
@@ -194,21 +245,41 @@ export class ProfileViewer {
         const p = this.currentProfile;
         if (!p) return;
 
+        const isGlider = p.type === 'glider' || /glider/i.test(p.platform || '') || /glider/i.test(p.platform_type || '') || p.glider_id != null;
+        const dialogEl = this.modalEl?.querySelector('.profile-modal-dialog');
+        if (dialogEl) {
+            if (isGlider) {
+                dialogEl.classList.add('glider-theme');
+            } else {
+                dialogEl.classList.remove('glider-theme');
+            }
+        }
+
         // Title
         const titleEl = document.getElementById('pvTitle');
         if (titleEl) {
-            titleEl.textContent = `Argo Float #${p.wmo || p.id}`;
+            titleEl.textContent = isGlider 
+                ? `Autonomous Glider #${p.id || p.glider_id || p.name || 'In-Situ'}`
+                : `Argo Float #${p.wmo || p.id}`;
         }
 
         // Badges
         const badgesEl = document.getElementById('pvBadges');
         if (badgesEl) {
-            const hasChl = (p.profile || []).some(pt => pt.chlorophyll != null);
-            badgesEl.innerHTML = `
-                <span class="badge badge-primary">${p.platform_type || 'PROFILING FLOAT'}</span>
-                ${hasChl ? '<span class="badge badge-success">BGC-ARGO (BIO)</span>' : '<span class="badge badge-info">CORE ARGO (CTD)</span>'}
-                <span class="badge badge-secondary">CYCLE #${p.cycle_number ?? 1}</span>
-            `;
+            const hasChl = (p.profile || []).some(pt => this.getVal(pt, 'chlorophyll') != null);
+            if (isGlider) {
+                badgesEl.innerHTML = `
+                    <span class="badge badge-primary">UNDERWATER GLIDER</span>
+                    ${hasChl ? '<span class="badge badge-success">BGC OPTICAL</span>' : '<span class="badge badge-info">PHYSICAL CTD</span>'}
+                    <span class="badge badge-secondary">${p.mission_name || `MISSION ${p.dive_count ? `(DIVE ${p.dive_count})` : 'SURVEY'}`}</span>
+                `;
+            } else {
+                badgesEl.innerHTML = `
+                    <span class="badge badge-primary">${p.platform_type || 'PROFILING FLOAT'}</span>
+                    ${hasChl ? '<span class="badge badge-success">BGC-ARGO (BIO)</span>' : '<span class="badge badge-info">CORE ARGO (CTD)</span>'}
+                    <span class="badge badge-secondary">CYCLE #${p.cycle_number ?? p.cycle ?? 1}</span>
+                `;
+            }
         }
 
         // Meta bar
@@ -216,8 +287,10 @@ export class ProfileViewer {
         if (metaBar) {
             const latStr = p.latitude != null ? `${Math.abs(p.latitude).toFixed(3)}° ${p.latitude >= 0 ? 'N' : 'S'}` : '—';
             const lonStr = p.longitude != null ? `${Math.abs(p.longitude).toFixed(3)}° ${p.longitude >= 0 ? 'E' : 'W'}` : '—';
-            const dateStr = p.date ? new Date(p.date).toUTCString() : (p.timestamp || '—');
-            const maxD = p.max_depth ? `${p.max_depth} m` : '—';
+            const obsDate = p.date || p.timestamp;
+            const obsDateStr = obsDate ? new Date(obsDate).toUTCString() : '—';
+            const activeTimeStr = this.activeTime ? new Date(this.activeTime).toUTCString() : 'Active Timeline';
+            const maxD = p.max_depth ? `${p.max_depth} m` : (p.depth_range ? `${p.depth_range[1]} m` : '—');
             const nLevels = (p.profile || []).length;
 
             metaBar.innerHTML = `
@@ -226,16 +299,16 @@ export class ProfileViewer {
                     <span class="pv-meta-val mono">${latStr}, ${lonStr}</span>
                 </div>
                 <div class="pv-meta-item">
-                    <span class="pv-meta-label">TIMESTAMP (UTC)</span>
-                    <span class="pv-meta-val">${dateStr}</span>
+                    <span class="pv-meta-label">OBSERVATION DATE</span>
+                    <span class="pv-meta-val">${obsDateStr}</span>
                 </div>
                 <div class="pv-meta-item">
-                    <span class="pv-meta-label">INSTITUTION</span>
-                    <span class="pv-meta-val">${p.institution || 'INCOIS / Argo'}</span>
+                    <span class="pv-meta-label">SELECTED MODEL TIME</span>
+                    <span class="pv-meta-val" style="color: #38bdf8;">${activeTimeStr}</span>
                 </div>
                 <div class="pv-meta-item">
-                    <span class="pv-meta-label">MAX SOUNDING</span>
-                    <span class="pv-meta-val mono">${maxD} (${nLevels} levels)</span>
+                    <span class="pv-meta-label">INSTITUTION & PROFILE</span>
+                    <span class="pv-meta-val mono">${p.institution || 'INCOIS / Argo'} · ${nLevels} lvls (${maxD})</span>
                 </div>
             `;
         }
@@ -243,12 +316,15 @@ export class ProfileViewer {
         // Footer info
         const footerInfo = document.getElementById('pvFooterInfo');
         if (footerInfo) {
-            const sTemp = p.surface_temp != null ? `${p.surface_temp.toFixed(2)} °C` : (p.profile?.[0]?.temperature?.toFixed(2) ? `${p.profile[0].temperature.toFixed(2)} °C` : '—');
-            const sSal = p.surface_salinity != null ? `${p.surface_salinity.toFixed(2)} PSU` : (p.profile?.[0]?.salinity?.toFixed(2) ? `${p.profile[0].salinity.toFixed(2)} PSU` : '—');
+            const firstPt = (p.profile || [])[0];
+            const sTemp = this.getVal(firstPt, 'temperature');
+            const sSal = this.getVal(firstPt, 'salinity');
+            const sTempStr = sTemp != null ? `${sTemp.toFixed(2)} °C` : (p.surface_temp != null ? `${p.surface_temp.toFixed(2)} °C` : '—');
+            const sSalStr = sSal != null ? `${sSal.toFixed(2)} PSU` : (p.surface_salinity != null ? `${p.surface_salinity.toFixed(2)} PSU` : '—');
             footerInfo.innerHTML = `
-                <span>Surface SST: <b>${sTemp}</b></span>
+                <span>Surface Temp: <b>${sTempStr}</b></span>
                 <span class="pv-sep">|</span>
-                <span>Surface Salinity: <b>${sSal}</b></span>
+                <span>Surface Salinity: <b>${sSalStr}</b></span>
             `;
         }
     }
@@ -256,7 +332,7 @@ export class ProfileViewer {
     setupAvailableTabs() {
         const p = this.currentProfile;
         const chlTab = document.getElementById('pvChlTab');
-        const hasChl = (p?.profile || []).some(pt => pt.chlorophyll != null);
+        const hasChl = (p?.profile || []).some(pt => this.getVal(pt, 'chlorophyll') != null);
         if (chlTab) {
             chlTab.style.display = hasChl ? 'flex' : 'none';
         }
@@ -315,13 +391,14 @@ export class ProfileViewer {
         const compareBox = document.getElementById('pvCompareContainer');
         if (!compareBox || !this.currentProfile) return;
 
-        const floatId = this.currentProfile.id || this.currentProfile.wmo;
+        const floatId = this.currentProfile.id || this.currentProfile.wmo || this.currentProfile.glider_id;
         const unit = variable === 'salinity' ? 'PSU' : '°C';
+        const modelTime = this.activeTime || this.currentProfile.timestamp || this.currentProfile.date;
 
         compareBox.innerHTML = `
-            <div style="padding: 24px; text-align: center; color: var(--ink-muted);">
-                <div style="margin-bottom: 8px;">Collocating ${variable} profile with Copernicus NEMO 1/12° numerical model…</div>
-                <div class="mono" style="font-size: 11px;">Spatial Bilinear + Vertical 1D Interpolation</div>
+            <div style="padding: 24px; text-align: center; color: #94a3b8;">
+                <div style="margin-bottom: 8px;">Collocating ${variable} profile with Copernicus NEMO at ${modelTime ? new Date(modelTime).toUTCString() : 'Active Date'}…</div>
+                <div class="mono" style="font-size: 11px; color: #38bdf8;">Spatial Bilinear + Vertical 1D Interpolation</div>
             </div>
         `;
 
@@ -329,9 +406,9 @@ export class ProfileViewer {
             const { ApiClient } = await import('../api/apiClient.js');
             let cmp;
             try {
-                cmp = await ApiClient.getFloatComparison(floatId, variable);
+                cmp = await ApiClient.getFloatComparison(floatId, variable, modelTime);
             } catch (_) {
-                cmp = await ApiClient.compareObservation(floatId);
+                cmp = await ApiClient.compareObservation(floatId, variable, modelTime);
             }
 
             const rmseStr = cmp.rmse != null ? `${cmp.rmse.toFixed(3)} ${unit}` : '—';
@@ -342,8 +419,8 @@ export class ProfileViewer {
 
             compareBox.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <div style="font-size: 11px; color: var(--ink-muted);">
-                        Numerical Model: <b style="color: var(--accent);">${cmp.model_source || 'Copernicus NEMO Global Analysis'}</b>
+                    <div style="font-size: 11px; color: #94a3b8;">
+                        Model Date: <b style="color: #38bdf8;">${modelTime ? new Date(modelTime).toISOString().slice(0, 10) : 'Active'}</b> · Source: <b style="color: #00d2ff;">${cmp.model_source || 'Copernicus NEMO 1/12°'}</b>
                     </div>
                     <div style="display: flex; gap: 6px;">
                         <button id="pvCmpTempBtn" class="pv-tab ${variable === 'temperature' ? 'active' : ''}" style="padding: 4px 8px; font-size: 10px;">Temp (°C)</button>
@@ -352,21 +429,21 @@ export class ProfileViewer {
                 </div>
 
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;">
-                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
-                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">RMSE</div>
-                        <div style="font-size: 14px; font-weight: 700; color: var(--accent); font-family: var(--font-mono);">${rmseStr}</div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">RMSE</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #00d2ff; font-family: monospace;">${rmseStr}</div>
                     </div>
-                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
-                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Mean Bias</div>
-                        <div style="font-size: 14px; font-weight: 700; color: #38bdf8; font-family: var(--font-mono);">${biasStr}</div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Mean Bias</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #38bdf8; font-family: monospace;">${biasStr}</div>
                     </div>
-                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
-                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">MAE</div>
-                        <div style="font-size: 14px; font-weight: 700; color: #34d399; font-family: var(--font-mono);">${maeStr}</div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">MAE</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #34d399; font-family: monospace;">${maeStr}</div>
                     </div>
-                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;">
-                        <div style="font-size: 9px; color: var(--ink-subtle); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Max Diff</div>
-                        <div style="font-size: 14px; font-weight: 700; color: #fbbf24; font-family: var(--font-mono);">${maxDiffStr}</div>
+                    <div style="background: rgba(5, 15, 25, 0.7); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Max Diff</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #fbbf24; font-family: monospace;">${maxDiffStr}</div>
                     </div>
                 </div>
 
@@ -409,7 +486,7 @@ export class ProfileViewer {
             document.getElementById('pvCmpSalBtn')?.addEventListener('click', () => this.renderComparison('salinity'));
         } catch (err) {
             compareBox.innerHTML = `
-                <div style="padding: 20px; text-align: center; color: var(--danger);">
+                <div style="padding: 20px; text-align: center; color: #f87171;">
                     Model comparison data unavailable for this float cycle (${err.message}).
                 </div>
             `;
@@ -421,7 +498,7 @@ export class ProfileViewer {
         if (!tableBox || !this.currentProfile) return;
 
         const profile = this.currentProfile.profile || [];
-        const hasChl = profile.some(p => p.chlorophyll != null);
+        const hasChl = profile.some(p => this.getVal(p, 'chlorophyll') != null);
 
         tableBox.innerHTML = `
             <table class="pv-table">
@@ -435,15 +512,20 @@ export class ProfileViewer {
                     </tr>
                 </thead>
                 <tbody>
-                    ${profile.map(row => `
-                        <tr>
-                            <td class="mono font-bold">${row.depth}</td>
-                            <td class="mono text-amber">${row.temperature != null ? row.temperature.toFixed(2) : '—'}</td>
-                            <td class="mono text-cyan">${row.salinity != null ? row.salinity.toFixed(2) : '—'}</td>
-                            ${hasChl ? `<td class="mono text-emerald">${row.chlorophyll != null ? row.chlorophyll.toFixed(3) : '—'}</td>` : ''}
-                            <td><span class="pv-qc-badge">QC ${row.qc ?? 1}</span></td>
-                        </tr>
-                    `).join('')}
+                    ${profile.map(row => {
+                        const tempVal = this.getVal(row, 'temperature');
+                        const salVal = this.getVal(row, 'salinity');
+                        const chlVal = this.getVal(row, 'chlorophyll');
+                        return `
+                            <tr>
+                                <td class="mono font-bold">${row.depth}</td>
+                                <td class="mono text-amber">${tempVal != null ? tempVal.toFixed(2) : '—'}</td>
+                                <td class="mono text-cyan">${salVal != null ? salVal.toFixed(2) : '—'}</td>
+                                ${hasChl ? `<td class="mono text-emerald">${chlVal != null ? chlVal.toFixed(3) : '—'}</td>` : ''}
+                                <td><span class="pv-qc-badge">QC ${row.qc ?? 1}</span></td>
+                            </tr>
+                        `;
+                    }).join('')}
                 </tbody>
             </table>
         `;
@@ -477,10 +559,17 @@ export class ProfileViewer {
             fillColor = 'rgba(16, 185, 129, 0.15)';
         }
 
-        // Filter valid points
-        const points = profile.filter(p => p[varKey] != null && !isNaN(p[varKey]));
+        // Filter valid points using robust getVal
+        const points = [];
+        for (const p of profile) {
+            const val = this.getVal(p, varKey);
+            if (val != null && !isNaN(val)) {
+                points.push({ ...p, value: val });
+            }
+        }
+
         if (points.length === 0) {
-            svg.innerHTML = `<text x="50%" y="50%" fill="#94a3b8" text-anchor="middle">No ${varLabel} data points</text>`;
+            svg.innerHTML = `<text x="50%" y="50%" fill="#94a3b8" text-anchor="middle">No ${varLabel} data points available</text>`;
             return;
         }
 
@@ -495,8 +584,8 @@ export class ProfileViewer {
         const maxDepth = Math.max(...points.map(p => p.depth), 100);
 
         // Value scale (X-AXIS)
-        let minVal = Math.min(...points.map(p => p[varKey]));
-        let maxVal = Math.max(...points.map(p => p[varKey]));
+        let minVal = Math.min(...points.map(p => p.value));
+        let maxVal = Math.max(...points.map(p => p.value));
         if (minVal === maxVal) {
             minVal -= 1;
             maxVal += 1;
@@ -508,7 +597,6 @@ export class ProfileViewer {
 
         // Coordinate transforms
         const valToX = (val) => margin.left + ((val - minVal) / (maxVal - minVal)) * plotWidth;
-        // Inverted: depth 0 -> margin.top, maxDepth -> margin.top + plotHeight
         const depthToY = (depth) => margin.top + (depth / maxDepth) * plotHeight;
 
         // Find thermocline / maximum vertical gradient if temperature
@@ -518,7 +606,7 @@ export class ProfileViewer {
             for (let i = 0; i < points.length - 1; i++) {
                 const dz = Math.abs(points[i + 1].depth - points[i].depth);
                 if (dz > 0) {
-                    const dt = Math.abs(points[i + 1].temperature - points[i].temperature);
+                    const dt = Math.abs(points[i + 1].value - points[i].value);
                     const grad = dt / dz;
                     if (grad > maxGrad) {
                         maxGrad = grad;
@@ -599,7 +687,7 @@ export class ProfileViewer {
         `;
 
         // SVG Curve Path & Shaded Area
-        const pathCoords = points.map(p => `${valToX(p[varKey]).toFixed(1)},${depthToY(p.depth).toFixed(1)}`);
+        const pathCoords = points.map(p => `${valToX(p.value).toFixed(1)},${depthToY(p.depth).toFixed(1)}`);
         const polylineD = `M ` + pathCoords.join(' L ');
 
         // Area polygon closed back to minVal axis
@@ -614,11 +702,11 @@ export class ProfileViewer {
 
         // Interactive Data Circles
         points.forEach((p, idx) => {
-            const cx = valToX(p[varKey]).toFixed(1);
+            const cx = valToX(p.value).toFixed(1);
             const cy = depthToY(p.depth).toFixed(1);
             svgContent += `
                 <circle class="pv-point" cx="${cx}" cy="${cy}" r="4" fill="${strokeColor}" stroke="#0f172a" stroke-width="1.5"
-                    data-idx="${idx}" data-depth="${p.depth}" data-val="${p[varKey]}" data-unit="${unit}" data-var="${varLabel}" data-qc="${p.qc ?? 1}">
+                    data-idx="${idx}" data-depth="${p.depth}" data-val="${p.value}" data-unit="${unit}" data-var="${varLabel}" data-qc="${p.qc ?? 1}">
                 </circle>
             `;
         });

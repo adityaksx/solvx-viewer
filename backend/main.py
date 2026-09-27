@@ -79,6 +79,95 @@ def get_client_config():
     }
 
 
+@app.get('/api/current-field')
+def top_level_current_field(
+    dataset: Optional[str] = None,
+    variable: str = 'currents',
+    time: Optional[str] = None,
+    depth: Optional[float] = None,
+    bbox: Optional[str] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    stride: int = Query(3, ge=1, le=20)
+):
+    """Direct /api/current-field endpoint fulfilling specification requirements."""
+    from .api.ocean import ocean_current_field
+    return ocean_current_field(
+        dataset=dataset,
+        variable=variable,
+        time=time,
+        depth=depth,
+        bbox=bbox,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        min_lon=min_lon,
+        max_lon=max_lon,
+        stride=stride
+    )
+
+
+@app.get('/api/point')
+def top_level_point(
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    time: Optional[str] = None,
+    depth: Optional[float] = None,
+    variable: Optional[str] = None,
+    dataset: Optional[str] = None
+):
+    """Direct /api/point inspection query endpoint fulfilling specification requirements."""
+    target_lat = lat if lat is not None else latitude
+    target_lon = lon if lon is not None else longitude
+    if target_lat is None or target_lon is None:
+        raise HTTPException(status_code=422, detail="Both 'latitude' and 'longitude' (or 'lat' and 'lon') are required.")
+    from .api.ocean import ocean_point
+    return ocean_point(latitude=target_lat, longitude=target_lon, time=time, depth=depth, variable=variable, dataset=dataset)
+
+
+@app.get('/api/point/profile')
+def top_level_point_profile(
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    time: Optional[str] = None,
+    variable: str = Query('temperature'),
+    dataset: Optional[str] = None
+):
+    """Direct /api/point/profile vertical sounding query endpoint."""
+    target_lat = lat if lat is not None else latitude
+    target_lon = lon if lon is not None else longitude
+    if target_lat is None or target_lon is None:
+        raise HTTPException(status_code=422, detail="Both 'latitude' and 'longitude' (or 'lat' and 'lon') are required.")
+    from .api.ocean import ocean_point_profile
+    return ocean_point_profile(latitude=target_lat, longitude=target_lon, time=time, variable=variable, dataset=dataset)
+
+
+@app.get('/api/point/timeseries')
+def top_level_point_timeseries(
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    depth: Optional[float] = Query(0.0),
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    variable: str = Query('temperature'),
+    dataset: Optional[str] = None
+):
+    """Direct /api/point/timeseries query endpoint."""
+    target_lat = lat if lat is not None else latitude
+    target_lon = lon if lon is not None else longitude
+    if target_lat is None or target_lon is None:
+        raise HTTPException(status_code=422, detail="Both 'latitude' and 'longitude' (or 'lat' and 'lon') are required.")
+    from .api.ocean import ocean_point_timeseries
+    return ocean_point_timeseries(latitude=target_lat, longitude=target_lon, depth=depth, start=start, end=end, variable=variable, dataset=dataset)
+
+
 # ==============================================================================
 # Backward Compatibility Layer for Legacy Routes
 # ==============================================================================

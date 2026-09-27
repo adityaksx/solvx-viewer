@@ -94,6 +94,20 @@ class SolvXApp {
         this.currentBundle = null;
         this._bundleReqSeq = 0;
         this._downloadedRegions = new Set();
+
+        // Current flow & dynamics parameters
+        this.currentFlowSpeed = 1.0;
+        this.particleDensity = 600;
+        this.vectorScale = 1.0;
+        this.particlesPaused = false;
+        this.particlesEnabled = true;
+
+        // Point inspection state
+        this.isInspectingPoint = false;
+        this.activeInspectedPoint = null;
+        this.pointProfileVar = 'temperature';
+        this.pointTimeseriesVar = 'temperature';
+        this.lastInspectedData = null;
     }
 
     async init() {
@@ -145,6 +159,8 @@ class SolvXApp {
         });
 
         this.setupLayerToggles();
+        this.setupCurrentControls();
+        this.setupPointInspector();
 
         this.scene.onUpdate((timeMs) => {
             this.currentParticles?.update(0.016);
@@ -612,6 +628,9 @@ class SolvXApp {
             this.scene.disposeObject(this.argoMarkersGroup);
         }
         this.argoMarkersGroup = new THREE.Group();
+        this.allObservations = observations || [];
+        this.currentObservationBounds = bounds;
+        this.obsPulseRings = [];
 
         const midLat = (bounds[2] + bounds[3]) / 2;
         const midLon = (bounds[0] + bounds[1]) / 2;
@@ -622,7 +641,7 @@ class SolvXApp {
             const x = (obs.latitude - midLat) * klat;
             const z = (obs.longitude - midLon) * klon;
             const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
-            const y = 1.2;
+            const y = 1.8;
             const maxD = obs.max_depth || (obs.depth_range ? obs.depth_range[1] : 1000);
             const bottomY = this.scene.depthY(maxD);
 
@@ -631,64 +650,148 @@ class SolvXApp {
             floatMarker.userData = { isArgoFloat: true, isGlider: isGlider, float: obs };
 
             if (isGlider) {
-                // Autonomous Underwater Glider (Cyan #22d3ee, Winged body)
-                const bodyGeom = new THREE.CylinderGeometry(0.8, 0.9, 3.6, 12);
+                // Autonomous Underwater Glider (Cyan #22d3ee) - Scaled up for ocean visibility
+                // 1. Torpedo Fuselage
+                const bodyGeom = new THREE.CylinderGeometry(1.8, 2.0, 11.0, 16);
                 bodyGeom.rotateX(Math.PI / 2);
                 const bodyMat = new THREE.MeshStandardMaterial({
                     color: 0x22d3ee,
-                    roughness: 0.2,
-                    metalness: 0.3,
+                    roughness: 0.15,
+                    metalness: 0.4,
                     emissive: 0x0891b2,
-                    emissiveIntensity: 0.4
+                    emissiveIntensity: 0.6
                 });
                 const body = new THREE.Mesh(bodyGeom, bodyMat);
                 body.userData = { isArgoFloat: true, float: obs };
                 floatMarker.add(body);
 
-                // Swept Wings
-                const wingGeom = new THREE.BoxGeometry(4.2, 0.15, 1.2);
-                const wingMat = new THREE.MeshStandardMaterial({ color: 0x06b6d4 });
+                // Nose Cone (Hemisphere / Cone)
+                const noseGeom = new THREE.ConeGeometry(1.8, 3.2, 16);
+                noseGeom.rotateX(-Math.PI / 2);
+                noseGeom.translate(0, 0, 7.1);
+                const noseMat = new THREE.MeshStandardMaterial({
+                    color: 0x38bdf8,
+                    emissive: 0x0284c7,
+                    emissiveIntensity: 0.8
+                });
+                const nose = new THREE.Mesh(noseGeom, noseMat);
+                nose.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(nose);
+
+                // Swept Delta Wings (High Visibility Span: 16 units)
+                const wingGeom = new THREE.BoxGeometry(16.0, 0.45, 3.2);
+                const wingMat = new THREE.MeshStandardMaterial({
+                    color: 0x06b6d4,
+                    metalness: 0.3,
+                    roughness: 0.2,
+                    emissive: 0x0891b2,
+                    emissiveIntensity: 0.4
+                });
                 const wings = new THREE.Mesh(wingGeom, wingMat);
                 wings.userData = { isArgoFloat: true, float: obs };
                 floatMarker.add(wings);
 
-                // Vertical fin
-                const finGeom = new THREE.BoxGeometry(0.15, 1.2, 0.8);
+                // Vertical Stabilizer Fin
+                const finGeom = new THREE.BoxGeometry(0.4, 3.8, 2.4);
                 const fin = new THREE.Mesh(finGeom, wingMat);
-                fin.position.set(0, 0.6, -1.4);
+                fin.position.set(0, 2.2, -3.8);
                 fin.userData = { isArgoFloat: true, float: obs };
                 floatMarker.add(fin);
+
+                // Glowing Cyan Strobe Beacon
+                const strobeGeom = new THREE.SphereGeometry(1.0, 16, 16);
+                const strobeMat = new THREE.MeshBasicMaterial({ color: 0x67e8f9 });
+                const strobe = new THREE.Mesh(strobeGeom, strobeMat);
+                strobe.position.set(0, 3.8, -3.8);
+                strobe.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(strobe);
+
+                // Surface Locator Ring (Cyan Torus at water surface)
+                const haloGeom = new THREE.TorusGeometry(8.0, 0.4, 16, 48);
+                haloGeom.rotateX(Math.PI / 2);
+                const haloMat = new THREE.MeshBasicMaterial({
+                    color: 0x22d3ee,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const halo = new THREE.Mesh(haloGeom, haloMat);
+                halo.position.set(0, 0.2 - y, 0);
+                halo.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(halo);
+                this.obsPulseRings.push(halo);
+
+                // Vertical Datum Ray
+                const rayGeom = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0.2 - y, 0),
+                    new THREE.Vector3(0, bottomY, 0)
+                ]);
+                const rayMat = new THREE.LineDashedMaterial({
+                    color: 0x22d3ee,
+                    dashSize: 3.0,
+                    gapSize: 2.0,
+                    opacity: 0.6,
+                    transparent: true
+                });
+                const ray = new THREE.Line(rayGeom, rayMat);
+                ray.computeLineDistances();
+                ray.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(ray);
             } else {
-                // Argo Profiling Float (Amber #f59e0b)
-                const hullGeom = new THREE.CylinderGeometry(1.6, 1.4, 2.2, 16);
+                // Argo Profiling Float (Golden Amber #f59e0b) - Prominent Scale
+                // 1. High-Vis Cylindrical Hull
+                const hullGeom = new THREE.CylinderGeometry(3.5, 3.0, 6.5, 20);
                 const hullMat = new THREE.MeshStandardMaterial({
                     color: 0xf59e0b,
-                    roughness: 0.3,
-                    metalness: 0.2,
+                    roughness: 0.25,
+                    metalness: 0.3,
                     emissive: 0xb45309,
-                    emissiveIntensity: 0.3
+                    emissiveIntensity: 0.4
                 });
                 const hull = new THREE.Mesh(hullGeom, hullMat);
                 hull.userData = { isArgoFloat: true, float: obs };
                 floatMarker.add(hull);
 
-                const antGeom = new THREE.CylinderGeometry(0.15, 0.2, 2.4, 8);
-                const antMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+                // Upper Collar Ring
+                const collarGeom = new THREE.CylinderGeometry(4.0, 4.0, 1.2, 20);
+                const collarMat = new THREE.MeshStandardMaterial({
+                    color: 0xfbbf24,
+                    emissive: 0xd97706,
+                    emissiveIntensity: 0.5
+                });
+                const collar = new THREE.Mesh(collarGeom, collarMat);
+                collar.position.set(0, 2.8, 0);
+                collar.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(collar);
+
+                // Antenna Mast
+                const antGeom = new THREE.CylinderGeometry(0.35, 0.45, 6.5, 12);
+                const antMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.6 });
                 const antenna = new THREE.Mesh(antGeom, antMat);
-                antenna.position.set(0, 2.2, 0);
+                antenna.position.set(0, 6.0, 0);
                 antenna.userData = { isArgoFloat: true, float: obs };
                 floatMarker.add(antenna);
 
-                const beaconGeom = new THREE.SphereGeometry(0.7, 12, 12);
-                const beaconMat = new THREE.MeshStandardMaterial({
-                    color: 0xfbbf24,
-                    emissive: 0xf59e0b,
-                    emissiveIntensity: 0.85
-                });
+                // Glowing Amber Strobe Beacon
+                const beaconGeom = new THREE.SphereGeometry(1.8, 16, 16);
+                const beaconMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
                 const beacon = new THREE.Mesh(beaconGeom, beaconMat);
-                beacon.position.set(0, 3.4, 0);
+                beacon.position.set(0, 9.2, 0);
                 beacon.userData = { isArgoFloat: true, float: obs };
                 floatMarker.add(beacon);
+
+                // Surface Locator Ring (Amber Torus at water surface)
+                const haloGeom = new THREE.TorusGeometry(8.0, 0.4, 16, 48);
+                haloGeom.rotateX(Math.PI / 2);
+                const haloMat = new THREE.MeshBasicMaterial({
+                    color: 0xf59e0b,
+                    transparent: true,
+                    opacity: 0.85
+                });
+                const halo = new THREE.Mesh(haloGeom, haloMat);
+                halo.position.set(0, 0.2 - y, 0);
+                halo.userData = { isArgoFloat: true, float: obs };
+                floatMarker.add(halo);
+                this.obsPulseRings.push(halo);
 
                 // Sounding Wire down to profiling depth
                 const lineGeom = new THREE.BufferGeometry().setFromPoints([
@@ -697,9 +800,9 @@ class SolvXApp {
                 ]);
                 const lineMat = new THREE.LineDashedMaterial({
                     color: 0xf59e0b,
-                    dashSize: 2.5,
-                    gapSize: 1.5,
-                    opacity: 0.7,
+                    dashSize: 3.0,
+                    gapSize: 2.0,
+                    opacity: 0.75,
                     transparent: true
                 });
                 const wire = new THREE.Line(lineGeom, lineMat);
@@ -708,11 +811,11 @@ class SolvXApp {
                 floatMarker.add(wire);
 
                 // CTD Sensor Package at Profiling Depth
-                const ctdGeom = new THREE.CylinderGeometry(1.0, 1.0, 1.8, 12);
+                const ctdGeom = new THREE.CylinderGeometry(2.4, 2.4, 4.0, 16);
                 const ctdMat = new THREE.MeshStandardMaterial({
                     color: 0xd97706,
                     emissive: 0xb45309,
-                    emissiveIntensity: 0.5
+                    emissiveIntensity: 0.6
                 });
                 const ctd = new THREE.Mesh(ctdGeom, ctdMat);
                 ctd.position.set(0, bottomY, 0);
@@ -722,6 +825,20 @@ class SolvXApp {
 
             this.argoMarkersGroup.add(floatMarker);
         });
+
+        // Add subtle continuous pulse animation for observation surface rings
+        if (!this._obsPulseBound) {
+            this.scene.onUpdate((delta, time) => {
+                if (!this.obsPulseRings || !this.obsPulseRings.length) return;
+                const pulse = 1.0 + Math.sin(time * 2.5) * 0.12;
+                const opacity = 0.6 + Math.sin(time * 2.5) * 0.25;
+                for (const ring of this.obsPulseRings) {
+                    ring.scale.set(pulse, pulse, pulse);
+                    if (ring.material) ring.material.opacity = opacity;
+                }
+            });
+            this._obsPulseBound = true;
+        }
 
         // Register with scene layers so targeted raycasting interrogates observations
         this.scene.layers.observations = { group: this.argoMarkersGroup };
@@ -953,16 +1070,23 @@ class SolvXApp {
 
         if (isPrimary) {
             this.lastOceanData = data;
-            this.currentGrid = data;
         }
+        this.currentGrid = data;
         const bounds = this.currentBathy?.bounds || [this.currentBBox.min_lon, this.currentBBox.max_lon, this.currentBBox.min_lat, this.currentBBox.max_lat];
 
-        // Build 3D vector arrows
-        this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds, isPrimary);
+        // Build 3D vector arrows with vectorScale
+        this.currentVectorsGroup = buildCurrentVectors(data, this.scene, bounds, isPrimary, this.vectorScale, 0.4);
         this.scene.setLayer('currents', this.currentVectorsGroup);
 
-        // Build animated particles
-        this.currentParticles = new CurrentParticles(data, bounds, { count: 600 });
+        // Build animated particles with flowSpeed, particleDensity, vectorScale
+        this.currentParticles = new CurrentParticles(data, bounds, {
+            count: this.particleDensity,
+            flowSpeed: this.currentFlowSpeed,
+            vectorScale: this.vectorScale,
+            paused: this.particlesPaused,
+            animated: this.particlesEnabled,
+            depthY: 0.6
+        });
         this.scene.setLayer('particles', this.currentParticles.group);
     }
 
@@ -1025,18 +1149,49 @@ class SolvXApp {
     }
 
     async loadCurrents() {
+        const depthNotice = document.getElementById('currentDepthNotice');
         try {
-            const data = await ApiClient.getOceanVariable({
-                provider: this.activeProvider,
-                variable: 'currents',
-                bbox: this.currentBBox,
-                time: this.activeTime,
-                stride: 3
-            });
-            this.renderCurrents(data);
+            const data = await ApiClient.getCurrentField(
+                this.currentBBox,
+                this.activeDepth || 0,
+                this.activeTime,
+                3
+            );
+
+            if (data && data.available === false) {
+                if (depthNotice) {
+                    depthNotice.classList.remove('hidden');
+                    depthNotice.textContent = `Current data unavailable at ${this.activeDepth || 0}m (${data.reason || 'depth exceeds coverage'}). Available: 0m to 541m.`;
+                }
+                if (this.currentVectorsGroup) {
+                    this.scene.disposeObject(this.currentVectorsGroup);
+                    this.currentVectorsGroup = null;
+                }
+                if (this.currentParticles) {
+                    this.scene.disposeObject(this.currentParticles.group);
+                    this.currentParticles = null;
+                }
+                this.status(`Current data unavailable at ${this.activeDepth || 0}m (available: 0m to 541m)`, 'busy');
+                return;
+            }
+
+            if (depthNotice) depthNotice.classList.add('hidden');
+            this.renderCurrents(data, this.activeVar === 'currents');
+            this.status('Ocean currents & flow particles loaded.');
         } catch (e) {
-            console.warn(`[SolvXApp] Failed to load currents with provider '${this.activeProvider}':`, e);
-            throw e;
+            console.warn(`[SolvXApp] getCurrentField failed, falling back to standard currents:`, e);
+            try {
+                const fallback = await ApiClient.getOceanVariable({
+                    provider: this.activeProvider,
+                    variable: 'currents',
+                    bbox: this.currentBBox,
+                    time: this.activeTime,
+                    stride: 3
+                });
+                this.renderCurrents(fallback, this.activeVar === 'currents');
+            } catch (err2) {
+                console.warn(`[SolvXApp] Fallback currents failed:`, err2);
+            }
         }
     }
 
@@ -1076,6 +1231,14 @@ class SolvXApp {
         this.activeDepth = depthM;
         if (this.activeVar !== 'currents') {
             this.scalarViz?.sliceAtDepth(depthM, this.activeDepthMode);
+        } else {
+            this.loadCurrents();
+        }
+        if (this.layerState.currents || this.layerState.particles) {
+            this.loadCurrents();
+        }
+        if (this.activeInspectedPoint && !document.getElementById('readout')?.classList.contains('hidden')) {
+            this.inspectPoint({ ...this.activeInspectedPoint, depthM });
         }
         this.updateProvenanceUI();
     }
@@ -1094,7 +1257,150 @@ class SolvXApp {
     async onTimeChange(idx, timeIso, meta) {
         this.activeTime = timeIso;
         this.activeTimeMeta = meta;
+        this.profileViewer?.updateActiveTime(timeIso);
         await this.loadTimelineBundle(timeIso);
+        if (this.layerState.currents || this.layerState.particles || this.activeVar === 'currents') {
+            await this.loadCurrents();
+        }
+        if (this.activeInspectedPoint && !document.getElementById('readout')?.classList.contains('hidden')) {
+            this.inspectPoint(this.activeInspectedPoint);
+        }
+    }
+
+    setupCurrentControls() {
+        const btnToggle = document.getElementById('btnToggleCurrentAnim');
+        const btnPause = document.getElementById('btnPauseCurrentAnim');
+        const speedSlider = document.getElementById('currentSpeedSlider');
+        const speedVal = document.getElementById('currentSpeedVal');
+        const densitySlider = document.getElementById('particleDensitySlider');
+        const densityVal = document.getElementById('particleDensityVal');
+        const scaleSlider = document.getElementById('vectorScaleSlider');
+        const scaleVal = document.getElementById('vectorScaleVal');
+
+        if (btnToggle) {
+            btnToggle.onclick = () => {
+                this.particlesEnabled = !this.particlesEnabled;
+                btnToggle.textContent = this.particlesEnabled ? 'ON' : 'OFF';
+                btnToggle.classList.toggle('active', this.particlesEnabled);
+                this.currentParticles?.toggleAnimation(this.particlesEnabled);
+            };
+        }
+
+        if (btnPause) {
+            btnPause.onclick = () => {
+                this.particlesPaused = !this.particlesPaused;
+                btnPause.textContent = this.particlesPaused ? 'RESUME' : 'PAUSE';
+                btnPause.classList.toggle('active', this.particlesPaused);
+                this.currentParticles?.setPaused(this.particlesPaused);
+            };
+        }
+
+        if (speedSlider) {
+            speedSlider.oninput = (e) => {
+                this.currentFlowSpeed = parseFloat(e.target.value);
+                if (speedVal) speedVal.textContent = `${this.currentFlowSpeed.toFixed(1)}×`;
+                this.currentParticles?.setFlowSpeed(this.currentFlowSpeed);
+            };
+        }
+
+        if (densitySlider) {
+            densitySlider.oninput = (e) => {
+                this.particleDensity = parseInt(e.target.value, 10);
+                if (densityVal) densityVal.textContent = `${this.particleDensity}`;
+                this.currentParticles?.setParticleDensity(this.particleDensity);
+            };
+        }
+
+        if (scaleSlider) {
+            scaleSlider.oninput = (e) => {
+                this.vectorScale = parseFloat(e.target.value);
+                if (scaleVal) scaleVal.textContent = `${this.vectorScale.toFixed(1)}×`;
+                this.currentParticles?.setVectorScale(this.vectorScale);
+                if (this.currentGrid) {
+                    this.renderCurrents(this.currentGrid, this.activeVar === 'currents');
+                }
+            };
+        }
+    }
+
+    setupPointInspector() {
+        const inspectBtn = document.getElementById('inspectPointBtn');
+        const clearBtn = document.getElementById('clearPointBtn');
+        const closeBtn = document.getElementById('closeReadout');
+        const canvas = document.getElementById('renderCanvas');
+
+        if (inspectBtn) {
+            inspectBtn.onclick = () => {
+                this.isInspectingPoint = !this.isInspectingPoint;
+                inspectBtn.classList.toggle('active', this.isInspectingPoint);
+                if (canvas) {
+                    canvas.style.cursor = this.isInspectingPoint ? 'crosshair' : 'default';
+                }
+                if (this.isInspectingPoint) {
+                    this.status('Point Inspector Active · Click anywhere on ocean scene to inspect point');
+                } else {
+                    this.status('Point Inspector Deactivated');
+                }
+            };
+        }
+
+        const clearPoint = () => {
+            if (this.markerMesh) {
+                this.markerMesh.visible = false;
+            }
+            this.activeInspectedPoint = null;
+            document.getElementById('readout')?.classList.add('hidden');
+            clearBtn?.classList.add('hidden');
+            if (this.isInspectingPoint) {
+                this.isInspectingPoint = false;
+                inspectBtn?.classList.remove('active');
+                if (canvas) canvas.style.cursor = 'default';
+            }
+        };
+
+        if (clearBtn) clearBtn.onclick = clearPoint;
+        if (closeBtn) closeBtn.onclick = clearPoint;
+
+        // Subtabs
+        const tabs = document.querySelectorAll('.readout-tab');
+        tabs.forEach(tab => {
+            tab.onclick = () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const targetTab = tab.dataset.tab;
+                document.querySelectorAll('.readout-tab-content').forEach(c => c.classList.add('hidden'));
+                const el = document.getElementById(`readoutTab${targetTab.charAt(0).toUpperCase() + targetTab.slice(1)}`);
+                el?.classList.remove('hidden');
+
+                if (targetTab === 'profile' && this.lastInspectedData) {
+                    this.renderPointVerticalProfile(this.pointProfileVar);
+                } else if (targetTab === 'timeseries' && this.activeInspectedPoint) {
+                    this.renderPointTimeseries(this.pointTimeseriesVar);
+                }
+            };
+        });
+
+        // Profile variable pills
+        const profPills = document.querySelectorAll('#ptProfilePills .pill-btn');
+        profPills.forEach(pill => {
+            pill.onclick = () => {
+                profPills.forEach(p => p.classList.remove('active'));
+                pill.classList.add('active');
+                this.pointProfileVar = pill.dataset.var;
+                this.renderPointVerticalProfile(this.pointProfileVar);
+            };
+        });
+
+        // Time series variable pills
+        const tsPills = document.querySelectorAll('#ptTimeseriesPills .pill-btn');
+        tsPills.forEach(pill => {
+            pill.onclick = () => {
+                tsPills.forEach(p => p.classList.remove('active'));
+                pill.classList.add('active');
+                this.pointTimeseriesVar = pill.dataset.var;
+                this.renderPointTimeseries(this.pointTimeseriesVar);
+            };
+        });
     }
 
     updateProvenanceUI() {
@@ -1106,16 +1412,31 @@ class SolvXApp {
     }
 
     async inspectPoint(cell) {
+        if (!cell || cell.lat == null || cell.lon == null) return;
+        this.activeInspectedPoint = cell;
+
+        // Visual 3D marker beacon (enlarged & high-visibility)
         if (!this.markerMesh) {
-            const geom = new THREE.TorusGeometry(0.5, 0.1, 16, 32);
-            geom.rotateX(Math.PI / 2);
-            const mat = new THREE.MeshBasicMaterial({ color: 0x00e5a0, transparent: true, opacity: 0.85 });
-            this.markerMesh = new THREE.Mesh(geom, mat);
-            const pinGeom = new THREE.CylinderGeometry(0, 0.2, 1, 16);
-            pinGeom.translate(0, 0.5, 0);
-            const pinMat = new THREE.MeshBasicMaterial({ color: 0x00e5a0 });
-            const pin = new THREE.Mesh(pinGeom, pinMat);
-            this.markerMesh.add(pin);
+            const group = new THREE.Group();
+            const ringGeom = new THREE.TorusGeometry(2.4, 0.2, 16, 48);
+            ringGeom.rotateX(Math.PI / 2);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0x00e5a0, transparent: true, opacity: 0.9 });
+            const ring = new THREE.Mesh(ringGeom, ringMat);
+            group.add(ring);
+
+            const beaconGeom = new THREE.CylinderGeometry(0.15, 0.6, 8.0, 16);
+            beaconGeom.translate(0, 4.0, 0);
+            const beaconMat = new THREE.MeshBasicMaterial({ color: 0x00e5a0, transparent: true, opacity: 0.45 });
+            const beacon = new THREE.Mesh(beaconGeom, beaconMat);
+            group.add(beacon);
+
+            const coreGeom = new THREE.SphereGeometry(0.4, 16, 16);
+            coreGeom.translate(0, 0.3, 0);
+            const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const core = new THREE.Mesh(coreGeom, coreMat);
+            group.add(core);
+
+            this.markerMesh = group;
             this.scene.root.add(this.markerMesh);
         }
 
@@ -1125,15 +1446,21 @@ class SolvXApp {
         const posZ = (cell.lon - midLon) * 111.32 * Math.cos(midLat * Math.PI / 180);
         const pointDepth = cell.depthM != null ? cell.depthM : (this.activeDepth || 0);
 
-        this.markerMesh.position.set(posX, 1.0, posZ);
+        this.markerMesh.position.set(posX, 0.2, posZ);
         this.markerMesh.visible = true;
 
         const readout = document.getElementById('readout');
         const coordsEl = document.getElementById('coords');
         const gridEl = document.getElementById('readoutGrid');
         const timeEl = document.getElementById('readoutTime');
+        const clearBtn = document.getElementById('clearPointBtn');
+        const activeVarNameEl = document.getElementById('readoutActiveVarName');
+        const activeVarValEl = document.getElementById('readoutActiveVarVal');
 
+        if (clearBtn) clearBtn.classList.remove('hidden');
         if (coordsEl) coordsEl.textContent = `${cell.lat.toFixed(4)}° N, ${cell.lon.toFixed(4)}° E · Depth: ${pointDepth.toFixed(1)} m`;
+        if (activeVarNameEl) activeVarNameEl.textContent = this.activeVar.replace(/_/g, ' ').toUpperCase();
+        if (activeVarValEl) activeVarValEl.textContent = 'Querying…';
         if (gridEl) gridEl.innerHTML = '<div style="color: var(--ink-muted); font-size: 11px; padding: 4px 0;">Querying oceanographic & atmospheric sensors…</div>';
         readout?.classList.remove('hidden');
 
@@ -1141,26 +1468,85 @@ class SolvXApp {
 
         try {
             const [data, mlData] = await Promise.all([
-                ApiClient.getPoint(cell.lat, cell.lon, this.activeTime, pointDepth).catch(() => ({ variables: {}, units: {}, profile: [] })),
+                ApiClient.getPoint(cell.lat, cell.lon, this.activeTime, pointDepth).catch(() => ({ variables: {}, units: {}, profile: [], available_depths: [], nearest_observation: null })),
                 ApiClient.getMLPoint(cell.lat, cell.lon, this.activeTime).catch(() => null)
             ]);
 
+            this.lastInspectedData = data;
             const vars = { ...data.variables, ...(mlData?.values || {}) };
             const units = data.units || {};
             const formatVal = (v, u) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)} ${u || ''}` : '—';
 
+            // Update active variable value banner
+            let activeValStr = '—';
+            if (this.activeVar === 'ocean_temperature') activeValStr = formatVal(vars.ocean_temperature, '°C');
+            else if (this.activeVar === 'salinity') activeValStr = formatVal(vars.salinity, 'PSU');
+            else if (this.activeVar === 'sea_surface_height') activeValStr = formatVal(vars.sea_surface_height ?? vars.sea_level_anomaly, 'm');
+            else if (this.activeVar === 'currents') {
+                const spd = vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.hypot(vars.current_u, vars.current_v) : null);
+                activeValStr = formatVal(spd, 'm/s');
+            } else if (vars[this.activeVar] != null) {
+                activeValStr = formatVal(vars[this.activeVar], units[this.activeVar]);
+            }
+            if (activeVarValEl) activeVarValEl.textContent = activeValStr;
+
+            // Build Depth Selector Pills
+            const standardDepths = [0, 10, 25, 50, 75, 100, 150, 200, 300, 500, 1000];
+            const datasetDepths = Array.isArray(data.available_depths) && data.available_depths.length > 0 
+                ? data.available_depths 
+                : (data.profile?.map(p => p.depth) || standardDepths);
+            const combinedDepths = Array.from(new Set([...standardDepths, ...datasetDepths]))
+                .filter(d => typeof d === 'number' && !isNaN(d) && d >= 0)
+                .sort((a, b) => a - b);
+
+            const depthPillsHtml = combinedDepths.map(d => {
+                const isSelected = Math.abs(d - pointDepth) < 0.5;
+                const label = d === 0 ? '0m (Surface)' : `${d}m`;
+                return `<button class="depth-pill ${isSelected ? 'active' : ''}" data-depth="${d}">${label}</button>`;
+            }).join('');
+
+            // Build Sounding Matrix Rows
+            const profilePts = Array.isArray(data.profile) ? data.profile : [];
+            const soundingRowsHtml = profilePts.length > 0 ? profilePts.map(p => {
+                const isSelected = Math.abs(p.depth - pointDepth) < 0.5;
+                const tempStr = p.temperature != null ? `${Number(p.temperature).toFixed(2)} °C` : '—';
+                const salStr = p.salinity != null ? `${Number(p.salinity).toFixed(2)} PSU` : '—';
+                const spdStr = p.current_speed != null ? `${Number(p.current_speed).toFixed(2)} m/s` : '—';
+                const densStr = p.density != null ? `${Number(p.density).toFixed(1)}` : '—';
+                return `
+                    <tr class="${isSelected ? 'active-depth-row' : ''}" data-depth="${p.depth}" style="cursor: pointer;" title="Click to slice depth at ${p.depth}m">
+                        <td style="font-weight: 600; color: ${isSelected ? '#38bdf8' : '#e2e8f0'};">${p.depth.toFixed(0)}m</td>
+                        <td>${tempStr}</td>
+                        <td>${salStr}</td>
+                        <td>${spdStr}</td>
+                        <td>${densStr}</td>
+                    </tr>
+                `;
+            }).join('') : '';
+
+            // Tab 1: Variables View
             let gridHtml = `
-                <div class="readout-category-title">OCEAN STATE</div>
+                <div class="readout-depth-control-box">
+                    <div class="depth-control-header">
+                        <span>DEPTH SOUNDING SLICE</span>
+                        <span style="color: #38bdf8; font-weight: 700;">${pointDepth.toFixed(1)} m</span>
+                    </div>
+                    <div class="depth-pills-row">
+                        ${depthPillsHtml}
+                    </div>
+                </div>
+
+                <div class="readout-category-title">PHYSICAL OCEAN STATE (${pointDepth.toFixed(0)}m)</div>
                 <div class="readout-rows">
                     <span class="readout-label">Temperature</span>
                     <span class="readout-val">${formatVal(vars.ocean_temperature, units.ocean_temperature || '°C')}</span>
                     <span class="readout-label">Salinity</span>
                     <span class="readout-val">${formatVal(vars.salinity, units.salinity || 'PSU')}</span>
-                    <span class="readout-label">Sea Level</span>
+                    <span class="readout-label">Sea Surface Height</span>
                     <span class="readout-val">${formatVal(vars.sea_surface_height ?? vars.sea_level_anomaly, units.sea_surface_height || 'm')}</span>
                     <span class="readout-label">Current Velocity</span>
-                    <span class="readout-val">${formatVal(vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.sqrt(vars.current_u**2 + vars.current_v**2) : null), 'm/s')}</span>
-                    <span class="readout-label">Current Dir</span>
+                    <span class="readout-val">${formatVal(vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.hypot(vars.current_u, vars.current_v) : null), 'm/s')}</span>
+                    <span class="readout-label">Current Direction</span>
                     <span class="readout-val">${formatVal(vars.current_direction, '°')}</span>
                 </div>
 
@@ -1179,34 +1565,6 @@ class SolvXApp {
                 </div>
             `;
 
-            if (data.profile && data.profile.length > 0) {
-                gridHtml += `
-                    <div class="readout-category-title">VERTICAL SOUNDING PROFILE</div>
-                    <div style="max-height: 140px; overflow-y: auto; font-size: 11px; margin-top: 4px; border: 1px solid var(--border-subtle, rgba(255,255,255,0.1)); border-radius: 4px;">
-                        <table style="width: 100%; border-collapse: collapse; text-align: right;">
-                            <thead>
-                                <tr style="color: var(--ink-muted); border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.1)); font-size: 10px;">
-                                    <th style="padding: 2px 4px; text-align: left;">Depth</th>
-                                    <th style="padding: 2px 4px;">Temp</th>
-                                    <th style="padding: 2px 4px;">Sal</th>
-                                    <th style="padding: 2px 4px;">Speed</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${data.profile.map(p => `
-                                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
-                                        <td style="padding: 2px 4px; text-align: left;">${p.depth.toFixed(1)} m</td>
-                                        <td style="padding: 2px 4px;">${p.temperature != null ? `${p.temperature.toFixed(2)} °C` : '—'}</td>
-                                        <td style="padding: 2px 4px;">${p.salinity != null ? `${p.salinity.toFixed(2)}` : '—'}</td>
-                                        <td style="padding: 2px 4px;">${p.current_speed != null ? `${p.current_speed.toFixed(2)} m/s` : '—'}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-            }
-
             if (mlData?.anomaly || mlData?.hazard) {
                 const aScore = mlData.anomaly?.anomaly_score;
                 const hRisk = mlData.hazard?.risk_score;
@@ -1219,17 +1577,113 @@ class SolvXApp {
                         <span class="readout-val">${hRisk != null ? `${Number(hRisk).toFixed(1)} / 100` : 'Low'}</span>
                     </div>
                 `;
-                if (mlData.hazard?.contributing_signals?.length) {
-                    gridHtml += `
-                        <div style="font-size: 10px; color: var(--ink-muted); margin-top: 4px; line-height: 1.4;">
-                            ${mlData.hazard.contributing_signals.map(s => `• ${s}`).join('<br>')}
+            }
+
+            if (soundingRowsHtml) {
+                gridHtml += `
+                    <div class="readout-category-title" style="margin-top: 12px; display:flex; justify-content:space-between; align-items:center;">
+                        <span>VALUES ACROSS EACH DEPTH</span>
+                        <span style="font-size:9px; text-transform:none; color:#94a3b8; font-weight:normal;">Click row to slice depth</span>
+                    </div>
+                    <table class="readout-sounding-table">
+                        <thead>
+                            <tr>
+                                <th>Depth</th>
+                                <th>Temp</th>
+                                <th>Salinity</th>
+                                <th>Current</th>
+                                <th>Density</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${soundingRowsHtml}
+                        </tbody>
+                    </table>
+                `;
+            }
+
+            if (gridEl) {
+                gridEl.innerHTML = gridHtml;
+
+                // Wire depth pill clicks
+                gridEl.querySelectorAll('.depth-pill').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const targetD = parseFloat(btn.dataset.depth);
+                        if (!isNaN(targetD)) {
+                            this.onDepthChange(targetD);
+                            this.inspectPoint({ ...cell, depthM: targetD });
+                        }
+                    });
+                });
+
+                // Wire sounding table row clicks
+                gridEl.querySelectorAll('.readout-sounding-table tr[data-depth]').forEach(tr => {
+                    tr.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const targetD = parseFloat(tr.dataset.depth);
+                        if (!isNaN(targetD)) {
+                            this.onDepthChange(targetD);
+                            this.inspectPoint({ ...cell, depthM: targetD });
+                        }
+                    });
+                });
+            }
+
+            if (timeEl) timeEl.textContent = new Date(this.activeTime || data.timestamp || Date.now()).toUTCString();
+
+            // Tab 2: Vertical Profile
+            this.renderPointVerticalProfile(this.pointProfileVar);
+
+            // Tab 4: Nearest Observation Collocation
+            const matchCard = document.getElementById('pointObsMatchCard');
+            if (matchCard) {
+                if (data.nearest_observation) {
+                    const obs = data.nearest_observation;
+                    const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
+                    matchCard.innerHTML = `
+                        <div class="obs-match-badge ${isGlider ? 'obs-match-glider' : 'obs-match-argo'}">
+                            <span>●</span>
+                            <span>${isGlider ? 'AUTONOMOUS GLIDER MATCH' : 'ARGO FLOAT MATCH'} · #${obs.id || obs.wmo || obs.glider_id}</span>
+                        </div>
+                        <div class="readout-rows" style="margin-top: 6px;">
+                            <span class="readout-label">Collocation Distance</span>
+                            <span class="readout-val" style="color: var(--accent); font-weight:700;">${obs.distance_km?.toFixed(1) || '0'} km</span>
+                            <span class="readout-label">Time Offset</span>
+                            <span class="readout-val">${obs.time_diff_days != null ? `${obs.time_diff_days.toFixed(1)} days` : (obs.time_diff_hours != null ? `${obs.time_diff_hours.toFixed(1)} hrs` : 'Concurrent')}</span>
+                            <span class="readout-label">Platform</span>
+                            <span class="readout-val">${obs.platform || (isGlider ? 'Underwater Glider' : 'CTD Float')}</span>
+                            <span class="readout-label">Institution</span>
+                            <span class="readout-val">${obs.institution || 'INCOIS / Argo'}</span>
+                        </div>
+                        ${obs.model_sst != null && obs.observed_sst != null ? `
+                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px;">
+                                <div style="color: var(--ink-muted); font-size: 10px; margin-bottom: 4px;">SURFACE SST COMPARISON</div>
+                                <div class="readout-rows">
+                                    <span class="readout-label">Observed SST</span>
+                                    <span class="readout-val">${obs.observed_sst.toFixed(2)} °C</span>
+                                    <span class="readout-label">Model SST</span>
+                                    <span class="readout-val">${obs.model_sst.toFixed(2)} °C</span>
+                                    <span class="readout-label">Absolute Bias</span>
+                                    <span class="readout-val" style="color:${Math.abs(obs.diff_sst) > 0.5 ? '#f59e0b' : '#10b981'}">${(obs.diff_sst > 0 ? '+' : '') + obs.diff_sst.toFixed(2)} °C</span>
+                                </div>
+                            </div>
+                        ` : ''}
+                        <button id="btnOpenMatchedObs" class="btn-secondary" style="width: 100%; margin-top: 10px; font-size: 11px; padding: 6px 10px;">
+                            VIEW IN OBSERVATION DRAWER →
+                        </button>
+                    `;
+                    document.getElementById('btnOpenMatchedObs')?.addEventListener('click', () => {
+                        this.profileViewer?.show(obs, this.activeTime);
+                    });
+                } else {
+                    matchCard.innerHTML = `
+                        <div style="color: var(--ink-muted); font-size: 11px; text-align: center; padding: 12px 0;">
+                            No in-situ Argo float or Glider observation within 100 km of this position.
                         </div>
                     `;
                 }
             }
-
-            if (gridEl) gridEl.innerHTML = gridHtml;
-            if (timeEl) timeEl.textContent = new Date(this.activeTime || data.timestamp || Date.now()).toUTCString();
 
             const openAnalysisBtn = document.getElementById('btnOpenAnalysisFromReadout');
             if (openAnalysisBtn) {
@@ -1238,7 +1692,7 @@ class SolvXApp {
                         type: 'cell',
                         lat: cell.lat,
                         lon: cell.lon,
-                        depth: this.currentDepth || 0
+                        depth: pointDepth
                     });
                     window.location.href = `/analysis.html?lat=${cell.lat.toFixed(4)}&lon=${cell.lon.toFixed(4)}`;
                 };
@@ -1249,6 +1703,231 @@ class SolvXApp {
             console.error('Point inspection failed:', e);
             if (gridEl) gridEl.innerHTML = `<div style="color: #ff4455; font-size: 11px;">Inspection failed: ${e.message}</div>`;
             this.status('Point inspection failed', 'error');
+        }
+    }
+
+    renderPointVerticalProfile(varName = 'temperature') {
+        const svg = document.getElementById('ptProfileSvg');
+        const tooltip = document.getElementById('ptProfileTooltip');
+        const tableBox = document.getElementById('ptProfileTable');
+        const profile = this.lastInspectedData?.profile;
+
+        if (!svg) return;
+        if (!profile || !profile.length) {
+            svg.innerHTML = '<text x="170" y="110" fill="#64748b" text-anchor="middle" font-size="11">No vertical sounding profile available</text>';
+            if (tableBox) tableBox.innerHTML = '';
+            return;
+        }
+
+        const validPts = profile.filter(p => p[varName] != null && !isNaN(p[varName]));
+        if (!validPts.length) {
+            svg.innerHTML = `<text x="170" y="110" fill="#64748b" text-anchor="middle" font-size="11">No ${varName} data along vertical column</text>`;
+            return;
+        }
+
+        const depths = validPts.map(p => p.depth);
+        const vals = validPts.map(p => p[varName]);
+        const minD = Math.min(...depths);
+        const maxD = Math.max(...depths);
+        const minV = Math.min(...vals);
+        const maxV = Math.max(...vals);
+        const vSpan = (maxV - minV) || 1.0;
+        const dSpan = (maxD - minD) || 1.0;
+
+        const W = 340, H = 220;
+        const padL = 45, padR = 20, padT = 20, padB = 30;
+        const innerW = W - padL - padR;
+        const innerH = H - padT - padB;
+
+        // Depth on Y axis (inverted: 0m at top down to maxD), Value on X axis
+        const scaleX = (v) => padL + ((v - minV) / vSpan) * innerW;
+        const scaleY = (d) => padT + ((d - minD) / dSpan) * innerH;
+
+        let pathD = '';
+        validPts.forEach((p, i) => {
+            const x = scaleX(p[varName]);
+            const y = scaleY(p.depth);
+            pathD += (i === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` : ` L ${x.toFixed(1)} ${y.toFixed(1)}`);
+        });
+
+        const colorMap = { temperature: '#00d2ff', salinity: '#10b981', current_speed: '#f59e0b' };
+        const strokeColor = colorMap[varName] || '#00d2ff';
+        const unitMap = { temperature: '°C', salinity: 'PSU', current_speed: 'm/s' };
+        const unit = unitMap[varName] || '';
+
+        let svgHtml = `
+            <!-- Grid Lines -->
+            <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}" stroke="rgba(255,255,255,0.08)" />
+            <line x1="${padL}" y1="${padT + innerH / 2}" x2="${W - padR}" y2="${padT + innerH / 2}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="3,3" />
+            <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="rgba(255,255,255,0.08)" />
+            
+            <!-- Axes Labels -->
+            <text x="${padL - 6}" y="${padT + 4}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${minD.toFixed(0)}m</text>
+            <text x="${padL - 6}" y="${padT + innerH / 2 + 4}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${((minD + maxD) / 2).toFixed(0)}m</text>
+            <text x="${padL - 6}" y="${H - padB + 4}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${maxD.toFixed(0)}m</text>
+
+            <text x="${padL}" y="${H - 10}" fill="#64748b" text-anchor="start" font-size="9" font-family="monospace">${minV.toFixed(1)} ${unit}</text>
+            <text x="${W - padR}" y="${H - 10}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${maxV.toFixed(1)} ${unit}</text>
+
+            <!-- Curve -->
+            <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2.5" stroke-linecap="round" />
+        `;
+
+        validPts.forEach(p => {
+            const x = scaleX(p[varName]);
+            const y = scaleY(p.depth);
+            svgHtml += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${strokeColor}" stroke="#030a12" stroke-width="1.5" class="profile-chart-pt" data-depth="${p.depth.toFixed(1)}" data-val="${p[varName].toFixed(2)}" />`;
+        });
+
+        svg.innerHTML = svgHtml;
+
+        // Hover tooltips
+        svg.querySelectorAll('.profile-chart-pt').forEach(pt => {
+            pt.addEventListener('mouseenter', (e) => {
+                const depth = pt.dataset.depth;
+                const val = pt.dataset.val;
+                if (tooltip) {
+                    tooltip.innerHTML = `Depth: <b>${depth}m</b> · ${varName}: <b>${val} ${unit}</b>`;
+                    tooltip.style.left = `${parseFloat(pt.getAttribute('cx')) + 8}px`;
+                    tooltip.style.top = `${parseFloat(pt.getAttribute('cy')) - 12}px`;
+                    tooltip.classList.remove('hidden');
+                }
+            });
+            pt.addEventListener('mouseleave', () => {
+                tooltip?.classList.add('hidden');
+            });
+        });
+
+        // Table
+        if (tableBox) {
+            tableBox.innerHTML = `
+                <table style="width: 100%; border-collapse: collapse; text-align: right;">
+                    <thead>
+                        <tr style="color: var(--ink-muted); border-bottom: 1px solid var(--line); font-size: 10px;">
+                            <th style="padding: 2px 4px; text-align: left;">Depth</th>
+                            <th style="padding: 2px 4px;">Temp</th>
+                            <th style="padding: 2px 4px;">Salinity</th>
+                            <th style="padding: 2px 4px;">Current</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${profile.map(p => `
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                                <td style="padding: 2px 4px; text-align: left;">${p.depth.toFixed(1)} m</td>
+                                <td style="padding: 2px 4px;">${p.temperature != null ? `${p.temperature.toFixed(2)} °C` : '—'}</td>
+                                <td style="padding: 2px 4px;">${p.salinity != null ? `${p.salinity.toFixed(2)}` : '—'}</td>
+                                <td style="padding: 2px 4px;">${p.current_speed != null ? `${p.current_speed.toFixed(2)} m/s` : '—'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+    }
+
+    async renderPointTimeseries(varName = 'temperature') {
+        const svg = document.getElementById('ptTimeseriesSvg');
+        const tooltip = document.getElementById('ptTimeseriesTooltip');
+        const summaryBox = document.getElementById('ptTimeseriesSummary');
+        if (!svg || !this.activeInspectedPoint) return;
+
+        svg.innerHTML = '<text x="170" y="100" fill="#64748b" text-anchor="middle" font-size="11">Loading time series evolution…</text>';
+
+        try {
+            const data = await ApiClient.getPointTimeseries(
+                this.activeInspectedPoint.lat,
+                this.activeInspectedPoint.lon,
+                varName,
+                this.activeInspectedPoint.depthM || 0
+            );
+
+            const points = data?.timeseries || [];
+            if (!points.length) {
+                svg.innerHTML = '<text x="170" y="100" fill="#64748b" text-anchor="middle" font-size="11">No time series points returned</text>';
+                return;
+            }
+
+            const vals = points.map(p => p.value);
+            const minV = Math.min(...vals);
+            const maxV = Math.max(...vals);
+            const vSpan = (maxV - minV) || 1.0;
+
+            const W = 340, H = 200;
+            const padL = 45, padR = 20, padT = 20, padB = 30;
+            const innerW = W - padL - padR;
+            const innerH = H - padT - padB;
+
+            const scaleX = (i) => padL + (i / Math.max(1, points.length - 1)) * innerW;
+            const scaleY = (v) => H - padB - ((v - minV) / vSpan) * innerH;
+
+            let pathD = '';
+            points.forEach((p, i) => {
+                const x = scaleX(i);
+                const y = scaleY(p.value);
+                pathD += (i === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` : ` L ${x.toFixed(1)} ${y.toFixed(1)}`);
+            });
+
+            const colorMap = { temperature: '#00d2ff', salinity: '#10b981', current_speed: '#f59e0b' };
+            const strokeColor = colorMap[varName] || '#00d2ff';
+            const unit = data.unit || '';
+
+            const startDate = new Date(points[0].time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            const endDate = new Date(points[points.length - 1].time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+            let svgHtml = `
+                <!-- Grid Lines -->
+                <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}" stroke="rgba(255,255,255,0.08)" />
+                <line x1="${padL}" y1="${padT + innerH / 2}" x2="${W - padR}" y2="${padT + innerH / 2}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="3,3" />
+                <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="rgba(255,255,255,0.08)" />
+
+                <!-- Axes -->
+                <text x="${padL - 6}" y="${padT + 4}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${maxV.toFixed(1)}</text>
+                <text x="${padL - 6}" y="${H - padB + 4}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${minV.toFixed(1)}</text>
+
+                <text x="${padL}" y="${H - 10}" fill="#64748b" text-anchor="start" font-size="9" font-family="monospace">${startDate}</text>
+                <text x="${W - padR}" y="${H - 10}" fill="#64748b" text-anchor="end" font-size="9" font-family="monospace">${endDate}</text>
+
+                <!-- Curve -->
+                <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2.5" stroke-linecap="round" />
+            `;
+
+            points.forEach((p, i) => {
+                const x = scaleX(i);
+                const y = scaleY(p.value);
+                const dt = new Date(p.time).toISOString().slice(0, 10);
+                svgHtml += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${strokeColor}" stroke="#030a12" stroke-width="1.5" class="ts-chart-pt" data-time="${dt}" data-val="${p.value.toFixed(2)}" />`;
+            });
+
+            svg.innerHTML = svgHtml;
+
+            // Hover tooltips
+            svg.querySelectorAll('.ts-chart-pt').forEach(pt => {
+                pt.addEventListener('mouseenter', () => {
+                    const time = pt.dataset.time;
+                    const val = pt.dataset.val;
+                    if (tooltip) {
+                        tooltip.innerHTML = `${time} · <b>${val} ${unit}</b>`;
+                        tooltip.style.left = `${parseFloat(pt.getAttribute('cx')) + 8}px`;
+                        tooltip.style.top = `${parseFloat(pt.getAttribute('cy')) - 12}px`;
+                        tooltip.classList.remove('hidden');
+                    }
+                });
+                pt.addEventListener('mouseleave', () => {
+                    tooltip?.classList.add('hidden');
+                });
+            });
+
+            if (summaryBox && data.stats) {
+                summaryBox.innerHTML = `
+                    <span>Min: <b>${data.stats.min?.toFixed(2)} ${unit}</b></span>
+                    <span>Max: <b>${data.stats.max?.toFixed(2)} ${unit}</b></span>
+                    <span>Mean: <b>${data.stats.mean?.toFixed(2)} ${unit}</b></span>
+                    <span>(${data.stats.count} steps)</span>
+                `;
+            }
+        } catch (err) {
+            console.error('Time series fetch error:', err);
+            svg.innerHTML = `<text x="170" y="100" fill="#ff4455" text-anchor="middle" font-size="11">Time series error: ${err.message}</text>`;
         }
     }
 
@@ -1272,7 +1951,7 @@ class SolvXApp {
         if (!argo) return;
 
         if (this.profileViewer) {
-            await this.profileViewer.show(argo);
+            await this.profileViewer.show(argo, this.activeTime);
             return;
         }
 

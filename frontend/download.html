@@ -123,6 +123,7 @@
           <button class="btn-time-preset" data-days="7">Last 7 Days</button>
           <button class="btn-time-preset" data-days="30">Last 30 Days</button>
           <button class="btn-time-preset" data-days="90">Last 90 Days</button>
+          <button class="btn-time-preset" data-days="180">Last 180 Days</button>
           <button class="btn-time-preset active" data-days="365">Last 1 Year</button>
         </div>
 
@@ -193,35 +194,79 @@
         <div class="layer-group">
           <div class="layer-subhead">
             <span>Physical Ocean Variables (Copernicus Marine)</span>
-            <button id="btnToggleAllVars" class="select-all-btn">Deselect All</button>
+            <label class="master-toggle-label">
+              <input type="checkbox" id="chkAllOceanVars" checked>
+              <span>[x] All Ocean Variables</span>
+            </label>
           </div>
-          <div class="layer-items-grid">
+          <div class="layer-items-grid" id="oceanVarsContainer">
             <label class="layer-checkbox-card">
-              <input type="checkbox" class="var-chk" value="ocean_temperature" checked>
+              <input type="checkbox" class="var-chk" data-category="ocean" value="ocean_temperature" checked>
               <div class="layer-meta">
-                <span class="layer-title">Ocean Temperature</span>
-                <span class="layer-desc">thetao (°C) · 3D Volumetric</span>
+                <span class="layer-title">Ocean Temperature (θo)</span>
+                <span class="layer-desc">°C · 3D Volumetric NEMO</span>
               </div>
             </label>
             <label class="layer-checkbox-card">
-              <input type="checkbox" class="var-chk" value="salinity" checked>
+              <input type="checkbox" class="var-chk" data-category="ocean" value="salinity" checked>
               <div class="layer-meta">
-                <span class="layer-title">Salinity</span>
-                <span class="layer-desc">so (PSU) · 3D Volumetric</span>
+                <span class="layer-title">Salinity (So)</span>
+                <span class="layer-desc">PSU · 3D Volumetric NEMO</span>
               </div>
             </label>
             <label class="layer-checkbox-card">
-              <input type="checkbox" class="var-chk" value="currents" checked>
+              <input type="checkbox" class="var-chk" data-category="ocean" value="currents" checked>
               <div class="layer-meta">
-                <span class="layer-title">Ocean Currents</span>
-                <span class="layer-desc">uo, vo (m/s) · Flow Vectors</span>
+                <span class="layer-title">Ocean Velocity (U/V)</span>
+                <span class="layer-desc">uo, vo (m/s) · Horizontal Current Grid</span>
               </div>
             </label>
             <label class="layer-checkbox-card">
-              <input type="checkbox" class="var-chk" value="sea_surface_height" checked>
+              <input type="checkbox" class="var-chk" data-category="ocean" value="sea_surface_height" checked>
               <div class="layer-meta">
-                <span class="layer-title">Sea Surface Height</span>
-                <span class="layer-desc">zos (meters) · Sea Level</span>
+                <span class="layer-title">Sea Surface Height (Zos)</span>
+                <span class="layer-desc">meters · Sea Level Anomaly</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Atmospheric & Meteorological Variables -->
+        <div class="layer-group">
+          <div class="layer-subhead">
+            <span>Atmospheric & Meteorological Variables</span>
+            <label class="master-toggle-label">
+              <input type="checkbox" id="chkAllAtmoVars" checked>
+              <span>[x] All Atmospheric Variables</span>
+            </label>
+          </div>
+          <div class="layer-items-grid" id="atmoVarsContainer">
+            <label class="layer-checkbox-card">
+              <input type="checkbox" class="var-chk" data-category="atmosphere" value="air_temperature" checked>
+              <div class="layer-meta">
+                <span class="layer-title">2m Air Temperature</span>
+                <span class="layer-desc">°C · Atmospheric Boundary Layer</span>
+              </div>
+            </label>
+            <label class="layer-checkbox-card">
+              <input type="checkbox" class="var-chk" data-category="atmosphere" value="wind" checked>
+              <div class="layer-meta">
+                <span class="layer-title">10m Surface Winds (U/V)</span>
+                <span class="layer-desc">m/s · Zonal and meridional winds</span>
+              </div>
+            </label>
+            <label class="layer-checkbox-card">
+              <input type="checkbox" class="var-chk" data-category="atmosphere" value="sea_level_pressure" checked>
+              <div class="layer-meta">
+                <span class="layer-title">Sea Level Pressure (MSLP)</span>
+                <span class="layer-desc">hPa · Atmospheric Surface Pressure</span>
+              </div>
+            </label>
+            <label class="layer-checkbox-card">
+              <input type="checkbox" class="var-chk" data-category="atmosphere" value="relative_humidity" checked>
+              <div class="layer-meta">
+                <span class="layer-title">Relative Humidity</span>
+                <span class="layer-desc">% · Atmospheric moisture content</span>
               </div>
             </label>
           </div>
@@ -242,19 +287,37 @@
           <button id="btnCheckCache" class="btn-check-cache">CHECK CACHE</button>
         </div>
 
+        <div class="format-option-row">
+          <label class="format-toggle">
+            <input type="checkbox" id="chkPackageZip" checked>
+            <span>Package as Structured ZIP Archive (metadata.json, README.txt, ocean/*.nc, atmosphere/*.nc)</span>
+          </label>
+        </div>
+
         <button id="btnStartDownload" class="btn-download-main">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span>DOWNLOAD SELECTED DATA TO LOCAL DISK</span>
         </button>
 
         <div id="progressBox" class="progress-container">
+          <div class="download-counters-row" id="downloadCountersRow">
+            <span class="cnt-item">Ocean: <b id="cntOceanProgress">0 / 0</b></span>
+            <span class="cnt-item">Atmosphere: <b id="cntAtmoProgress">0 / 0</b></span>
+            <span class="cnt-item">Overall: <b id="cntOverallProgress">0%</b></span>
+          </div>
           <div class="progress-bar-track">
             <div id="progressBarFill" class="progress-bar-fill"></div>
           </div>
+          <div id="varStatusList" class="var-status-list hidden"></div>
           <div id="logTerminal" class="log-terminal">
-            <div>[System] Ready to download selected data.</div>
+            <div>[System] Ready to download selected regional data.</div>
           </div>
         </div>
+
+        <a id="btnDownloadZipFile" href="#" class="btn-download-zip hidden" download>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>DOWNLOAD STRUCTURED ZIP ARCHIVE (.ZIP)</span>
+        </a>
 
         <a id="btnLaunchViewer" href="/" class="btn-launch-viewer">
           <span>✓ DOWNLOAD COMPLETE · OPEN IN 3D OCEAN VIEWER</span>

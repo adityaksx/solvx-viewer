@@ -357,18 +357,59 @@ export const ApiClient = {
         return request(`/api/ocean/current-grid?${q}`);
     },
 
-    async getPoint(lat, lon, time = null, depth = null) {
+    async getCurrentField({ dataset = null, variable = 'currents', time = null, depth = null, bbox = null, min_lat = null, max_lat = null, min_lon = null, max_lon = null, stride = 3 } = {}) {
+        const q = new URLSearchParams();
+        if (dataset) q.set('dataset', dataset);
+        if (variable) q.set('variable', variable);
+        if (time) q.set('time', time);
+        if (depth != null) q.set('depth', String(depth));
+        if (bbox) q.set('bbox', typeof bbox === 'string' ? bbox : `${bbox.min_lat},${bbox.max_lat},${bbox.min_lon},${bbox.max_lon}`);
+        if (min_lat != null) q.set('min_lat', String(min_lat));
+        if (max_lat != null) q.set('max_lat', String(max_lat));
+        if (min_lon != null) q.set('min_lon', String(min_lon));
+        if (max_lon != null) q.set('max_lon', String(max_lon));
+        if (stride) q.set('stride', String(stride));
+        return request(`/api/current-field?${q}`);
+    },
+
+    async getPoint(lat, lon, time = null, depth = null, variable = null, dataset = null) {
         const q = new URLSearchParams({
             latitude: String(lat),
             longitude: String(lon)
         });
         if (time) q.set('time', time);
         if (depth != null) q.set('depth', String(depth));
-        return request(`/api/ocean/point?${q}`, { category: 'point_inspect' });
+        if (variable) q.set('variable', variable);
+        if (dataset) q.set('dataset', dataset);
+        return request(`/api/point?${q}`, { category: 'point_inspect' });
     },
 
-    async getOceanPoint(lat, lon, time = null, depth = null) {
-        return this.getPoint(lat, lon, time, depth);
+    async getPointProfile({ lat, lon, time = null, variable = 'temperature', dataset = null }) {
+        const q = new URLSearchParams({
+            latitude: String(lat),
+            longitude: String(lon),
+            variable: String(variable)
+        });
+        if (time) q.set('time', time);
+        if (dataset) q.set('dataset', dataset);
+        return request(`/api/point/profile?${q}`);
+    },
+
+    async getPointTimeseries({ lat, lon, depth = 0.0, start = null, end = null, variable = 'temperature', dataset = null }) {
+        const q = new URLSearchParams({
+            latitude: String(lat),
+            longitude: String(lon),
+            depth: String(depth),
+            variable: String(variable)
+        });
+        if (start) q.set('start', start);
+        if (end) q.set('end', end);
+        if (dataset) q.set('dataset', dataset);
+        return request(`/api/point/timeseries?${q}`);
+    },
+
+    async getOceanPoint(lat, lon, time = null, depth = null, variable = null, dataset = null) {
+        return this.getPoint(lat, lon, time, depth, variable, dataset);
     },
 
     async getRegionArray(params) {
@@ -477,6 +518,25 @@ export const ApiClient = {
 
     async executeDownload(payload) {
         return request('/api/download/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async discoverDownloadVariables(bbox = null) {
+        const q = new URLSearchParams();
+        if (bbox) {
+            if (bbox.min_lat != null) q.set('min_lat', String(bbox.min_lat));
+            if (bbox.max_lat != null) q.set('max_lat', String(bbox.max_lat));
+            if (bbox.min_lon != null) q.set('min_lon', String(bbox.min_lon));
+            if (bbox.max_lon != null) q.set('max_lon', String(bbox.max_lon));
+        }
+        return request(`/api/download/discover${q.toString() ? `?${q}` : ''}`);
+    },
+
+    async createRegionalDownloadPackage(payload) {
+        return request('/api/download/package', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

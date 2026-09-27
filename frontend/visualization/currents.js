@@ -2,12 +2,12 @@
 import * as THREE from 'three';
 import { sampleColor, updateLegendUI } from './colorScale.js';
 
-export function buildCurrentVectors(currentGrid, sceneManager, bounds, updateLegend = false) {
+export function buildCurrentVectors(currentGrid, sceneManager, bounds, updateLegend = false, vectorScale = 1.0, depthY = 0.4) {
     const group = new THREE.Group();
     if (!currentGrid || !currentGrid.u || !currentGrid.v) return group;
 
-    const lat = currentGrid.latitude || [];
-    const lon = currentGrid.longitude || [];
+    const lat = currentGrid.latitude || currentGrid.lat || [];
+    const lon = currentGrid.longitude || currentGrid.lon || [];
     const u = currentGrid.u || [];
     const v = currentGrid.v || [];
 
@@ -55,9 +55,9 @@ export function buildCurrentVectors(currentGrid, sceneManager, bounds, updateLeg
             const [pLon, pLat] = project(lon[i], lat[j]);
             const x = pLat; // Scene X is Northing
             const z = pLon; // Scene Z is Easting
-            const y = 0.35; // Hover just above sea level
+            const y = depthY;
 
-            const len = 6 + (speed / maxSpeed) * 22;
+            const len = (6 + (speed / maxSpeed) * 22) * vectorScale;
             const dx = (vv / speed) * len; // Northward velocity
             const dz = (uu / speed) * len; // Eastward velocity
 

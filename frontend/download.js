@@ -52,6 +52,19 @@ class DownloadManager {
         this.selResolution = document.getElementById('selResolution');
         this.btnToggleAllVars = document.getElementById('btnToggleAllVars');
 
+        this.chkAllOceanVars = document.getElementById('chkAllOceanVars');
+        this.chkAllAtmoVars = document.getElementById('chkAllAtmoVars');
+        this.oceanVarsContainer = document.getElementById('oceanVarsContainer');
+        this.atmoVarsContainer = document.getElementById('atmoVarsContainer');
+        this.chkPackageZip = document.getElementById('chkPackageZip');
+
+        this.downloadCountersRow = document.getElementById('downloadCountersRow');
+        this.cntOceanProgress = document.getElementById('cntOceanProgress');
+        this.cntAtmoProgress = document.getElementById('cntAtmoProgress');
+        this.cntOverallProgress = document.getElementById('cntOverallProgress');
+        this.varStatusList = document.getElementById('varStatusList');
+        this.btnDownloadZipFile = document.getElementById('btnDownloadZipFile');
+
         this.cacheSummaryText = document.getElementById('cacheSummaryText');
         this.btnCheckCache = document.getElementById('btnCheckCache');
         this.btnStartDownload = document.getElementById('btnStartDownload');
@@ -75,6 +88,7 @@ class DownloadManager {
         this.updateInputs(this.currentBBox);
         this._initMap();
         this._bindEvents();
+        await this.discoverVariables();
         await this.loadInventory();
         this.checkCacheStatus();
     }
@@ -360,31 +374,106 @@ class DownloadManager {
         this.inStartTime.addEventListener('change', () => this.scheduleCheckCache());
         this.inEndTime.addEventListener('change', () => this.scheduleCheckCache());
 
-        // Toggle all variables
-        this.btnToggleAllVars.addEventListener('click', () => {
-            const varBoxes = document.querySelectorAll('.var-chk');
-            const anyUnchecked = Array.from(varBoxes).some(b => !b.checked);
-            varBoxes.forEach(b => b.checked = anyUnchecked);
-            this.btnToggleAllVars.textContent = anyUnchecked ? 'Deselect All' : 'Select All';
-            this.scheduleCheckCache();
-        });
-
         // Layer checkboxes change
         document.querySelectorAll('.layer-checkbox-card input').forEach(box => {
             box.addEventListener('change', () => this.scheduleCheckCache());
         });
 
         // Check Cache button
-        this.btnCheckCache.addEventListener('click', () => this.checkCacheStatus());
+        this.btnCheckCache?.addEventListener('click', () => this.checkCacheStatus());
 
         // Start Download button
-        this.btnStartDownload.addEventListener('click', () => this.executeDownload());
+        this.btnStartDownload?.addEventListener('click', () => this.executeDownload());
 
         // Refresh inventory
-        this.btnRefreshInventory.addEventListener('click', () => this.loadInventory(true));
+        this.btnRefreshInventory?.addEventListener('click', () => this.loadInventory(true));
 
         // Inventory search filter
-        this.invSearchInput.addEventListener('input', (e) => this.filterInventory(e.target.value));
+        this.invSearchInput?.addEventListener('input', (e) => this.filterInventory(e.target.value));
+    }
+
+    async discoverVariables() {
+        try {
+            const data = await ApiClient.discoverDownloadVariables(this.currentBBox);
+            if (data?.defaults) {
+                if (data.defaults.start_date && !this.inStartTime.value) {
+                    this.inStartTime.value = data.defaults.start_date;
+                }
+                if (data.defaults.end_date && !this.inEndTime.value) {
+                    this.inEndTime.value = data.defaults.end_date;
+                }
+            }
+
+            // Render discovered ocean variables if returned
+            if (data?.ocean_variables?.length && this.oceanVarsContainer) {
+                this.oceanVarsContainer.innerHTML = data.ocean_variables.map(v => `
+                    <label class="layer-checkbox-card">
+                        <input type="checkbox" class="var-chk" data-category="ocean" value="${v.id}" checked>
+                        <div class="layer-meta">
+                            <span class="layer-title">${v.name}</span>
+                            <span class="layer-desc">${v.units || ''} · ${v.standard_name || 'Physical Ocean'}</span>
+                        </div>
+                    </label>
+                `).join('');
+            }
+
+            // Render discovered atmospheric variables if returned
+            if (data?.atmospheric_variables?.length && this.atmoVarsContainer) {
+                this.atmoVarsContainer.innerHTML = data.atmospheric_variables.map(v => `
+                    <label class="layer-checkbox-card">
+                        <input type="checkbox" class="var-chk" data-category="atmosphere" value="${v.id}" checked>
+                        <div class="layer-meta">
+                            <span class="layer-title">${v.name}</span>
+                            <span class="layer-desc">${v.units || ''} · ${v.standard_name || 'Atmospheric Variable'}</span>
+                        </div>
+                    </label>
+                `).join('');
+            }
+
+            this._bindDynamicVariableEvents();
+        } catch (e) {
+            console.warn('[DownloadManager] Dynamic variable discovery error, keeping static defaults:', e);
+            this._bindDynamicVariableEvents();
+        }
+    }
+
+    _bindDynamicVariableEvents() {
+        // Individual variable checkboxes
+        document.querySelectorAll('.var-chk').forEach(chk => {
+            chk.onchange = () => {
+                this._syncMasterToggles();
+                this.scheduleCheckCache();
+            };
+        });
+
+        // Master toggle: All Ocean
+        if (this.chkAllOceanVars) {
+            this.chkAllOceanVars.onchange = () => {
+                const checked = this.chkAllOceanVars.checked;
+                document.querySelectorAll('.var-chk[data-category="ocean"]').forEach(c => c.checked = checked);
+                this.scheduleCheckCache();
+            };
+        }
+
+        // Master toggle: All Atmosphere
+        if (this.chkAllAtmoVars) {
+            this.chkAllAtmoVars.onchange = () => {
+                const checked = this.chkAllAtmoVars.checked;
+                document.querySelectorAll('.var-chk[data-category="atmosphere"]').forEach(c => c.checked = checked);
+                this.scheduleCheckCache();
+            };
+        }
+    }
+
+    _syncMasterToggles() {
+        const oceanChks = Array.from(document.querySelectorAll('.var-chk[data-category="ocean"]'));
+        if (oceanChks.length && this.chkAllOceanVars) {
+            this.chkAllOceanVars.checked = oceanChks.every(c => c.checked);
+        }
+        const atmoChks = Array.from(document.querySelectorAll('.var-chk[data-category="atmosphere"]'));
+        if (atmoChks.length && this.chkAllAtmoVars) {
+            this.chkAllAtmoVars.checked = atmoChks.every(c => c.checked);
+        }
     }
 
     scheduleCheckCache() {
@@ -440,49 +529,144 @@ class DownloadManager {
         this.btnStartDownload.disabled = true;
         this.progressBox.classList.add('active');
         this.btnLaunchViewer.classList.remove('active');
+        this.btnDownloadZipFile?.classList.add('hidden');
         this.progressBarFill.style.width = '10%';
         this._log(`[Starting] Initializing batch download for BBOX [${this.currentBBox.min_lat}°N, ${this.currentBBox.max_lat}°N, ${this.currentBBox.min_lon}°E, ${this.currentBBox.max_lon}°E]…`);
 
         const layers = this.getSelectedLayers();
-        const vars = this.getSelectedVariables();
+        const oceanChks = Array.from(document.querySelectorAll('.var-chk[data-category="ocean"]:checked'));
+        const atmoChks = Array.from(document.querySelectorAll('.var-chk[data-category="atmosphere"]:checked'));
+        const oceanVars = oceanChks.map(c => c.value);
+        const atmoVars = atmoChks.map(c => c.value);
+        const allVars = [...oceanVars, ...atmoVars];
         const resolution = this.selResolution?.value || 'medium';
+        const isZipMode = Boolean(this.chkPackageZip?.checked);
+
+        // Reset progress counters & status list
+        if (this.downloadCountersRow) {
+            this.downloadCountersRow.classList.remove('hidden');
+            if (this.cntOceanProgress) this.cntOceanProgress.textContent = `0 / ${oceanVars.length}`;
+            if (this.cntAtmoProgress) this.cntAtmoProgress.textContent = `0 / ${atmoVars.length}`;
+            if (this.cntOverallProgress) this.cntOverallProgress.textContent = '10%';
+        }
+
+        if (this.varStatusList) {
+            this.varStatusList.classList.remove('hidden');
+            this.varStatusList.innerHTML = allVars.map(v => `
+                <div class="var-status-item downloading" id="varStatusItem_${v}">
+                    <span>${v.replace(/_/g, ' ')}</span>
+                    <span class="status-badge mono">↓ downloading…</span>
+                </div>
+            `).join('');
+        }
 
         try {
             if (layers.includes('land') || layers.includes('coastline') || layers.includes('eez')) {
-                this._log(`[Geography] Extracting coastline, islands & maritime EEZ vectors…`);
-                this.progressBarFill.style.width = '30%';
+                this._log(`[Geography] Subsetting Natural Earth coastline & VLIZ maritime boundaries…`);
+                this.progressBarFill.style.width = '25%';
             }
 
             if (layers.includes('seabed')) {
                 this._log(`[Seabed] Subsetting authoritative GEBCO 2026 elevation grid (${resolution})…`);
-                this.progressBarFill.style.width = '50%';
+                this.progressBarFill.style.width = '45%';
             }
 
-            if (vars.length > 0) {
-                this._log(`[Copernicus] Downloading full timeline NetCDF batch for ${vars.join(', ')} (${this.inStartTime.value} to ${this.inEndTime.value})…`);
-                this.progressBarFill.style.width = '70%';
-            }
+            if (isZipMode) {
+                this._log(`[Package] Initiating structured ZIP packaging with bounded workers…`);
+                this.progressBarFill.style.width = '65%';
 
-            const payload = {
-                bbox: this.currentBBox,
-                start_time: this.inStartTime.value ? `${this.inStartTime.value}T00:00:00Z` : null,
-                end_time: this.inEndTime.value ? `${this.inEndTime.value}T23:59:59Z` : null,
-                layers,
-                variables: vars,
-                resolution
-            };
+                const pkgPayload = {
+                    bbox: this.currentBBox,
+                    start_time: this.inStartTime.value ? `${this.inStartTime.value}T00:00:00Z` : null,
+                    end_time: this.inEndTime.value ? `${this.inEndTime.value}T23:59:59Z` : null,
+                    ocean_variables: oceanVars,
+                    atmospheric_variables: atmoVars,
+                    include_bathymetry: layers.includes('seabed'),
+                    include_eez: layers.includes('eez'),
+                    include_coastline: layers.includes('coastline') || layers.includes('land'),
+                    stride: 1
+                };
 
-            const data = await ApiClient.executeDownload(payload);
-            this.progressBarFill.style.width = '100%';
-            this._log(`[Saved] ✓ ${data.message}`);
+                const pkgRes = await ApiClient.createRegionalDownloadPackage(pkgPayload);
+                this.progressBarFill.style.width = '100%';
 
-            if (data.saved_files && data.saved_files.length > 0) {
-                data.saved_files.forEach(f => {
-                    this._log(`[Storage] Saved: ${f.split('/').pop()}`);
+                const succList = pkgRes.successful_variables || [];
+                const failList = pkgRes.failed_variables || [];
+
+                succList.forEach(v => {
+                    const item = document.getElementById(`varStatusItem_${v}`);
+                    if (item) {
+                        item.className = 'var-status-item success';
+                        item.querySelector('.status-badge').textContent = '✓ complete';
+                    }
                 });
+
+                failList.forEach(v => {
+                    const item = document.getElementById(`varStatusItem_${v}`);
+                    if (item) {
+                        item.className = 'var-status-item failed';
+                        item.querySelector('.status-badge').textContent = '✗ failed (retry available)';
+                    }
+                });
+
+                // Update counters
+                const succOcean = oceanVars.filter(v => succList.includes(v)).length;
+                const succAtmo = atmoVars.filter(v => succList.includes(v)).length;
+                if (this.cntOceanProgress) this.cntOceanProgress.textContent = `${succOcean} / ${oceanVars.length}`;
+                if (this.cntAtmoProgress) this.cntAtmoProgress.textContent = `${succAtmo} / ${atmoVars.length}`;
+                if (this.cntOverallProgress) this.cntOverallProgress.textContent = '100%';
+
+                this._log(`[Complete] ✓ ZIP Package created: ${pkgRes.package_name || 'package.zip'} (${pkgRes.formatted_size || 'ready'})`);
+
+                if (pkgRes.download_url && this.btnDownloadZipFile) {
+                    this.btnDownloadZipFile.href = pkgRes.download_url;
+                    this.btnDownloadZipFile.classList.remove('hidden');
+                }
+
+                // Also execute local storage cache sync
+                try {
+                    await ApiClient.executeDownload({
+                        bbox: this.currentBBox,
+                        start_time: this.inStartTime.value ? `${this.inStartTime.value}T00:00:00Z` : null,
+                        end_time: this.inEndTime.value ? `${this.inEndTime.value}T23:59:59Z` : null,
+                        layers,
+                        variables: allVars,
+                        resolution
+                    });
+                } catch (_) {}
+
+            } else {
+                // Direct file download
+                if (allVars.length > 0) {
+                    this._log(`[Copernicus] Downloading full timeline NetCDF batch for ${allVars.join(', ')}…`);
+                    this.progressBarFill.style.width = '70%';
+                }
+
+                const payload = {
+                    bbox: this.currentBBox,
+                    start_time: this.inStartTime.value ? `${this.inStartTime.value}T00:00:00Z` : null,
+                    end_time: this.inEndTime.value ? `${this.inEndTime.value}T23:59:59Z` : null,
+                    layers,
+                    variables: allVars,
+                    resolution
+                };
+
+                const data = await ApiClient.executeDownload(payload);
+                this.progressBarFill.style.width = '100%';
+                this._log(`[Saved] ✓ ${data.message}`);
+
+                allVars.forEach(v => {
+                    const item = document.getElementById(`varStatusItem_${v}`);
+                    if (item) {
+                        item.className = 'var-status-item success';
+                        item.querySelector('.status-badge').textContent = '✓ complete';
+                    }
+                });
+
+                if (this.cntOverallProgress) this.cntOverallProgress.textContent = '100%';
             }
 
-            this.btnLaunchViewer.href = data.viewer_url || '/';
+            this.btnLaunchViewer.href = `/?min_lat=${this.currentBBox.min_lat}&max_lat=${this.currentBBox.max_lat}&min_lon=${this.currentBBox.min_lon}&max_lon=${this.currentBBox.max_lon}`;
             this.btnLaunchViewer.classList.add('active');
 
             // Refresh inventory and cache status

@@ -804,21 +804,53 @@ export const ApiClient = {
      * @param {string} message - User natural-language question or instruction
      * @param {Object} [uiContext] - { region, timeline, depth, visualization }
      * @param {string} [sessionId] - Multi-turn session ID
-     * @param {string} [apiKey] - Optional custom Gemini API key
+     * @param {string} [provider] - Optional provider override
+     * @param {string} [model] - Optional model override
      */
-    async sendAIChat(message, uiContext = null, sessionId = null, apiKey = null) {
-        const headers = { 'Content-Type': 'application/json' };
-        if (apiKey) {
-            headers['X-Gemini-Key'] = apiKey;
-        }
+    async sendAIChat(message, uiContext = null, sessionId = null, provider = null, model = null) {
+        const body = {
+            message,
+            ui_context: uiContext,
+            session_id: sessionId
+        };
+        if (provider) body.provider = provider;
+        if (model) body.model = model;
+
         return request('/api/ai/chat', {
             method: 'POST',
-            headers,
-            body: JSON.stringify({
-                message,
-                ui_context: uiContext,
-                session_id: sessionId
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            noCache: true
+        });
+    },
+
+    /**
+     * Retrieves current AI assistant provider and model settings.
+     */
+    async getAISettings() {
+        return request('/api/ai/settings');
+    },
+
+    /**
+     * Updates AI assistant provider, model, or auto-fallback settings.
+     */
+    async updateAISettings({ provider = null, model = null, auto_fallback = null }) {
+        return request('/api/ai/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model, auto_fallback }),
+            noCache: true
+        });
+    },
+
+    /**
+     * Tests connection latency for a specific provider and model.
+     */
+    async testAIConnection(provider, model = null) {
+        return request('/api/ai/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model }),
             noCache: true
         });
     }

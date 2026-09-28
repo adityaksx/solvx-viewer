@@ -1,13 +1,14 @@
 """
-SolvX — AI Assistant API Router
-===============================
+SolvX — AI Assistant & Multi-Provider API Router
+=================================================
 Exposes endpoints for:
-- Querying AI assistant status and availability
-- Generating scientifically grounded AI explanations of oceanographic analysis
+- Querying and updating AI assistant settings (provider, model, auto-fallback)
+- Diagnostic provider connection testing with latency measurement
+- Conversational oceanographic analysis orchestration (Gemini & NVIDIA NIM)
 - Translating natural language requests into validated 3D visualization commands
 """
 
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Header, HTTPException
 
 from ..models.ai import (
@@ -17,8 +18,14 @@ from ..models.ai import (
     NLCommandResponse,
     AIStatusResponse
 )
-from ..ai.schemas import ChatRequest, ChatResponse
+from ..ai.schemas import (
+    ChatRequest,
+    ChatResponse,
+    AISettingsUpdateRequest,
+    TestConnectionRequest
+)
 from ..ai.assistant import process_chat_message
+from ..ai.providers.manager import GLOBAL_PROVIDER_MANAGER
 from ..services.ai_service import (
     get_ai_status,
     explain_analysis,
@@ -28,15 +35,66 @@ from ..services.ai_service import (
 router = APIRouter(prefix='/api/ai', tags=['Scientific AI Assistant'])
 
 
+# =============================================================================
+# Settings and Multi-Provider Diagnostics
+# =============================================================================
+
+@router.get('/settings')
+def get_settings():
+    """Returns currently selected provider, model, auto-fallback toggle, and provider status."""
+    try:
+        return GLOBAL_PROVIDER_MANAGER.get_settings_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed retrieving AI settings: {str(e)}")
+
+
+@router.post('/settings')
+def update_settings(request: AISettingsUpdateRequest):
+    """Updates active AI provider, model selection, or cross-provider fallback preference."""
+    try:
+        return GLOBAL_PROVIDER_MANAGER.update_settings(
+            provider=request.provider,
+            model=request.model,
+            auto_fallback=request.auto_fallback
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed updating AI settings: {str(e)}")
+
+
+@router.post('/test-connection')
+def test_connection(
+    request: TestConnectionRequest,
+    x_nvidia_key: Optional[str] = Header(None, alias='X-Nvidia-Key'),
+    x_gemini_key: Optional[str] = Header(None, alias='X-Gemini-Key')
+):
+    """Executes a diagnostic latency ping against Google Gemini or NVIDIA NIM."""
+    try:
+        api_key = x_nvidia_key if request.provider == "nvidia" else x_gemini_key
+        return GLOBAL_PROVIDER_MANAGER.test_connection(
+            provider_id=request.provider,
+            model=request.model,
+            api_key=api_key
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Connection test failed: {str(e)}")
+
+
 @router.get('/status', response_model=AIStatusResponse)
 def status():
     """Returns AI Assistant operational status and active model configuration."""
     return get_ai_status()
 
 
+# =============================================================================
+# Conversational AI & Command Endpoints
+# =============================================================================
+
 @router.post('/chat', response_model=ChatResponse)
 def chat(
     request: ChatRequest,
+    x_nvidia_key: Optional[str] = Header(None, alias='X-Nvidia-Key'),
     x_gemini_key: Optional[str] = Header(None, alias='X-Gemini-Key')
 ):
     """
@@ -45,10 +103,13 @@ def chat(
     - Interprets natural-language intent.
     - Decides required datasets/variables.
     - Deterministically retrieves/processes data via SolvX tools.
+    - Synthesizes findings using the selected provider (Gemini or NVIDIA NIM).
     - Returns structured answer with text, charts, 3D visualization actions, and provenance.
     """
     try:
-        return process_chat_message(request, api_key=x_gemini_key)
+        provider = request.provider or GLOBAL_PROVIDER_MANAGER.selected_provider
+        api_key = x_nvidia_key if provider == "nvidia" else (x_gemini_key or x_nvidia_key)
+        return process_chat_message(request, api_key=api_key)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI chat orchestration failed: {str(e)}")
 

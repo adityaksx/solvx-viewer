@@ -12,7 +12,7 @@ import { renderChartSvg } from '../ai/assistantDock.js';
 let _vc = null;
 let _container = null;
 let _aiAvailable = false;
-let _aiModel = 'gemini-2.0-flash';
+let _aiModel = 'gemini-2.5-flash';
 let _sessionApiKey = '';
 let _sessionId = null;
 
@@ -47,7 +47,7 @@ async function _checkStatus() {
     try {
         const res = await ApiClient.getAIStatus();
         _aiAvailable = Boolean(res?.available) || Boolean(_sessionApiKey);
-        _aiModel = res?.model || 'gemini-2.0-flash';
+        _aiModel = res?.model || 'gemini-2.5-flash';
     } catch (_) {
         _aiAvailable = Boolean(_sessionApiKey);
     }
@@ -194,25 +194,19 @@ function _appendAssistantMessage(history, res) {
     const msg = document.createElement('div');
     msg.className = 'ai-message ai-message-assistant';
 
-    // Tool Call Badges
-    let toolsHtml = '';
-    if (res.tool_calls && res.tool_calls.length > 0) {
-        const badges = res.tool_calls.map(t => {
-            const statusClass = t.status === 'success' ? 'status-ok' : (t.status === 'error' ? 'status-err' : 'status-empty');
-            return `<span class="ai-tool-pill ${statusClass}">⚙ ${t.tool}: ${t.status}</span>`;
-        }).join(' ');
-        toolsHtml = `<div class="ai-tools-row">${badges}</div>`;
-    }
+    // Tool Call Badges removed per user request:
+    // "these resolve_region: success ... should not be visible to user"
 
     // Inline Charts
     let chartsHtml = '';
-    if (res.charts && res.charts.length > 0) {
-        chartsHtml = `<div class="ai-charts-container">${res.charts.map(c => renderChartSvg(c)).join('')}</div>`;
+    const charts = res.charts || [];
+    if (charts.length > 0) {
+        chartsHtml = `<div class="ai-charts-container">${charts.map(c => renderChartSvg(c)).join('')}</div>`;
     }
 
     // Action Buttons
     let actionsHtml = '';
-    const allActions = res.vis_actions || (res.command ? [res.command] : []);
+    const allActions = res.visualization_actions || res.vis_actions || (res.command ? [res.command] : []);
     if (allActions.length > 0) {
         actionsHtml = `
             <div class="ai-actions-shelf">
@@ -220,7 +214,7 @@ function _appendAssistantMessage(history, res) {
                 <div class="ai-action-btn-group">
                     ${allActions.map(cmd => {
                         const cmdStr = encodeURIComponent(JSON.stringify(cmd));
-                        const label = (cmd.action || 'APPLY').replace('_', ' ').toUpperCase();
+                        const label = (cmd.action || 'APPLY').replace(/_/g, ' ').toUpperCase();
                         return `<button class="focus-btn ai-exec-btn" data-cmd="${cmdStr}">⬡ APPLY 3D ACTION (${label})</button>`;
                     }).join('')}
                 </div>
@@ -232,8 +226,8 @@ function _appendAssistantMessage(history, res) {
     let provHtml = '';
     if (res.provenance) {
         const p = res.provenance;
-        const models = (p.models_used || []).join(', ');
-        const obs = (p.observations_used || []).join(', ');
+        const models = p.dataset || (p.models_used || []).join(', ');
+        const obs = p.source || (p.observations_used || []).join(', ');
         const floats = (p.float_ids || []).slice(0, 4).join(', ') + ((p.float_ids?.length || 0) > 4 ? '…' : '');
         provHtml = `
             <div class="ai-provenance-box">
@@ -254,18 +248,20 @@ function _appendAssistantMessage(history, res) {
 
     // Follow-ups
     let followUpsHtml = '';
-    if (res.follow_up_suggestions && res.follow_up_suggestions.length > 0) {
+    const followUps = res.follow_up_suggestions || [];
+    if (followUps.length > 0) {
         followUpsHtml = `
             <div class="ai-followup-chips">
-                ${res.follow_up_suggestions.map(s => `<button class="ai-chip" data-prompt="${_escape(s)}">${_escape(s)}</button>`).join('')}
+                ${followUps.map(s => `<button class="ai-chip" data-prompt="${_escape(s)}">${_escape(s)}</button>`).join('')}
             </div>
         `;
     }
 
+    const textContent = res.message || res.explanation || (typeof res === 'string' ? res : 'Analysis complete.');
+
     msg.innerHTML = `
         <div class="ai-message-header">SOLVX AI SCIENCE ASSISTANT</div>
-        ${toolsHtml}
-        <div class="ai-message-body">${_formatMarkdown(res.explanation)}</div>
+        <div class="ai-message-body">${_formatMarkdown(textContent)}</div>
         ${chartsHtml}
         ${actionsHtml}
         ${provHtml}

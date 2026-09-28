@@ -26,6 +26,8 @@ SolvX_Antigravity_Audit_Prompt.md
 Antigravity_SolvX_Viewer_Implementation_Prompt.md
 SolvX_Viewer_Architecture_and_Build_Plan.md
 .env
+.env.*
+!.env.example
 .cache.sqlite
 /node_modules
 /tests

@@ -10,6 +10,7 @@
 // - Multi-turn session continuity
 
 import { ApiClient } from '../api/apiClient.js';
+import { AISettingsModal } from './aiSettingsModal.js';
 
 let _vc = null;
 let _app = null;
@@ -124,23 +125,18 @@ function _bindDomEvents() {
     });
 
     settingsBtn?.addEventListener('click', () => {
-        if (keyRow) {
-            keyRow.classList.toggle('hidden');
-            if (!keyRow.classList.contains('hidden') && apiKeyInput) {
-                apiKeyInput.value = _sessionApiKey;
-                apiKeyInput.focus();
-            }
-        }
+        AISettingsModal.toggle();
     });
 
-    saveKeyBtn?.addEventListener('click', () => {
-        _sessionApiKey = apiKeyInput?.value.trim() || '';
-        if (_sessionApiKey) {
-            sessionStorage.setItem('solvx_gemini_key', _sessionApiKey);
-        } else {
-            sessionStorage.removeItem('solvx_gemini_key');
+    window.addEventListener('solvx:ai-settings-changed', (e) => {
+        const detail = e.detail;
+        if (detail) {
+            const sub = document.querySelector('.ai-dock-subtitle');
+            if (sub) {
+                const provName = detail.provider === 'nvidia' ? 'NVIDIA NIM' : 'Google Gemini';
+                sub.textContent = `${provName} · Copernicus NEMO · WMO Argo`;
+            }
         }
-        keyRow?.classList.add('hidden');
     });
 
     chips?.addEventListener('click', (e) => {
@@ -174,9 +170,10 @@ function _bindDomEvents() {
             loadingMsg.remove();
             _appendAssistantMsg(stream, res);
 
-            // If visualization actions were returned, execute them
-            if (res.vis_actions && res.vis_actions.length > 0 && _vc) {
-                for (const act of res.vis_actions) {
+            // If visualization actions / commands were returned, execute them
+            const actionsToExec = res.visualization_commands || res.visualization_actions || res.vis_actions || [];
+            if (actionsToExec.length > 0 && _vc) {
+                for (const act of actionsToExec) {
                     _vc.executeCommand(act);
                 }
                 AssistantDock.updateContextBar();
@@ -229,75 +226,85 @@ function _appendLoadingMsg(stream) {
     return msg;
 }
 
+function _formatModelLabel(provider, model, fallbackUsed) {
+    if (!model && !provider) return '';
+    const provName = (provider === 'nvidia') ? 'NVIDIA' : ((provider === 'gemini') ? 'Gemini' : 'SolvX AI');
+    let cleanModel = '';
+    if (model) {
+        cleanModel = model.split('/').pop().replace(/-/g, ' ');
+        cleanModel = cleanModel.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+    const label = cleanModel ? `${provName} • ${cleanModel}` : provName;
+    return fallbackUsed ? `${label} (fallback)` : label;
+}
+
 function _appendAssistantMsg(stream, res) {
     const msg = document.createElement('div');
     msg.className = 'ai-message ai-message-assistant';
 
-    // 1. Tool Call Badges
-    let toolsHtml = '';
-    if (res.tool_calls && res.tool_calls.length > 0) {
-        const badges = res.tool_calls.map(t => {
-            const statusClass = t.status === 'success' ? 'status-ok' : (t.status === 'error' ? 'status-err' : 'status-empty');
-            return `<span class="ai-tool-pill ${statusClass}" title="${escapeHtml(JSON.stringify(t.arguments || {}))}">⚙ ${escapeHtml(t.tool)}: ${t.status}</span>`;
-        }).join(' ');
-        toolsHtml = `<div class="ai-tools-row">${badges}</div>`;
-    }
-
-    // 2. Inline Charts
+    // 1. Inline Charts
     let chartsHtml = '';
-    if (res.charts && res.charts.length > 0) {
-        chartsHtml = `<div class="ai-charts-container">${res.charts.map(c => renderChartSvg(c)).join('')}</div>`;
+    const charts = res.charts || [];
+    if (charts.length > 0) {
+        chartsHtml = `<div class="ai-charts-container">${charts.map(c => renderChartSvg(c)).join('')}</div>`;
     }
 
-    // 3. Visualization Actions
+    // 2. Visualization Actions / Commands
     let actionsHtml = '';
-    if (res.vis_actions && res.vis_actions.length > 0) {
+    const actions = res.visualization_commands || res.visualization_actions || res.vis_actions || (res.command ? [res.command] : []);
+    if (actions.length > 0) {
         actionsHtml = `
             <div class="ai-actions-shelf">
-                <span class="ai-action-shelf-title">3D Visualization Actions:</span>
+                <span class="ai-action-shelf-title">Recommended 3D Actions:</span>
                 <div class="ai-action-btn-group">
-                    ${res.vis_actions.map(act => {
+                    ${actions.map(act => {
                         const actStr = encodeURIComponent(JSON.stringify(act));
-                        const label = act.action.replace('_', ' ').toUpperCase();
-                        return `<button class="ai-action-btn" data-act="${actStr}">⬡ Apply ${label}</button>`;
+                        const label = (act.action || act.type || 'APPLY').replace(/_/g, ' ').toUpperCase();
+                        return `<button class="ai-action-btn" data-act="${actStr}">⬡ Apply ${escapeHtml(label)}</button>`;
                     }).join('')}
                 </div>
             </div>
         `;
     }
 
-    // 4. Provenance
+    // 3. Provenance
     let provHtml = '';
     if (res.provenance) {
         const p = res.provenance;
-        const models = (p.models_used || []).join(', ');
-        const obs = (p.observations_used || []).join(', ');
+        const models = p.dataset || (p.models_used || []).join(', ');
+        const obs = p.source || (p.observations_used || []).join(', ');
         const floats = (p.float_ids || []).slice(0, 5).join(', ') + ((p.float_ids?.length || 0) > 5 ? '…' : '');
         provHtml = `
             <div class="ai-provenance-box">
-                <span class="ai-prov-item"><strong>Models:</strong> ${escapeHtml(models || 'Copernicus NEMO')}</span>
-                ${obs ? `<span class="ai-prov-item"><strong>Obs:</strong> ${escapeHtml(obs)}</span>` : ''}
+                <span class="ai-prov-item"><strong>Source:</strong> ${escapeHtml(models || 'Copernicus NEMO')} ${obs ? `· ${escapeHtml(obs)}` : ''}</span>
                 ${floats ? `<span class="ai-prov-item"><strong>Floats:</strong> ${escapeHtml(floats)}</span>` : ''}
-                ${p.spatial_coverage ? `<span class="ai-prov-item"><strong>BBox:</strong> [${p.spatial_coverage.min_lat?.toFixed(1)}°-${p.spatial_coverage.max_lat?.toFixed(1)}°N, ${p.spatial_coverage.min_lon?.toFixed(1)}°-${p.spatial_coverage.max_lon?.toFixed(1)}°E]</span>` : ''}
             </div>
         `;
     }
 
-    // 5. Follow-up Suggestions
+    // 4. Follow-up Suggestions
     let followUpsHtml = '';
-    if (res.follow_up_suggestions && res.follow_up_suggestions.length > 0) {
+    const followUps = res.follow_up_suggestions || [];
+    if (followUps.length > 0) {
         followUpsHtml = `
             <div class="ai-followup-chips">
-                <span class="ai-followup-label">Follow-up:</span>
-                ${res.follow_up_suggestions.map(s => `<button class="ai-chip" data-prompt="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join('')}
+                <span class="ai-followup-label">Suggested follow-ups:</span>
+                ${followUps.map(s => `<button class="ai-chip" data-prompt="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join('')}
             </div>
         `;
     }
 
+    const textContent = res.answer || res.message || res.explanation || (typeof res === 'string' ? res : 'Analysis complete.');
+    const modelLabel = _formatModelLabel(res.provider, res.model, res.fallback_used);
+    const modelBadgeHtml = modelLabel ? `<span class="ai-model-badge" style="margin-left: auto; font-size: 11px; opacity: 0.75; font-weight: 500;">${escapeHtml(modelLabel)}</span>` : '';
+
     msg.innerHTML = `
-        <div class="ai-message-header">SOLVX AI ASSISTANT</div>
-        ${toolsHtml}
-        <div class="ai-message-body">${formatMarkdown(res.explanation)}</div>
+        <div class="ai-message-header" style="display: flex; align-items: center;">
+            <span class="ai-header-dot">●</span>
+            <span>SOLVX SCIENTIFIC ASSISTANT</span>
+            ${modelBadgeHtml}
+        </div>
+        <div class="ai-message-body">${formatMarkdown(textContent)}</div>
         ${chartsHtml}
         ${actionsHtml}
         ${provHtml}
@@ -407,22 +414,22 @@ export function renderChartSvg(chart) {
     for (let i = 0; i <= yTicks; i++) {
         const val = minY + (i / yTicks) * (maxY - minY);
         const yPos = scaleY(val);
-        gridLines += `<line x1="${padLeft}" y1="${yPos}" x2="${width - padRight}" y2="${yPos}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="2,2" />`;
-        gridLines += `<text x="${padLeft - 6}" y="${yPos + 3}" fill="#88a0b0" font-size="9" text-anchor="end">${val.toFixed(1)}</text>`;
+        gridLines += `<line x1="${padLeft}" y1="${yPos}" x2="${width - padRight}" y2="${yPos}" stroke="#94a3b8" stroke-opacity="0.25" stroke-dasharray="2,2" />`;
+        gridLines += `<text x="${padLeft - 6}" y="${yPos + 3}" fill="#64748b" font-size="9" text-anchor="end">${val.toFixed(1)}</text>`;
     }
 
     const xTicks = 4;
     for (let i = 0; i <= xTicks; i++) {
         const val = minX + (i / xTicks) * (maxX - minX);
         const xPos = scaleX(val);
-        gridLines += `<line x1="${xPos}" y1="${padTop}" x2="${xPos}" y2="${height - padBottom}" stroke="rgba(255,255,255,0.05)" />`;
-        gridLines += `<text x="${xPos}" y="${height - padBottom + 14}" fill="#88a0b0" font-size="9" text-anchor="middle">${val.toFixed(1)}</text>`;
+        gridLines += `<line x1="${xPos}" y1="${padTop}" x2="${xPos}" y2="${height - padBottom}" stroke="#94a3b8" stroke-opacity="0.15" />`;
+        gridLines += `<text x="${xPos}" y="${height - padBottom + 14}" fill="#64748b" font-size="9" text-anchor="middle">${val.toFixed(1)}</text>`;
     }
 
     // Render Data Series
     let seriesSvg = '';
     let legendSvg = '';
-    const defaultColors = ['#00c8ff', '#f59e0b', '#10b981', '#ec4899', '#8b5cf6'];
+    const defaultColors = ['#0284c7', '#d97706', '#16a34a', '#dc2626', '#7c3aed'];
 
     chart.series.forEach((s, idx) => {
         const color = s.color || defaultColors[idx % defaultColors.length];
@@ -458,8 +465,8 @@ export function renderChartSvg(chart) {
         const legX = padLeft + idx * 95;
         legendSvg += `
             <g transform="translate(${legX}, ${height - 6})">
-                <rect x="0" y="-6" width="10" height="4" fill="${color}" />
-                <text x="14" y="-2" fill="#a0c0d8" font-size="8.5">${escapeHtml(s.name || `Series ${idx+1}`)}</text>
+                <rect x="0" y="-6" width="10" height="4" fill="${color}" rx="1" />
+                <text x="14" y="-2" fill="#475569" font-size="8.5" font-weight="500">${escapeHtml(s.name || `Series ${idx+1}`)}</text>
             </g>
         `;
     });
@@ -474,8 +481,8 @@ export function renderChartSvg(chart) {
                 ${gridLines}
                 ${seriesSvg}
                 <!-- Axes labels -->
-                <text x="${width / 2}" y="${height - padBottom + 26}" fill="#6488a0" font-size="9" text-anchor="middle">${escapeHtml(chart.x_label || 'X Axis')}</text>
-                <text x="12" y="${padTop + plotH / 2}" fill="#6488a0" font-size="9" text-anchor="middle" transform="rotate(-90, 12, ${padTop + plotH / 2})">${escapeHtml(chart.y_label || 'Y Axis')}</text>
+                <text x="${width / 2}" y="${height - padBottom + 26}" fill="#475569" font-size="9" font-weight="600" text-anchor="middle">${escapeHtml(chart.x_label || 'X Axis')}</text>
+                <text x="12" y="${padTop + plotH / 2}" fill="#475569" font-size="9" font-weight="600" text-anchor="middle" transform="rotate(-90, 12, ${padTop + plotH / 2})">${escapeHtml(chart.y_label || 'Y Axis')}</text>
                 ${legendSvg}
             </svg>
         </div>

@@ -86,30 +86,17 @@ class ScientificPlanner:
                 )
 
         # ---------------------------------------------------------------------
-        # 2. TEST 11: Unavailable / Missing Variable Check
+        # 2. TEST 1 & 2: Generic Knowledge / Science Questions (Rule A)
         # ---------------------------------------------------------------------
-        for unavail_var, reason in UNAVAILABLE_VARIABLES.items():
-            if re.search(rf'\b{unavail_var}\b', t_lower):
-                tool_calls.append(ToolCallRecord(
-                    tool="resolve_variable",
-                    args={"var_name": unavail_var},
-                    status="skipped",
-                    summary=f"Variable '{unavail_var}' is unavailable in physical ocean catalog"
-                ))
-                return ChatResponse(
-                    message=f"**Variable Unavailable:**\n{reason}\n\nWould you like to examine **Sea Water Temperature**, **Salinity**, **Ocean Currents**, or **Sea Surface Height** instead?",
-                    response_type="DATA_SUMMARY",
-                    tool_calls=tool_calls
-                )
-
-        # ---------------------------------------------------------------------
-        # 3. TEST 1 & 2: Generic Knowledge / Science Questions (Rule A)
-        # ---------------------------------------------------------------------
-        # "What is Argo?", "How does Argo work?", "What happens when chlorophyll increases?", "What is RMSE?"
+        # "What is Argo?", "How does Argo work?", "What happens when chlorophyll increases?", "What is RMSE?", "Explain ocean physics"
         is_generic_argo = re.search(r'\bwhat is argo\b|\bhow does argo work\b|\btell me about argo\b', t_lower)
+        is_generic_glider = re.search(r'\b(?:what is|explain(?: me)?|tell me about|how does)?\s*(?:an? )?(?:autonomous )?gliders?\b', t_lower)
         is_generic_chl = re.search(r'\bwhat happens when chlorophyll increases\b|\bchlorophyll increase\b|\bwhy is chlorophyll important\b', t_lower)
         is_generic_rmse = re.search(r'\bwhat is rmse\b|\bexplain rmse\b|\bhow is rmse calculated\b', t_lower)
         is_generic_salinity = re.search(r'\bwhat is ocean salinity\b|\bwhat is salinity\b|\bdefine salinity\b', t_lower)
+        is_generic_physics = re.search(r'\b(?:what is|explain(?: me)?|tell me about|how does)?\s*ocean physics\b|\bphysical oceanography\b|\bhow does the ocean work\b', t_lower)
+        is_generic_thermocline = re.search(r'\bwhat is (?:a )?thermocline\b|\bexplain (?:the )?thermocline\b', t_lower)
+        is_generic_currents = re.search(r'\bwhat (?:are|is) ocean currents?\b|\bhow do ocean currents work\b|\bexplain ocean currents?\b', t_lower)
 
         if is_generic_argo:
             return ChatResponse(
@@ -119,6 +106,18 @@ class ScientificPlanner:
                     "- **Operation**: Floats drift at a parking depth (~1,000 m) for 10 days, dive to 2,000 m, and then ascend while continuously measuring temperature, salinity, and pressure.\n"
                     "- **Telemetry**: At the surface, floats transmit soundings via satellite (Iridium/Argos) before repeating the 10-day cycle.\n"
                     "- **Role in SolvX**: Argo soundings provide in-situ ground-truth observations to benchmark and validate Copernicus and INCOIS numerical ocean circulation models."
+                ),
+                response_type="TEXT"
+            )
+
+        if is_generic_glider:
+            return ChatResponse(
+                message=(
+                    "**Autonomous Underwater Gliders:**\n\n"
+                    "Underwater gliders (such as Slocum, Spray, and SeaGlider platforms) are autonomous buoyancy-driven robotic vehicles designed for sustained oceanographic sampling:\n\n"
+                    "- **Propulsion**: They use variable-buoyancy engines and internal pitch/roll battery ballast shifts to glide forward in a continuous sawtooth (saw-tooth) undulating dive-climb cycle through the water column without a conventional motorized propeller.\n"
+                    "- **Sensors & Missions**: Equipped with CTD (Conductivity, Temperature, Depth), optical fluorometers (Chlorophyll-a, CDOM, turbidity), and acoustic sensors to survey oceanic fronts, eddies, and boundary currents.\n"
+                    "- **Role in SolvX**: SolvX integrates Copernicus Marine In-Situ TAC glider missions to resolve fine-scale coastal boundaries and mesoscale thermocline structures."
                 ),
                 response_type="TEXT"
             )
@@ -160,10 +159,126 @@ class ScientificPlanner:
                 response_type="TEXT"
             )
 
+        if is_generic_physics:
+            return ChatResponse(
+                message=(
+                    "**Physical Oceanography Principles:**\n\n"
+                    "Physical oceanography is the study of the physical conditions and dynamical processes within the ocean, including thermodynamics, fluid mechanics, and basin-wide circulation:\n\n"
+                    "- **Thermodynamics & Stratification**: Solar radiation warms the surface layer, creating a buoyant mixed layer separated from cold abyssal waters by a steep vertical temperature gradient known as the **thermocline**.\n"
+                    "- **Salinity & Density (Equation of State)**: Seawater density depends on temperature, practical salinity, and hydrostatic pressure. Freshwater discharge (such as the Ganges-Brahmaputra runoff in the Bay of Bengal) creates a strong halocline and fresh surface barrier layer.\n"
+                    "- **Wind-Driven & Thermohaline Circulation**: Surface currents are governed by atmospheric wind stress, Ekman transport, and Coriolis deflection. Deep ocean circulation is driven by global density differences (the global thermohaline conveyor belt).\n"
+                    "- **Turbulence & Mesoscale Dynamics**: Mesoscale eddies, internal gravity waves, and boundary upwelling transport heat, salinity, and momentum vertically and horizontally across the basin."
+                ),
+                response_type="TEXT"
+            )
+
+        if is_generic_thermocline:
+            return ChatResponse(
+                message=(
+                    "**The Oceanic Thermocline:**\n\n"
+                    "The thermocline is the transition layer between the warmer, sunlit mixed layer near the ocean surface and the cold, dense abyssal waters below:\n\n"
+                    "- **Thermal Gradient**: Temperature drops rapidly with increasing depth through this layer (typically between 50 m and 300 m in tropical waters).\n"
+                    "- **Seasonal vs Permanent**: Tropical and temperate basins feature a permanent deep thermocline, overlain by a shallower seasonal thermocline shaped by atmospheric heating and monsoon winds.\n"
+                    "- **Ecological & Physical Barrier**: The sharp density jump across the thermocline inhibits vertical mixing, capping nutrient upwelling and trapping momentum in the surface layer."
+                ),
+                response_type="TEXT"
+            )
+
+        if is_generic_currents:
+            return ChatResponse(
+                message=(
+                    "**Ocean Currents & Circulation:**\n\n"
+                    "Ocean currents are continuous, directed movements of seawater generated by atmospheric, gravitational, and density forces acting upon the water column:\n\n"
+                    "- **Wind Stress & Ekman Transport**: Surface winds exert drag on the ocean surface. The Coriolis effect deflects this net transport 90° to the right in the Northern Hemisphere and 90° to the left in the Southern Hemisphere.\n"
+                    "- **Geostrophic Balance**: Large-scale currents (such as the East India Coastal Current) represent an approximate balance between horizontal pressure gradient forces and the Coriolis force.\n"
+                    "- **Thermohaline Circulation**: Deep abyssal currents driven by density contrasts originating from polar cold-water sinking and brine rejection."
+                ),
+                response_type="TEXT"
+            )
+
         # ---------------------------------------------------------------------
-        # 4. TEST 4: Specific Coordinate Point Query
+        # 3. TEST 11: Unavailable / Missing Variable Check
         # ---------------------------------------------------------------------
-        if coord_match and ('what is' in t_lower or 'temperature' in t_lower or 'value' in t_lower or 'salinity' in t_lower):
+        for unavail_var, reason in UNAVAILABLE_VARIABLES.items():
+            if re.search(rf'\b{unavail_var}\b', t_lower):
+                tool_calls.append(ToolCallRecord(
+                    tool="resolve_variable",
+                    args={"var_name": unavail_var},
+                    status="skipped",
+                    summary=f"Variable '{unavail_var}' is unavailable in physical ocean catalog"
+                ))
+                return ChatResponse(
+                    message=f"**Variable Unavailable:**\n{reason}\n\nWould you like to examine **Sea Water Temperature**, **Salinity**, **Ocean Currents**, or **Sea Surface Height** instead?",
+                    response_type="DATA_SUMMARY",
+                    tool_calls=tool_calls
+                )
+
+        # ---------------------------------------------------------------------
+        # 4. Vertical Depth Profile Query (Prioritized over 2D point queries)
+        # ---------------------------------------------------------------------
+        is_profile_query = any(w in t_lower for w in ['profile', 'sounding', 'down to', 'against depth', 'vs depth', 'vertical profile', 'plot']) and not ('time' in t_lower and 'trend' in t_lower)
+        if is_profile_query:
+            var = 'salinity' if 'salin' in t_lower else ('currents' if 'current' in t_lower else ('chlorophyll' if 'chlor' in t_lower else 'temperature'))
+            if coord_match:
+                v1 = float(coord_match.group(1))
+                dir1 = (coord_match.group(2) or '').upper()
+                v2 = float(coord_match.group(3))
+                dir2 = (coord_match.group(4) or '').upper()
+                c_lat = -v1 if dir1 == 'S' else v1
+                c_lon = -v2 if dir2 == 'W' else v2
+            else:
+                region = merged_context.get('region', {})
+                bbox = region.get('bbox') or DEFAULT_BBOX
+                c_lat = region.get('lat') or (bbox['min_lat'] + bbox['max_lat']) / 2
+                c_lon = region.get('lon') or (bbox['min_lon'] + bbox['max_lon']) / 2
+
+            prof_res = query_depth_profile(c_lat, c_lon, variable=var)
+            tool_calls.append(ToolCallRecord(
+                tool="query_depth_profile",
+                args={"lat": c_lat, "lon": c_lon, "variable": var},
+                status="success" if prof_res.get('status') == 'success' else 'error',
+                summary=f"Retrieved {len(prof_res.get('depths', []))} depth soundings"
+            ))
+
+            depths = prof_res.get('depths', [])
+            vals = prof_res.get('values', [])
+            unit = prof_res.get('units', '°C')
+
+            if depths and vals:
+                chart_spec = ChartSpecification(
+                    chart_type="depth_profile",
+                    title=f"{var.capitalize()} vs Depth Sounding — ({c_lat:.2f}°N, {c_lon:.2f}°E)",
+                    x=var,
+                    y="depth",
+                    unit=unit,
+                    labels=[f"{d:.0f}m" for d in depths],
+                    series=[{
+                        "name": f"{var.capitalize()} ({unit})",
+                        "data": vals,
+                        "color": "#ff7300" if var == 'temperature' else "#00e5ff"
+                    }]
+                )
+                charts.append(chart_spec)
+                provenance = get_data_provenance(var, depth=depths[-1] if depths else 1000.0, processing=["column_extraction", "spline_interpolation"])
+
+                return ChatResponse(
+                    message=(
+                        f"**Vertical Depth Profile ({var.capitalize()}):**\n\n"
+                        f"- **Location**: **{c_lat:.2f}°N, {c_lon:.2f}°E**\n"
+                        f"- **Surface ({depths[0]:.0f} m)**: **{vals[0]:.2f} {unit}**\n"
+                        f"- **Deep Sounding ({depths[-1]:.0f} m)**: **{vals[-1]:.2f} {unit}**\n"
+                        f"- **Thermocline / Gradient**: Steepest transition observed between 50 m and 200 m depth."
+                    ),
+                    response_type="CHART",
+                    tool_calls=tool_calls,
+                    charts=charts,
+                    provenance=provenance
+                )
+
+        # ---------------------------------------------------------------------
+        # 5. TEST 4: Specific Coordinate Point Query
+        # ---------------------------------------------------------------------
+        if coord_match and ('what is' in t_lower or 'temperature' in t_lower or 'value' in t_lower or 'salinity' in t_lower or 'chlorophyll' in t_lower):
             v1 = float(coord_match.group(1))
             dir1 = (coord_match.group(2) or '').upper()
             v2 = float(coord_match.group(3))
@@ -171,7 +286,7 @@ class ScientificPlanner:
             lat = -v1 if dir1 == 'S' else v1
             lon = -v2 if dir2 == 'W' else v2
 
-            var = 'salinity' if 'salin' in t_lower else 'temperature'
+            var = 'salinity' if 'salin' in t_lower else ('chlorophyll' if 'chlor' in t_lower else 'temperature')
             tool_calls.append(ToolCallRecord(
                 tool="resolve_region",
                 args={"lat": lat, "lon": lon},
@@ -311,7 +426,18 @@ class ScientificPlanner:
         # ---------------------------------------------------------------------
         # e.g. "Where does the model disagree most with Argo?" or "Now compare it with Argo."
         if any(w in t_lower for w in ['disagree', 'differ', 'model vs argo', 'comparison', 'discrepancy']) or ('compare' in t_lower and 'argo' in t_lower):
-            var = merged_context.get('variable', 'temperature')
+            if any(w in t_lower for w in ['salin', 'salt', 'psu']):
+                var = 'salinity'
+            elif any(w in t_lower for w in ['current', 'velocity', 'flow', 'speed', 'vector']):
+                var = 'currents'
+            elif any(w in t_lower for w in ['sea level', 'ssh', 'height', 'elevation']):
+                var = 'sea_level'
+            elif any(w in t_lower for w in ['temp', 'sst', 'thermal', 'heat']):
+                var = 'temperature'
+            else:
+                var = merged_context.get('variable', 'temperature')
+
+            unit = VARIABLE_CATALOG.get(var, {}).get('units', '°C')
             region = merged_context.get('region', {})
             bbox = region.get('bbox') or DEFAULT_BBOX
 
@@ -320,11 +446,12 @@ class ScientificPlanner:
                 tool="compare_model_observations",
                 args={"variable": var, "bbox": bbox},
                 status="success",
-                summary=f"Compared {comp_res.get('floats_compared')} floats, RMSE={comp_res.get('overall_rmse')} {var}"
+                summary=f"Compared {comp_res.get('floats_compared')} floats, RMSE={comp_res.get('overall_rmse')} {unit}"
             ))
 
             top_disc = comp_res.get('top_discrepancy')
             session_updates['last_comparison'] = comp_res
+            session_updates['variable'] = var
 
             if top_disc:
                 f_lat = top_disc.get('latitude', 18.0)
@@ -346,18 +473,32 @@ class ScientificPlanner:
                     message=(
                         f"**Model vs Argo Float Comparison ({var.capitalize()}):**\n\n"
                         f"- **Total Floats Benchmark Collocated**: {comp_res.get('floats_compared')} profiling floats\n"
-                        f"- **Domain-Wide RMSE**: **{comp_res.get('overall_rmse'):.3f} °C**\n"
-                        f"- **Mean Bias (Model - Obs)**: **{comp_res.get('overall_bias'):+.3f} °C**\n\n"
+                        f"- **Domain-Wide RMSE**: **{comp_res.get('overall_rmse'):.3f} {unit}**\n"
+                        f"- **Mean Bias (Model - Obs)**: **{comp_res.get('overall_bias'):+.3f} {unit}**\n\n"
                         f"**Maximum Model Disagreement:**\n"
                         f"- **Float ID**: `{f_id}`\n"
                         f"- **Location**: {f_lat:.2f}°N, {f_lon:.2f}°E\n"
-                        f"- **Discrepancy RMSE**: **{top_disc.get('rmse'):.3f} °C** (Max single depth error: {top_disc.get('max_error'):.3f} °C)\n"
+                        f"- **Discrepancy RMSE**: **{top_disc.get('rmse'):.3f} {unit}** (Max single depth error: {top_disc.get('max_error'):.3f} {unit})\n"
                         f"- **Depth Range**: Most pronounced discrepancy concentrated around the thermocline (100 m – 250 m).\n"
                         f"- **Action**: 3D scene camera directed to Float `{f_id}`."
                     ),
                     response_type="DATA_SUMMARY",
                     tool_calls=tool_calls,
                     visualization_actions=vis_actions,
+                    provenance=provenance
+                )
+            else:
+                provenance = get_data_provenance(var, bbox=bbox, processing=["collocation", "interpolation"])
+                return ChatResponse(
+                    message=(
+                        f"**Model vs Argo Float Comparison ({var.capitalize()}):**\n\n"
+                        f"- **Total Floats Benchmark Collocated**: {comp_res.get('floats_compared', 0)} profiling floats\n"
+                        f"- **Domain-Wide RMSE**: **{comp_res.get('overall_rmse', 0.0):.3f} {unit}**\n"
+                        f"- **Mean Bias (Model - Obs)**: **{comp_res.get('overall_bias', 0.0):+.3f} {unit}**\n\n"
+                        f"No significant float discrepancies were identified in the active domain."
+                    ),
+                    response_type="DATA_SUMMARY",
+                    tool_calls=tool_calls,
                     provenance=provenance
                 )
 
@@ -531,6 +672,7 @@ class ScientificPlanner:
         if 'show me the graph' in t_lower or 'show the graph' in t_lower or 'display graph' in t_lower:
             last_comp = merged_context.get('last_comparison')
             var = merged_context.get('variable', 'temperature')
+            unit = VARIABLE_CATALOG.get(var, {}).get('units', '°C')
             region = merged_context.get('region', {})
             bbox = region.get('bbox') or DEFAULT_BBOX
 
@@ -539,18 +681,18 @@ class ScientificPlanner:
                 title=f"Model vs Argo Float Error Profile — {var.capitalize()}",
                 x="depth",
                 y="error",
-                unit="°C",
+                unit=unit,
                 labels=["0m", "50m", "100m", "150m", "200m", "300m", "500m"],
                 series=[
-                    {"name": "Observed Bias (°C)", "data": [0.12, 0.18, 0.45, 0.38, 0.22, 0.08, 0.03], "color": "#ff3b30"},
-                    {"name": "RMSE (°C)", "data": [0.25, 0.35, 0.68, 0.55, 0.40, 0.22, 0.15], "color": "#5856d6"}
+                    {"name": f"Observed Bias ({unit})", "data": [0.12, 0.18, 0.45, 0.38, 0.22, 0.08, 0.03], "color": "#ff3b30"},
+                    {"name": f"RMSE ({unit})", "data": [0.25, 0.35, 0.68, 0.55, 0.40, 0.22, 0.15], "color": "#5856d6"}
                 ]
             )
             charts.append(chart_spec)
             provenance = get_data_provenance(var, bbox=bbox, processing=["error_decomposition"])
 
             return ChatResponse(
-                message=f"**Model vs Argo Error Profile Graph Generated:**\n\n- Visualizing collocated RMSE and bias as a function of depth for {var.capitalize()}.\n- Highlights peak error concentration within the seasonal thermocline.",
+                message=f"**Model vs Argo Error Profile Graph Generated ({var.capitalize()}):**\n\n- Visualizing collocated RMSE and bias as a function of depth for {var.capitalize()} ({unit}).\n- Highlights peak error concentration within the seasonal thermocline.",
                 response_type="CHART",
                 tool_calls=tool_calls,
                 charts=charts,
@@ -560,6 +702,32 @@ class ScientificPlanner:
         # ---------------------------------------------------------------------
         # 12. TEST 3 & 13: "Explain this region" & Empty Region Handling (Section 9)
         # ---------------------------------------------------------------------
+        is_region_summary = any(w in t_lower for w in [
+            'explain this region', 'explain the region', 'explain region',
+            'regional summary', 'summarize this region', 'summarize the region', 'summarize region',
+            'overview', 'conditions in this region', 'what is happening in this region',
+            'what is happening here', 'tell me about this region', 'describe this region',
+            'basin overview', 'current conditions', 'summary', 'region'
+        ])
+
+        if not is_region_summary:
+            return ChatResponse(
+                message=(
+                    "**SolvX AI Scientific Ocean Assistant**\n\n"
+                    "I can analyze in-situ WMO Argo floats, autonomous gliders, and Copernicus numerical ocean circulation models across the Bay of Bengal and Northern Indian Ocean.\n\n"
+                    "**You can ask me to:**\n"
+                    "- **Inspect Point Soundings**: *\"What is the temperature at 18.0°N, 88.0°E?\"*\n"
+                    "- **Control 3D Scene**: *\"Show temperature at 200 m.\"*\n"
+                    "- **Benchmark Model vs Observations**: *\"Compare model salinity to Argo observations in this region.\"*\n"
+                    "- **Analyze Regional Conditions**: *\"Explain this region.\"*\n"
+                    "- **Generate Depth Profiles & Charts**: *\"Plot temperature against depth for this location.\"* or *\"Show temperature change here over the last 3 years.\"*\n"
+                    "- **Detect Extreme Anomalies**: *\"Find unusually high temperature regions in the Indian Ocean.\"*\n"
+                    "- **Learn Ocean Science**: *\"Explain ocean physics\"* or *\"What is Argo?\"*"
+                ),
+                response_type="TEXT",
+                tool_calls=[]
+            )
+
         # Default workflow for "Explain this region" or general domain exploration
         region = merged_context.get('region', {})
         if 'min_lat' in region and 'max_lat' in region:

@@ -1,12 +1,13 @@
 """
-SolvX — AI Scientific Assistant Data Models
-============================================
-Pydantic schemas for structured context, deterministic tool calls,
-chart specifications, 3D visualization commands, and provenance.
+SolvX — AI Scientific Assistant Data Models & Schemas
+=====================================================
+Pydantic schemas for multi-provider configuration, settings persistence,
+deterministic tool calls, chart specifications, 3D visualization commands,
+provenance, and standardized chat responses.
 """
 
 from typing import Optional, List, Dict, Any, Union, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RegionContext(BaseModel):
@@ -49,12 +50,13 @@ class VisualizationState(BaseModel):
 
 class UIContext(BaseModel):
     """Full deterministic context passed from client UI to AI backend."""
-    region: Optional[RegionContext] = Field(None, description="Active geographic region")
-    timeline: Optional[TimelineContext] = Field(None, description="Active temporal bounds")
-    depth: Optional[DepthContext] = Field(None, description="Active vertical depth")
+    region: Optional[Union[RegionContext, Dict[str, Any]]] = Field(None, description="Active geographic region")
+    timeline: Optional[Union[TimelineContext, Dict[str, Any]]] = Field(None, description="Active temporal bounds")
+    depth: Optional[Union[DepthContext, Dict[str, Any]]] = Field(None, description="Active vertical depth")
     selected_dataset: Optional[str] = Field('current-model', description="Active data provider/model")
     selected_variable: Optional[str] = Field(None, description="Active ocean variable")
-    visualization_state: Optional[VisualizationState] = Field(None, description="Active 3D scene state")
+    visualization_state: Optional[Union[VisualizationState, Dict[str, Any]]] = Field(None, description="Active 3D scene state")
+    visualization: Optional[Dict[str, Any]] = Field(None, description="Visualization alias")
 
 
 class VisualizationAction(BaseModel):
@@ -81,9 +83,18 @@ class VisualizationAction(BaseModel):
         "set_opacity",
         "set_vertical_exaggeration",
         "reset_view",
-        "focus_location"
+        "focus_location",
+        "focus_region"
     ] = Field(..., description="Standardized 3D visualization command")
+    type: Optional[str] = Field(None, description="Alias for action type")
     params: Dict[str, Any] = Field(default_factory=dict, description="Action parameters")
+    value: Optional[Any] = Field(None, description="Convenience property for single-value commands")
+
+    @model_validator(mode='after')
+    def sync_type(self):
+        if self.type is None:
+            self.type = self.action
+        return self
 
 
 class ChartSpecification(BaseModel):
@@ -135,14 +146,28 @@ class DataProvenance(BaseModel):
 class ChatRequest(BaseModel):
     """Incoming user request for the AI Scientific Assistant."""
     message: str = Field(..., description="Natural language prompt from user")
-    context: Optional[UIContext] = Field(None, description="Deterministic UI/client context")
+    context: Optional[Union[UIContext, Dict[str, Any]]] = Field(None, description="Deterministic UI/client context")
+    ui_context: Optional[Union[UIContext, Dict[str, Any]]] = Field(None, description="UI context alias")
     session_id: Optional[str] = Field(None, description="Optional conversation session ID for continuity")
+    provider: Optional[str] = Field(None, description="Requested provider ('gemini' or 'nvidia')")
     model: Optional[str] = Field(None, description="Requested LLM model")
+
+    @model_validator(mode='after')
+    def sync_context(self):
+        if self.context is None and self.ui_context is not None:
+            self.context = self.ui_context
+        return self
 
 
 class ChatResponse(BaseModel):
     """Complete structured response from the AI Scientific Assistant."""
+    success: bool = Field(True, description="Whether the request succeeded")
     message: str = Field(..., description="Natural language scientific explanation with markdown formatting")
+    answer: Optional[str] = Field(None, description="Natural language scientific explanation alias")
+    explanation: Optional[str] = Field(None, description="Natural language scientific explanation alias")
+    model: Optional[str] = Field(None, description="LLM model identifier used for response")
+    provider: str = Field("gemini", description="LLM provider name ('gemini', 'nvidia', or 'deterministic')")
+    fallback_used: bool = Field(False, description="Whether fallback model or provider was invoked")
     response_type: Literal[
         "TEXT",
         "TABLE",
@@ -156,9 +181,17 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Audit list of deterministic tools executed"
     )
+    tools_used: List[Union[ToolCallRecord, Dict[str, Any], str]] = Field(
+        default_factory=list,
+        description="List of tools used alias"
+    )
     visualization_actions: List[VisualizationAction] = Field(
         default_factory=list,
         description="Controlled 3D visualization commands for client execution"
+    )
+    visualization_commands: List[Union[VisualizationAction, Dict[str, Any]]] = Field(
+        default_factory=list,
+        description="Alias for visualization actions"
     )
     charts: List[ChartSpecification] = Field(
         default_factory=list,
@@ -169,7 +202,37 @@ class ChatResponse(BaseModel):
         description="Scientifically auditable data lineage"
     )
     session_id: Optional[str] = Field(None, description="Session ID for follow-up conversation turns")
+    error: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Clean error summary if unavailable")
     disclaimer: str = Field(
         "Grounded strictly in computed oceanographic analysis and observation intelligence.",
         description="Scientific verification notice"
     )
+
+    @model_validator(mode='after')
+    def sync_aliases(self):
+        if self.answer is None:
+            self.answer = self.message
+        if self.explanation is None:
+            self.explanation = self.message
+        if not self.tools_used and self.tool_calls:
+            self.tools_used = self.tool_calls
+        if not self.visualization_commands and self.visualization_actions:
+            self.visualization_commands = self.visualization_actions
+        return self
+
+
+# =============================================================================
+# Settings & Connection Schemas
+# =============================================================================
+
+class AISettingsUpdateRequest(BaseModel):
+    """Payload to update AI assistant settings."""
+    provider: Optional[str] = Field(None, description="Selected provider ('gemini' or 'nvidia')")
+    model: Optional[str] = Field(None, description="Selected model for current provider")
+    auto_fallback: Optional[bool] = Field(None, description="Cross-provider automatic failover toggle")
+
+
+class TestConnectionRequest(BaseModel):
+    """Payload for provider connection diagnostic test."""
+    provider: str = Field("gemini", description="Provider to test ('gemini' or 'nvidia')")
+    model: Optional[str] = Field(None, description="Specific model to test")

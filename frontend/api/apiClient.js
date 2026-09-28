@@ -2,16 +2,18 @@
 // Implements client-side LRU cache, single-flight deduplication, and AbortController request cancellation.
 
 const API_BASE = (
-    window.location.port === '5500' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.hostname === 'localhost'
+    typeof window !== 'undefined' && (
+        window.location.port === '5500' ||
+        window.location.hostname === '127.0.0.1' ||
+        window.location.hostname === 'localhost'
+    )
 )
     ? `http://${window.location.hostname || '127.0.0.1'}:8080`
-    : window.location.origin;
+    : (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8080');
 
 const inFlightRequests = new Map();
 const clientLRUCache = new Map();
-const MAX_CACHE_ENTRIES = 50;
+const MAX_CACHE_ENTRIES = 120;
 
 const activeAbortControllers = new Map();
 
@@ -37,10 +39,10 @@ function setToCache(key, value) {
 async function request(endpoint, options = {}) {
     const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
     const isGet = !options.method || options.method === 'GET';
-    const category = options.category || null;
+    const category = options.category !== undefined ? options.category : null;
 
-    // Abort previous in-flight request in the same category if requested
-    if (category) {
+    // Abort previous in-flight request in the same category if requested (except for background prefetch)
+    if (category && category !== 'prefetch') {
         if (activeAbortControllers.has(category)) {
             try {
                 activeAbortControllers.get(category).abort();
@@ -232,7 +234,7 @@ export const ApiClient = {
         if (Array.isArray(variables)) {
             variables.filter(Boolean).forEach(v => q.append('variables', String(v)));
         }
-        return request(`/api/data/ocean/bundle?${q}`, { category: 'bundle', ...options });
+        return request(`/api/data/ocean/bundle?${q}`, { category: 'active-bundle', ...options });
     },
 
     async getOceanVariable({ provider = 'auto', variable, bbox, depth = null, time = null, stride = 1, resolution = 'native', options = {} }) {
@@ -248,7 +250,7 @@ export const ApiClient = {
         });
         if (depth != null) q.set('depth', String(depth));
         if (time) q.set('time', time);
-        return request(`/api/data/ocean?${q}`, { category: 'variable', ...options });
+        return request(`/api/data/ocean?${q}`, { category: 'active-variable', ...options });
     },
 
     async getOceanVariables({ provider = 'auto', bbox, depth = null, time = null }) {
@@ -372,7 +374,7 @@ export const ApiClient = {
         return request(`/api/current-field?${q}`);
     },
 
-    async getPoint(lat, lon, time = null, depth = null, variable = null, dataset = null) {
+    async getPoint(lat, lon, time = null, depth = null, variable = null, dataset = null, options = {}) {
         const q = new URLSearchParams({
             latitude: String(lat),
             longitude: String(lon)
@@ -381,7 +383,7 @@ export const ApiClient = {
         if (depth != null) q.set('depth', String(depth));
         if (variable) q.set('variable', variable);
         if (dataset) q.set('dataset', dataset);
-        return request(`/api/point?${q}`, { category: 'point_inspect' });
+        return request(`/api/point?${q}`, { category: 'point_inspect', ...options });
     },
 
     async getPointProfile({ lat, lon, time = null, variable = 'temperature', dataset = null }) {
@@ -489,14 +491,14 @@ export const ApiClient = {
         return request(`/api/ml/anomalies?${q}`);
     },
 
-    async getMLPoint(lat, lon, time = null, depth = null) {
+    async getMLPoint(lat, lon, time = null, depth = null, options = {}) {
         const q = new URLSearchParams({
             latitude: String(lat),
             longitude: String(lon)
         });
         if (time) q.set('time', time);
         if (depth != null) q.set('depth', String(depth));
-        return request(`/api/ml/point?${q}`);
+        return request(`/api/ml/point?${q}`, { category: 'point_ml', ...options });
     },
 
     // =========================================================================

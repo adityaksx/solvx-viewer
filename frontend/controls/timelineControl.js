@@ -36,6 +36,39 @@ export class TimelineControl {
         this.setupEvents();
     }
 
+    _filterToDefaultTwoMonthRange(timestamps) {
+        if (!timestamps || !timestamps.length) return [];
+        const now = new Date();
+        const twoMonthsAgo = new Date(now.getTime());
+        // Calendar-month subtraction respecting variable month lengths
+        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
+        const nowIso = now.toISOString();
+        const twoMonthsAgoIso = twoMonthsAgo.toISOString();
+
+        // 1. Filter to timestamps in [twoMonthsAgo, now]
+        const inRange = timestamps.filter(ts => ts >= twoMonthsAgoIso && ts <= nowIso);
+        if (inRange.length > 0) {
+            return inRange;
+        }
+
+        // 2. Fallback: If dataset is historical or in future, find the latest timestamp
+        // and take the 2 calendar months leading up to it so timeline is never empty.
+        const latestTs = timestamps[timestamps.length - 1];
+        const latestDate = new Date(latestTs);
+        if (!isNaN(latestDate.getTime())) {
+            const rangeStart = new Date(latestDate.getTime());
+            rangeStart.setMonth(rangeStart.getMonth() - 2);
+            const rangeStartIso = rangeStart.toISOString();
+            const fallbackRange = timestamps.filter(ts => ts >= rangeStartIso && ts <= latestTs);
+            if (fallbackRange.length > 0) {
+                return fallbackRange;
+            }
+        }
+
+        return timestamps;
+    }
+
     async loadTimelineForVariable(variable, bbox = null, depth = null, start = null, end = null) {
         this.activeVariable = variable;
         this.bbox = bbox;
@@ -49,14 +82,28 @@ export class TimelineControl {
             this.allTimestamps = data.available_timestamps || [];
             this.currentResolution = data.default_resolution || 'daily';
             
-            // Set default date range to match loaded data
+            // Set default date range to last 2 calendar months relative to system time
             if (this.allTimestamps.length > 0) {
-                if (this.timeStart) this.timeStart.value = this.allTimestamps[0].substring(0, 16);
-                if (this.timeEnd) this.timeEnd.value = this.allTimestamps[this.allTimestamps.length - 1].substring(0, 16);
+                if (start && end) {
+                    this.windowTimestamps = this.allTimestamps.filter(ts => ts >= start && ts <= end);
+                    if (!this.windowTimestamps.length) this.windowTimestamps = [...this.allTimestamps];
+                } else {
+                    this.windowTimestamps = this._filterToDefaultTwoMonthRange(this.allTimestamps);
+                }
+
+                if (this.timeStart && this.windowTimestamps.length > 0) {
+                    this.timeStart.value = this.windowTimestamps[0].substring(0, 16);
+                }
+                if (this.timeEnd && this.windowTimestamps.length > 0) {
+                    this.timeEnd.value = this.windowTimestamps[this.windowTimestamps.length - 1].substring(0, 16);
+                }
+            } else {
+                this.windowTimestamps = [];
             }
 
             this._updateResolutionButtons(data.resolutions || ['daily']);
-            this._applyResolutionFilter();
+            // Apply resolution filter and select the latest timestamp in the window
+            this._applyResolutionFilter({ selectLatest: true, notify: false });
             return data;
         } catch (e) {
             console.warn('[TimelineControl] Failed fetching timeline metadata:', e);
@@ -78,16 +125,20 @@ export class TimelineControl {
         setBtn(this.resMonthlyBtn, 'monthly');
     }
 
-    _applyResolutionFilter() {
-        if (!this.allTimestamps.length) {
+    _applyResolutionFilter({ preserveTimestamp = null, selectLatest = false, notify = false } = {}) {
+        const sourceList = (this.windowTimestamps && this.windowTimestamps.length) 
+            ? this.windowTimestamps 
+            : this.allTimestamps;
+
+        if (!sourceList.length) {
             this.filteredTimestamps = [];
-            this.setTimes([]);
+            this.setTimes([], { notify: false });
             return;
         }
 
         if (this.currentResolution === 'monthly') {
             const seen = new Set();
-            this.filteredTimestamps = this.allTimestamps.filter(ts => {
+            this.filteredTimestamps = sourceList.filter(ts => {
                 const ym = ts.slice(0, 7);
                 if (seen.has(ym)) return false;
                 seen.add(ym);
@@ -95,29 +146,61 @@ export class TimelineControl {
             });
         } else if (this.currentResolution === 'daily') {
             const seen = new Set();
-            this.filteredTimestamps = this.allTimestamps.filter(ts => {
+            this.filteredTimestamps = sourceList.filter(ts => {
                 const ymd = ts.slice(0, 10);
                 if (seen.has(ymd)) return false;
                 seen.add(ymd);
                 return true;
             });
         } else {
-            this.filteredTimestamps = [...this.allTimestamps];
+            this.filteredTimestamps = [...sourceList];
         }
 
-        this.setTimes(this.filteredTimestamps);
+        this.setTimes(this.filteredTimestamps, { preserveTimestamp, selectLatest, notify });
     }
 
-    setTimes(times = [], notify = false) {
+    setTimes(times = [], { preserveTimestamp = null, selectLatest = false, notify = false } = {}) {
         this.filteredTimestamps = times;
+        if (!times.length) {
+            this.currentIndex = 0;
+            if (this.slider) {
+                this.slider.max = '0';
+                this.slider.value = '0';
+            }
+            this.updateDisplay();
+            return;
+        }
+
+        if (preserveTimestamp) {
+            let foundIdx = times.indexOf(preserveTimestamp);
+            if (foundIdx === -1) {
+                // Find nearest timestamp by absolute time diff
+                const targetMs = new Date(preserveTimestamp).getTime();
+                let closestIdx = 0;
+                let minDiff = Infinity;
+                times.forEach((t, i) => {
+                    const diff = Math.abs(new Date(t).getTime() - targetMs);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestIdx = i;
+                    }
+                });
+                foundIdx = closestIdx;
+            }
+            this.currentIndex = foundIdx;
+        } else if (selectLatest) {
+            this.currentIndex = times.length - 1;
+        } else {
+            this.currentIndex = Math.max(0, Math.min(this.currentIndex, times.length - 1));
+        }
+
         if (this.slider) {
             this.slider.max = String(Math.max(0, times.length - 1));
-            this.slider.value = '0';
+            this.slider.value = String(this.currentIndex);
         }
-        this.currentIndex = 0;
         this.updateDisplay();
         if (notify && times.length > 0) {
-            this.onTimeChange(0, times[0], this.getCurrentMeta());
+            this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
         }
     }
 
@@ -180,14 +263,21 @@ export class TimelineControl {
     }
 
     setupEvents() {
-        let sliderDebounce = null;
+        let animFrameId = null;
         this.slider?.addEventListener('input', (e) => {
             this.currentIndex = Number(e.target.value);
+            // Synchronous visual feedback on input
             this.updateDisplay();
-            clearTimeout(sliderDebounce);
-            sliderDebounce = setTimeout(() => {
+
+            // Cancel any pending micro-frame to coalesce rapid drag events
+            if (animFrameId) cancelAnimationFrame(animFrameId);
+            animFrameId = requestAnimationFrame(() => {
+                animFrameId = null;
+                if (window.performance && performance.mark) {
+                    performance.mark('timeline-input-dispatch');
+                }
                 this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
-            }, 200);
+            });
         });
 
         if (this.btnSetPeriod) {
@@ -200,21 +290,30 @@ export class TimelineControl {
                 const dEnd = new Date(endVal);
                 if (dStart > dEnd) return;
                 
-                await this.loadTimelineForVariable(this.activeVariable, this.bbox, this.depth, dStart.toISOString(), dEnd.toISOString());
+                await this.loadTimelineForVariable(
+                    this.activeVariable,
+                    this.bbox,
+                    this.depth,
+                    dStart.toISOString(),
+                    dEnd.toISOString()
+                );
+                // Auto load after custom period set
                 if (this.filteredTimestamps.length > 0) {
-                    this.onTimeChange(0, this.getCurrentTimestamp(), this.getCurrentMeta());
+                    this.onTimeChange(this.currentIndex, this.getCurrentTimestamp(), this.getCurrentMeta());
                 }
             });
         }
 
-        // Resolution buttons
+        // Resolution buttons with auto-fetch and load
         const handleResClick = (res) => {
             if (this.currentResolution === res) return;
+            const currentTs = this.getCurrentTimestamp();
             this.currentResolution = res;
             if (this.timelineData) {
                 this._updateResolutionButtons(this.timelineData.resolutions || ['daily']);
             }
-            this._applyResolutionFilter();
+            // Derive new filtered timeline, preserve current/nearest timestamp, and auto-dispatch time change!
+            this._applyResolutionFilter({ preserveTimestamp: currentTs, notify: true });
         };
 
         this.resHourlyBtn?.addEventListener('click', () => handleResClick('hourly'));

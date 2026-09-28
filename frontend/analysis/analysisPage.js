@@ -359,16 +359,24 @@ class AnalysisDashboard {
       }
     });
 
-    document.getElementById('rangeStartDate')?.addEventListener('change', e => {
+    document.getElementById('rangeStartDate')?.addEventListener('change', async e => {
       this.rangeStart = e.target.value;
       this.updateCharts();
       this.updateKPIStrip();
+      await this.loadTimeline();
+      if (this.timeline.length > 0) {
+        this.selectTime(this.timeline.length - 1);
+      }
     });
 
-    document.getElementById('rangeEndDate')?.addEventListener('change', e => {
+    document.getElementById('rangeEndDate')?.addEventListener('change', async e => {
       this.rangeEnd = e.target.value;
       this.updateCharts();
       this.updateKPIStrip();
+      await this.loadTimeline();
+      if (this.timeline.length > 0) {
+        this.selectTime(this.timeline.length - 1);
+      }
     });
 
     // Time step navigation
@@ -772,7 +780,27 @@ class AnalysisDashboard {
 
   async loadTimeline() {
     const res = await ApiClient.getDataTimeline({ variable: this.getBaseVar(this.activeVar), bbox: this.bbox }).catch(() => ({ available_timestamps: [] }));
-    this.timeline = res.available_timestamps || [];
+    const allTs = res.available_timestamps || [];
+
+    // Default 2 calendar months window relative to current system time
+    const now = new Date();
+    const twoMonthsAgo = new Date(now.getTime());
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    const nowIso = now.toISOString();
+    const twoMonthsAgoIso = twoMonthsAgo.toISOString();
+
+    let windowTs = allTs.filter(ts => ts >= twoMonthsAgoIso && ts <= nowIso);
+    if (!windowTs.length && allTs.length) {
+      const latestTs = allTs[allTs.length - 1];
+      const latestDate = new Date(latestTs);
+      if (!isNaN(latestDate.getTime())) {
+        const rStart = new Date(latestDate.getTime());
+        rStart.setMonth(rStart.getMonth() - 2);
+        windowTs = allTs.filter(ts => ts >= rStart.toISOString() && ts <= latestTs);
+      }
+      if (!windowTs.length) windowTs = allTs;
+    }
+    this.timeline = windowTs.length ? windowTs : allTs;
 
     const timeSelect = document.getElementById('analysisTimeMode');
     if (timeSelect) {
@@ -801,13 +829,17 @@ class AnalysisDashboard {
       const endDate = this.timeline[this.timeline.length - 1].slice(0, 10);
       const sInput = document.getElementById('rangeStartDate');
       const eInput = document.getElementById('rangeEndDate');
-      if (sInput && !this.rangeStart) { sInput.value = startDate; this.rangeStart = startDate; }
-      if (eInput && !this.rangeEnd) { eInput.value = endDate; this.rangeEnd = endDate; }
+      if (sInput) { sInput.value = startDate; this.rangeStart = startDate; }
+      if (eInput) { eInput.value = endDate; this.rangeEnd = endDate; }
+      // Default to latest timestamp in the window
+      this.index = this.timeline.length - 1;
+      if (timeSelect) timeSelect.value = String(this.index);
     }
   }
 
   async selectTime(idx) {
     if (!this.timeline.length) return;
+    const reqSeq = (++this._selectTimeSeq || (this._selectTimeSeq = 1));
     this.index = Math.max(0, Math.min(idx, this.timeline.length - 1));
     this.activeTime = this.timeline[this.index];
 
@@ -822,31 +854,46 @@ class AnalysisDashboard {
     const readout = document.getElementById('readoutCurrentTime');
     if (readout) readout.textContent = dateText;
 
-    // Concurrently fetch real analysis data
-    await Promise.all([
-      this.fetchBundleData(this.activeTime),
-      this.fetchComparisonField(this.activeTime),
+    // Fast path: Fetch primary 3D model bundle & comparison field first and render immediately!
+    try {
+      await Promise.all([
+        this.fetchBundleData(this.activeTime),
+        this.fetchComparisonField(this.activeTime)
+      ]);
+    } catch (_) {}
+
+    if (this._selectTimeSeq !== reqSeq) return;
+
+    // 3D scene renders without waiting for secondary KPI/coverage/anomalies!
+    this.updateAnalysisView();
+
+    // Parallel background enrichment: anomalies, abnormal regions, Argo, summary/coverage
+    Promise.all([
       this.fetchAnomalyData(this.activeTime),
       this.fetchAbnormalRegions(this.activeTime),
       this.fetchArgoData(),
       this.fetchSummaryAndCoverage(this.activeTime)
-    ]);
+    ]).then(() => {
+      if (this._selectTimeSeq !== reqSeq) return;
 
-    // Auto-select the first available Argo float or Glider if no target is active yet
-    if (!this.selectedObservation && !this.selectedAnomaly && !this.selectedCell && !this.selectedRegion) {
-      if (this.argoData && this.argoData.length > 0) {
-        this.selectedObservation = this.argoData[0];
+      // Auto-select the first available Argo float or Glider if no target is active yet
+      if (!this.selectedObservation && !this.selectedAnomaly && !this.selectedCell && !this.selectedRegion) {
+        if (this.argoData && this.argoData.length > 0) {
+          this.selectedObservation = this.argoData[0];
+        }
       }
-    }
 
-    this.populateArgoPicker();
-    this.updateAnalysisView();
-    this.updateKPIStrip();
-    this.updateErrorMap();
-    this.updateCoveragePanel();
-    this.updateCharts();
-    this.updateInvestigationSidebar();
-    this.updateWarningEngine();
+      this.populateArgoPicker();
+      this.updateKPIStrip();
+      this.updateErrorMap();
+      this.updateCoveragePanel();
+      this.updateCharts();
+      this.updateInvestigationSidebar();
+      this.updateWarningEngine();
+    }).catch(err => {
+      if (this._selectTimeSeq !== reqSeq) return;
+      console.warn('[AnalysisDashboard] Background enrichment error:', err);
+    });
   }
 
   populateArgoPicker() {

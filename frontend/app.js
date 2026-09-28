@@ -905,6 +905,9 @@ class SolvXApp {
     }
 
     async setVariable(varId) {
+        if (window.performance && performance.mark) {
+            performance.mark('variable-switch-start');
+        }
         this.activeVar = varId;
         this.status(`Switching to ${varId}…`);
 
@@ -916,35 +919,60 @@ class SolvXApp {
             this.scene.setLayerVisibility('currents', false);
         }
 
-        try {
-            const depthData = await ApiClient.getOceanDepths(varId);
-            if (depthData?.depths) {
-                this.depthControl?.setDepthLevels(depthData.depths);
-            }
-        } catch (_) {}
-
-        // Instant switch if variable is already cached in bundle for the active time!
+        // Fast path: Instant switch if variable is already cached in bundle for the active time!
         if (this.activeTime && this.bundleCache[this.activeTime]) {
             const cachedVar = this._resolveVarData(this.bundleCache[this.activeTime], varId);
             if (cachedVar) {
                 this.applyBundleData(this.bundleCache[this.activeTime]);
                 this.status(`Ready · Showing ${varId}`);
                 AssistantDock.updateContextBar();
+                if (window.performance && performance.mark) {
+                    performance.mark('variable-switch-end');
+                    performance.measure('variable-switch-duration', 'variable-switch-start', 'variable-switch-end');
+                }
+                // Update depth levels in the background non-blocking
+                ApiClient.getOceanDepths(varId).then(depthData => {
+                    if (depthData?.depths) {
+                        this.depthControl?.setDepthLevels(depthData.depths);
+                    }
+                }).catch(() => {});
                 return;
             }
         }
 
+        // Non-blocking depth metadata fetch
+        ApiClient.getOceanDepths(varId).then(depthData => {
+            if (depthData?.depths) {
+                this.depthControl?.setDepthLevels(depthData.depths);
+            }
+        }).catch(() => {});
+
         // Otherwise fetch this specific variable directly
         await this.loadActiveVariable();
         AssistantDock.updateContextBar();
+        if (window.performance && performance.mark) {
+            performance.mark('variable-switch-end');
+            performance.measure('variable-switch-duration', 'variable-switch-start', 'variable-switch-end');
+        }
     }
 
     async loadTimelineBundle(timeIso) {
         if (!timeIso) return;
         this.activeTime = timeIso;
 
+        if (window.performance && performance.mark) {
+            performance.mark('bundle-cache-check');
+        }
+
         if (this.bundleCache[timeIso] && Object.keys(this.bundleCache[timeIso]).length > 0) {
+            if (window.performance && performance.mark) {
+                performance.mark('bundle-apply-start');
+            }
             this.applyBundleData(this.bundleCache[timeIso]);
+            if (window.performance && performance.mark) {
+                performance.mark('bundle-apply-end');
+                performance.measure('bundle-cache-apply-duration', 'bundle-apply-start', 'bundle-apply-end');
+            }
             this.status(`Ready · Ocean data for ${timeIso.slice(0, 10)}`);
             this.prefetchAdjacentTimestamps(timeIso);
             return;
@@ -958,7 +986,10 @@ class SolvXApp {
         // Retrieve full timeline bounds for single-pass download
         let startTime = null;
         let endTime = null;
-        if (this.timelineControl?.allTimestamps?.length > 0) {
+        if (this.timelineControl?.windowTimestamps?.length > 0) {
+            startTime = this.timelineControl.windowTimestamps[0];
+            endTime = this.timelineControl.windowTimestamps[this.timelineControl.windowTimestamps.length - 1];
+        } else if (this.timelineControl?.allTimestamps?.length > 0) {
             startTime = this.timelineControl.allTimestamps[0];
             endTime = this.timelineControl.allTimestamps[this.timelineControl.allTimestamps.length - 1];
         }
@@ -976,6 +1007,9 @@ class SolvXApp {
         this.status(alreadyDownloaded ? `Loading ocean variables from local disk…` : `Downloading ocean data…`, 'busy');
 
         try {
+            if (window.performance && performance.mark) {
+                performance.mark('bundle-fetch-start');
+            }
             const bundle = await ApiClient.getOceanBundle({
                 provider: this.activeProvider,
                 bbox: this.currentBBox,
@@ -983,20 +1017,28 @@ class SolvXApp {
                 time: timeIso,
                 start_time: startTime,
                 end_time: endTime,
-                stride: 1
+                stride: 1,
+                options: { category: 'active-bundle' }
             });
 
             if (downloadModalTimeout) clearTimeout(downloadModalTimeout);
 
             // Discard aborted requests or superseded requests
             if (bundle?.aborted) return;
-            if (this._bundleReqSeq !== reqSeq) return;
+            if (this._bundleReqSeq !== reqSeq || this.activeTime !== timeIso) return;
 
             if (bundle && bundle.variables && Object.keys(bundle.variables).length > 0) {
                 this._downloadedRegions.add(regionKey);
                 this.bundleCache[timeIso] = bundle.variables;
                 this.hideDataModal(0);
+                if (window.performance && performance.mark) {
+                    performance.mark('bundle-apply-start');
+                }
                 this.applyBundleData(this.bundleCache[timeIso]);
+                if (window.performance && performance.mark) {
+                    performance.mark('bundle-apply-end');
+                    performance.measure('bundle-fetch-to-apply', 'bundle-fetch-start', 'bundle-apply-end');
+                }
                 this.updateProvenanceUI();
                 this.refreshMLAnomalies();
                 this.status(`⚡ Ocean data loaded (${bundle.provider || 'LOCAL'}) · Ready`);
@@ -1007,7 +1049,7 @@ class SolvXApp {
             }
         } catch (e) {
             if (downloadModalTimeout) clearTimeout(downloadModalTimeout);
-            if (this._bundleReqSeq !== reqSeq) return;
+            if (this._bundleReqSeq !== reqSeq || this.activeTime !== timeIso) return;
             console.warn(`[SolvXApp] Ocean bundle download failed for ${timeIso}, falling back:`, e);
             this.hideDataModal(0);
             await this.loadActiveVariable();
@@ -1020,7 +1062,7 @@ class SolvXApp {
         const curIdx = list.indexOf(currentIso);
         if (curIdx < 0) return;
 
-        // Prefetch adjacent timestamps sequentially with category: null so they don't abort active playback
+        // Prefetch adjacent timestamps sequentially with category: 'prefetch' so they don't abort active user requests
         const toPrefetch = [curIdx + 1, curIdx + 2, curIdx - 1]
             .filter(i => i >= 0 && i < list.length)
             .map(i => list[i])
@@ -1038,7 +1080,7 @@ class SolvXApp {
                         depth: this.activeDepthMode === 'slice' ? this.activeDepth : null,
                         time: iso,
                         stride: 1,
-                        options: { category: null }
+                        options: { category: 'prefetch' }
                     });
                     if (bundle?.variables && !bundle.aborted && Object.keys(bundle.variables).length > 0) {
                         this.bundleCache[iso] = bundle.variables;
@@ -1311,17 +1353,47 @@ class SolvXApp {
     }
 
     async onTimeChange(idx, timeIso, meta) {
+        if (!timeIso) return;
+        if (window.performance && performance.mark) {
+            performance.mark('timeline-change-start');
+        }
         this.activeTime = timeIso;
         this.activeTimeMeta = meta;
         this.profileViewer?.updateActiveTime(timeIso);
+
+        // Fast path: if cached, apply synchronously and return immediately!
+        if (this.bundleCache[timeIso] && Object.keys(this.bundleCache[timeIso]).length > 0) {
+            this.applyBundleData(this.bundleCache[timeIso]);
+            this.status(`Ready · Ocean data for ${timeIso.slice(0, 10)}`);
+            this.prefetchAdjacentTimestamps(timeIso);
+            if (this.activeInspectedPoint && !document.getElementById('readout')?.classList.contains('hidden')) {
+                this.inspectPoint(this.activeInspectedPoint);
+            }
+            AssistantDock.updateContextBar();
+            if (window.performance && performance.mark) {
+                performance.mark('timeline-change-visible');
+                performance.measure('timeline-to-visible-cached', 'timeline-change-start', 'timeline-change-visible');
+            }
+            return;
+        }
+
+        // Uncached path: fetch bundle
         await this.loadTimelineBundle(timeIso);
-        if (this.layerState.currents || this.layerState.particles || this.activeVar === 'currents') {
+
+        // Only load currents separately if currents are needed AND missing from active bundle
+        const hasCurrentsInBundle = Boolean(this._resolveVarData(this.currentBundle, 'currents'));
+        if ((this.layerState.currents || this.activeVar === 'currents') && !hasCurrentsInBundle) {
             await this.loadCurrents();
         }
+
         if (this.activeInspectedPoint && !document.getElementById('readout')?.classList.contains('hidden')) {
             this.inspectPoint(this.activeInspectedPoint);
         }
         AssistantDock.updateContextBar();
+        if (window.performance && performance.mark) {
+            performance.mark('timeline-change-visible');
+            performance.measure('timeline-to-visible-network', 'timeline-change-start', 'timeline-change-visible');
+        }
     }
 
     setupCurrentControls() {
@@ -1471,11 +1543,77 @@ class SolvXApp {
         // Analytical warnings owned by Analysis page per plan.md specification
     }
 
+    _sampleValueFromData(data, lat, lon, depthM = 0) {
+        if (!data) return null;
+        const bounds = this.currentBathy?.bounds || (this.water?.bounds) || [
+            this.currentBBox.min_lon,
+            this.currentBBox.max_lon,
+            this.currentBBox.min_lat,
+            this.currentBBox.max_lat
+        ];
+        const minLon = bounds[0];
+        const maxLon = bounds[1];
+        const minLat = bounds[2];
+        const maxLat = bounds[3];
+        const dLat = maxLat - minLat;
+        const dLon = maxLon - minLon;
+        if (dLat <= 0 || dLon <= 0) return null;
+
+        // If currents with u and v
+        if (data.u && data.v) {
+            const lats = data.u.length;
+            const lons = data.u[0]?.length || 0;
+            if (!lats || !lons) return null;
+            const j = Math.floor(((lat - minLat) / dLat) * lats);
+            const i = Math.floor(((lon - minLon) / dLon) * lons);
+            if (j >= 0 && j < lats && i >= 0 && i < lons) {
+                const u = data.u[j]?.[i];
+                const v = data.v[j]?.[i];
+                if (u != null && v != null) return Math.hypot(u, v);
+            }
+        }
+
+        // If scalar grid with values
+        if (data.values && data.values.length) {
+            const is3D = Array.isArray(data.values[0]) && Array.isArray(data.values[0][0]);
+            const lats = is3D ? data.values[0].length : data.values.length;
+            const lons = is3D ? (data.values[0][0]?.length || 0) : (data.values[0]?.length || 0);
+            if (!lats || !lons) return null;
+            const j = Math.floor(((lat - minLat) / dLat) * lats);
+            const i = Math.floor(((lon - minLon) / dLon) * lons);
+            if (j >= 0 && j < lats && i >= 0 && i < lons) {
+                if (is3D) {
+                    const depthLevels = data.metadata?.depth_levels || [];
+                    let dIdx = 0;
+                    if (depthLevels.length) {
+                        let closestDist = Infinity;
+                        depthLevels.forEach((dl, idx) => {
+                            const dist = Math.abs(dl - depthM);
+                            if (dist < closestDist) {
+                                closestDist = dist;
+                                dIdx = idx;
+                            }
+                        });
+                    }
+                    return data.values[dIdx]?.[j]?.[i];
+                } else {
+                    return data.values[j]?.[i];
+                }
+            }
+        }
+        return null;
+    }
+
     async inspectPoint(cell) {
         if (!cell || cell.lat == null || cell.lon == null) return;
         this.activeInspectedPoint = cell;
+        const reqToken = (++this._inspectReqSeq || (this._inspectReqSeq = 1));
 
-        // Visual 3D marker beacon (enlarged & high-visibility)
+        if (window.performance && performance.mark) {
+            performance.mark('inspector-click-start');
+        }
+
+        // 1. Visual 3D marker beacon (immediate feedback)
         if (!this.markerMesh) {
             const group = new THREE.Group();
             const ringGeom = new THREE.TorusGeometry(2.4, 0.2, 16, 48);
@@ -1509,10 +1647,10 @@ class SolvXApp {
         this.markerMesh.position.set(posX, 0.2, posZ);
         this.markerMesh.visible = true;
 
+        // 2. Immediate Readout Shell & Coordinates
         const readout = document.getElementById('readout');
         const coordsEl = document.getElementById('coords');
         const gridEl = document.getElementById('readoutGrid');
-        const timeEl = document.getElementById('readoutTime');
         const clearBtn = document.getElementById('clearPointBtn');
         const activeVarNameEl = document.getElementById('readoutActiveVarName');
         const activeVarValEl = document.getElementById('readoutActiveVarVal');
@@ -1520,249 +1658,352 @@ class SolvXApp {
         if (clearBtn) clearBtn.classList.remove('hidden');
         if (coordsEl) coordsEl.textContent = `${cell.lat.toFixed(4)}° N, ${cell.lon.toFixed(4)}° E · Depth: ${pointDepth.toFixed(1)} m`;
         if (activeVarNameEl) activeVarNameEl.textContent = this.activeVar.replace(/_/g, ' ').toUpperCase();
-        if (activeVarValEl) activeVarValEl.textContent = 'Querying…';
-        if (gridEl) gridEl.innerHTML = '<div style="color: var(--ink-muted); font-size: 11px; padding: 4px 0;">Querying oceanographic & atmospheric sensors…</div>';
         readout?.classList.remove('hidden');
 
-        this.status('Inspecting ocean point…', 'busy');
+        // 3. Fast-path: sample active value locally from loaded grid / active bundle immediately!
+        let fastVal = this._sampleValueFromData(this.lastOceanData, cell.lat, cell.lon, pointDepth);
+        if (fastVal == null && this.activeTime && this.bundleCache[this.activeTime]) {
+            const bVar = this._resolveVarData(this.bundleCache[this.activeTime], this.activeVar);
+            fastVal = this._sampleValueFromData(bVar, cell.lat, cell.lon, pointDepth);
+        }
 
-        try {
-            const [data, mlData] = await Promise.all([
-                ApiClient.getPoint(cell.lat, cell.lon, this.activeTime, pointDepth).catch(() => ({ variables: {}, units: {}, profile: [], available_depths: [], nearest_observation: null })),
-                ApiClient.getMLPoint(cell.lat, cell.lon, this.activeTime).catch(() => null)
-            ]);
+        const unit = this.lastOceanData?.units || (this.activeVar === 'ocean_temperature' ? '°C' : (this.activeVar === 'salinity' ? 'PSU' : (this.activeVar === 'currents' ? 'm/s' : '')));
+        if (activeVarValEl) {
+            activeVarValEl.textContent = (fastVal != null && !isNaN(fastVal)) 
+                ? `${Number(fastVal).toFixed(2)} ${unit}` 
+                : 'Querying…';
+        }
 
-            this.lastInspectedData = data;
-            const vars = { ...data.variables, ...(mlData?.values || {}) };
-            const units = data.units || {};
-            const formatVal = (v, u) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)} ${u || ''}` : '—';
-
-            // Update active variable value banner
-            let activeValStr = '—';
-            if (this.activeVar === 'ocean_temperature') activeValStr = formatVal(vars.ocean_temperature, '°C');
-            else if (this.activeVar === 'salinity') activeValStr = formatVal(vars.salinity, 'PSU');
-            else if (this.activeVar === 'sea_surface_height') activeValStr = formatVal(vars.sea_surface_height ?? vars.sea_level_anomaly, 'm');
-            else if (this.activeVar === 'currents') {
-                const spd = vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.hypot(vars.current_u, vars.current_v) : null);
-                activeValStr = formatVal(spd, 'm/s');
-            } else if (vars[this.activeVar] != null) {
-                activeValStr = formatVal(vars[this.activeVar], units[this.activeVar]);
-            }
-            if (activeVarValEl) activeVarValEl.textContent = activeValStr;
-
-            // Build Depth Selector Pills
-            const standardDepths = [0, 10, 25, 50, 75, 100, 150, 200, 300, 500, 1000];
-            const datasetDepths = Array.isArray(data.available_depths) && data.available_depths.length > 0 
-                ? data.available_depths 
-                : (data.profile?.map(p => p.depth) || standardDepths);
-            const combinedDepths = Array.from(new Set([...standardDepths, ...datasetDepths]))
-                .filter(d => typeof d === 'number' && !isNaN(d) && d >= 0)
-                .sort((a, b) => a - b);
-
-            const depthPillsHtml = combinedDepths.map(d => {
-                const isSelected = Math.abs(d - pointDepth) < 0.5;
-                const label = d === 0 ? '0m (Surface)' : `${d}m`;
-                return `<button class="depth-pill ${isSelected ? 'active' : ''}" data-depth="${d}">${label}</button>`;
-            }).join('');
-
-            // Build Sounding Matrix Rows
-            const profilePts = Array.isArray(data.profile) ? data.profile : [];
-            const soundingRowsHtml = profilePts.length > 0 ? profilePts.map(p => {
-                const isSelected = Math.abs(p.depth - pointDepth) < 0.5;
-                const tempStr = p.temperature != null ? `${Number(p.temperature).toFixed(2)} °C` : '—';
-                const salStr = p.salinity != null ? `${Number(p.salinity).toFixed(2)} PSU` : '—';
-                const spdStr = p.current_speed != null ? `${Number(p.current_speed).toFixed(2)} m/s` : '—';
-                const densStr = p.density != null ? `${Number(p.density).toFixed(1)}` : '—';
-                return `
-                    <tr class="${isSelected ? 'active-depth-row' : ''}" data-depth="${p.depth}" style="cursor: pointer;" title="Click to slice depth at ${p.depth}m">
-                        <td style="font-weight: 600; color: ${isSelected ? '#38bdf8' : '#e2e8f0'};">${p.depth.toFixed(0)}m</td>
-                        <td>${tempStr}</td>
-                        <td>${salStr}</td>
-                        <td>${spdStr}</td>
-                        <td>${densStr}</td>
-                    </tr>
-                `;
-            }).join('') : '';
-
-            // Tab 1: Variables View
-            let gridHtml = `
+        if (gridEl && (!this.lastInspectedData || this.lastInspectedData._token !== reqToken)) {
+            gridEl.innerHTML = `
                 <div class="readout-depth-control-box">
                     <div class="depth-control-header">
                         <span>DEPTH SOUNDING SLICE</span>
                         <span style="color: #38bdf8; font-weight: 700;">${pointDepth.toFixed(1)} m</span>
                     </div>
-                    <div class="depth-pills-row">
-                        ${depthPillsHtml}
-                    </div>
-                </div>
-
-                <div class="readout-category-title">PHYSICAL OCEAN STATE (${pointDepth.toFixed(0)}m)</div>
-                <div class="readout-rows">
-                    <span class="readout-label">Temperature</span>
-                    <span class="readout-val">${formatVal(vars.ocean_temperature, units.ocean_temperature || '°C')}</span>
-                    <span class="readout-label">Salinity</span>
-                    <span class="readout-val">${formatVal(vars.salinity, units.salinity || 'PSU')}</span>
-                    <span class="readout-label">Sea Surface Height</span>
-                    <span class="readout-val">${formatVal(vars.sea_surface_height ?? vars.sea_level_anomaly, units.sea_surface_height || 'm')}</span>
-                    <span class="readout-label">Current Velocity</span>
-                    <span class="readout-val">${formatVal(vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.hypot(vars.current_u, vars.current_v) : null), 'm/s')}</span>
-                    <span class="readout-label">Current Direction</span>
-                    <span class="readout-val">${formatVal(vars.current_direction, '°')}</span>
-                </div>
-
-                <div class="readout-category-title">ATMOSPHERE & WINDS</div>
-                <div class="readout-rows">
-                    <span class="readout-label">Air Temp</span>
-                    <span class="readout-val">${formatVal(vars.air_temperature, '°C')}</span>
-                    <span class="readout-label">Wind Velocity</span>
-                    <span class="readout-val">${formatVal(vars.wind_speed, 'm/s')}</span>
-                    <span class="readout-label">Wind Dir</span>
-                    <span class="readout-val">${formatVal(vars.wind_direction, '°')}</span>
-                    <span class="readout-label">Humidity</span>
-                    <span class="readout-val">${formatVal(vars.relative_humidity, '%')}</span>
-                    <span class="readout-label">Surface Pressure</span>
-                    <span class="readout-val">${formatVal(vars.sea_level_pressure, 'hPa')}</span>
+                    <div style="color: var(--ink-muted); font-size: 11px; padding: 6px 0;">Loading physical ocean soundings & sensor details…</div>
                 </div>
             `;
+        }
 
-            if (mlData?.anomaly || mlData?.hazard) {
-                const aScore = mlData.anomaly?.anomaly_score;
-                const hRisk = mlData.hazard?.risk_score;
-                gridHtml += `
-                    <div class="readout-category-title">HAZARD RISK & ANOMALIES</div>
-                    <div class="readout-rows">
-                        <span class="readout-label">Anomaly Score</span>
-                        <span class="readout-val">${aScore != null ? `${Number(aScore).toFixed(1)} / 100` : 'Normal'}</span>
-                        <span class="readout-label">Hazard Risk</span>
-                        <span class="readout-val">${hRisk != null ? `${Number(hRisk).toFixed(1)} / 100` : 'Low'}</span>
-                    </div>
-                `;
-            }
+        if (window.performance && performance.mark) {
+            performance.mark('inspector-fast-rendered');
+            performance.measure('inspector-fast-render-duration', 'inspector-click-start', 'inspector-fast-rendered');
+        }
 
-            if (soundingRowsHtml) {
-                gridHtml += `
-                    <div class="readout-category-title" style="margin-top: 12px; display:flex; justify-content:space-between; align-items:center;">
-                        <span>VALUES ACROSS EACH DEPTH</span>
-                        <span style="font-size:9px; text-transform:none; color:#94a3b8; font-weight:normal;">Click row to slice depth</span>
-                    </div>
-                    <table class="readout-sounding-table">
-                        <thead>
-                            <tr>
-                                <th>Depth</th>
-                                <th>Temp</th>
-                                <th>Salinity</th>
-                                <th>Current</th>
-                                <th>Density</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${soundingRowsHtml}
-                        </tbody>
-                    </table>
-                `;
-            }
+        this.status('Inspecting ocean point…', 'busy');
 
-            if (gridEl) {
-                gridEl.innerHTML = gridHtml;
-
-                // Wire depth pill clicks
-                gridEl.querySelectorAll('.depth-pill').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const targetD = parseFloat(btn.dataset.depth);
-                        if (!isNaN(targetD)) {
-                            this.onDepthChange(targetD);
-                            this.inspectPoint({ ...cell, depthM: targetD });
-                        }
-                    });
-                });
-
-                // Wire sounding table row clicks
-                gridEl.querySelectorAll('.readout-sounding-table tr[data-depth]').forEach(tr => {
-                    tr.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const targetD = parseFloat(tr.dataset.depth);
-                        if (!isNaN(targetD)) {
-                            this.onDepthChange(targetD);
-                            this.inspectPoint({ ...cell, depthM: targetD });
-                        }
-                    });
-                });
-            }
-
-            if (timeEl) timeEl.textContent = new Date(this.activeTime || data.timestamp || Date.now()).toUTCString();
-
-            // Tab 2: Vertical Profile
-            this.renderPointVerticalProfile(this.pointProfileVar);
-
-            // Tab 4: Nearest Observation Collocation
-            const matchCard = document.getElementById('pointObsMatchCard');
-            if (matchCard) {
-                if (data.nearest_observation) {
-                    const obs = data.nearest_observation;
-                    const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
-                    matchCard.innerHTML = `
-                        <div class="obs-match-badge ${isGlider ? 'obs-match-glider' : 'obs-match-argo'}">
-                            <span>●</span>
-                            <span>${isGlider ? 'AUTONOMOUS GLIDER MATCH' : 'ARGO FLOAT MATCH'} · #${obs.id || obs.wmo || obs.glider_id}</span>
-                        </div>
-                        <div class="readout-rows" style="margin-top: 6px;">
-                            <span class="readout-label">Collocation Distance</span>
-                            <span class="readout-val" style="color: var(--accent); font-weight:700;">${obs.distance_km?.toFixed(1) || '0'} km</span>
-                            <span class="readout-label">Time Offset</span>
-                            <span class="readout-val">${obs.time_diff_days != null ? `${obs.time_diff_days.toFixed(1)} days` : (obs.time_diff_hours != null ? `${obs.time_diff_hours.toFixed(1)} hrs` : 'Concurrent')}</span>
-                            <span class="readout-label">Platform</span>
-                            <span class="readout-val">${obs.platform || (isGlider ? 'Underwater Glider' : 'CTD Float')}</span>
-                            <span class="readout-label">Institution</span>
-                            <span class="readout-val">${obs.institution || 'INCOIS / Argo'}</span>
-                        </div>
-                        ${obs.model_sst != null && obs.observed_sst != null ? `
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px;">
-                                <div style="color: var(--ink-muted); font-size: 10px; margin-bottom: 4px;">SURFACE SST COMPARISON</div>
-                                <div class="readout-rows">
-                                    <span class="readout-label">Observed SST</span>
-                                    <span class="readout-val">${obs.observed_sst.toFixed(2)} °C</span>
-                                    <span class="readout-label">Model SST</span>
-                                    <span class="readout-val">${obs.model_sst.toFixed(2)} °C</span>
-                                    <span class="readout-label">Absolute Bias</span>
-                                    <span class="readout-val" style="color:${Math.abs(obs.diff_sst) > 0.5 ? '#f59e0b' : '#10b981'}">${(obs.diff_sst > 0 ? '+' : '') + obs.diff_sst.toFixed(2)} °C</span>
-                                </div>
-                            </div>
-                        ` : ''}
-                        <button id="btnOpenMatchedObs" class="btn-secondary" style="width: 100%; margin-top: 10px; font-size: 11px; padding: 6px 10px;">
-                            VIEW IN OBSERVATION DRAWER →
-                        </button>
-                    `;
-                    document.getElementById('btnOpenMatchedObs')?.addEventListener('click', () => {
-                        this.profileViewer?.show(obs, this.activeTime);
-                    });
-                } else {
-                    matchCard.innerHTML = `
-                        <div style="color: var(--ink-muted); font-size: 11px; text-align: center; padding: 12px 0;">
-                            No in-situ Argo float or Glider observation within 100 km of this position.
-                        </div>
-                    `;
+        // 4. Background Enrichment: Point Details & ML Analysis
+        ApiClient.getPoint(cell.lat, cell.lon, this.activeTime, pointDepth, null, null, { category: 'point_inspect' })
+            .then(data => {
+                if (this._inspectReqSeq !== reqToken) return;
+                data._token = reqToken;
+                this.lastInspectedData = data;
+                this._populatePointDetails(cell, pointDepth, data);
+                if (window.performance && performance.mark) {
+                    performance.mark('inspector-enriched');
+                    performance.measure('inspector-enrichment-duration', 'inspector-click-start', 'inspector-enriched');
                 }
-            }
+                this.status('Point data loaded.');
+            })
+            .catch(e => {
+                if (this._inspectReqSeq !== reqToken) return;
+                console.warn('[SolvXApp] Point inspection secondary load failed:', e);
+            });
 
-            const openAnalysisBtn = document.getElementById('btnOpenAnalysisFromReadout');
-            if (openAnalysisBtn) {
-                openAnalysisBtn.onclick = () => {
-                    SelectionContext.setSelection({
-                        type: 'cell',
-                        lat: cell.lat,
-                        lon: cell.lon,
-                        depth: pointDepth
-                    });
-                    window.location.href = `/analysis.html?lat=${cell.lat.toFixed(4)}&lon=${cell.lon.toFixed(4)}`;
-                };
-            }
+        ApiClient.getMLPoint(cell.lat, cell.lon, this.activeTime, pointDepth, { category: 'point_ml' })
+            .then(mlData => {
+                if (this._inspectReqSeq !== reqToken) return;
+                this._patchMLPointDetails(mlData);
+            })
+            .catch(() => {});
+    }
 
-            this.status('Point data loaded.');
-        } catch (e) {
-            console.error('Point inspection failed:', e);
-            if (gridEl) gridEl.innerHTML = `<div style="color: #ff4455; font-size: 11px;">Inspection failed: ${e.message}</div>`;
-            this.status('Point inspection failed', 'error');
+    _populatePointDetails(cell, pointDepth, data) {
+        const gridEl = document.getElementById('readoutGrid');
+        const timeEl = document.getElementById('readoutTime');
+        const activeVarValEl = document.getElementById('readoutActiveVarVal');
+
+        const vars = { ...data.variables, ...(this._lastMlPointData?.values || {}) };
+        const units = data.units || {};
+        const formatVal = (v, u) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)} ${u || ''}` : '—';
+
+        // Update active variable value banner with exact point data if available
+        let activeValStr = '—';
+        if (this.activeVar === 'ocean_temperature') activeValStr = formatVal(vars.ocean_temperature, '°C');
+        else if (this.activeVar === 'salinity') activeValStr = formatVal(vars.salinity, 'PSU');
+        else if (this.activeVar === 'sea_surface_height') activeValStr = formatVal(vars.sea_surface_height ?? vars.sea_level_anomaly, 'm');
+        else if (this.activeVar === 'currents') {
+            const spd = vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.hypot(vars.current_u, vars.current_v) : null);
+            activeValStr = formatVal(spd, 'm/s');
+        } else if (vars[this.activeVar] != null) {
+            activeValStr = formatVal(vars[this.activeVar], units[this.activeVar]);
+        }
+        if (activeVarValEl && activeValStr !== '—') activeVarValEl.textContent = activeValStr;
+
+        // Build Depth Selector Pills
+        const standardDepths = [0, 10, 25, 50, 75, 100, 150, 200, 300, 500, 1000];
+        const datasetDepths = Array.isArray(data.available_depths) && data.available_depths.length > 0 
+            ? data.available_depths 
+            : (data.profile?.map(p => p.depth) || standardDepths);
+        const combinedDepths = Array.from(new Set([...standardDepths, ...datasetDepths]))
+            .filter(d => typeof d === 'number' && !isNaN(d) && d >= 0)
+            .sort((a, b) => a - b);
+
+        const depthPillsHtml = combinedDepths.map(d => {
+            const isSelected = Math.abs(d - pointDepth) < 0.5;
+            const label = d === 0 ? '0m (Surface)' : `${d}m`;
+            return `<button class="depth-pill ${isSelected ? 'active' : ''}" data-depth="${d}">${label}</button>`;
+        }).join('');
+
+        // Build Sounding Matrix Rows
+        const profilePts = Array.isArray(data.profile) ? data.profile : [];
+        const soundingRowsHtml = profilePts.length > 0 ? profilePts.map(p => {
+            const isSelected = Math.abs(p.depth - pointDepth) < 0.5;
+            const tempStr = p.temperature != null ? `${Number(p.temperature).toFixed(2)} °C` : '—';
+            const salStr = p.salinity != null ? `${Number(p.salinity).toFixed(2)} PSU` : '—';
+            const spdStr = p.current_speed != null ? `${Number(p.current_speed).toFixed(2)} m/s` : '—';
+            const densStr = p.density != null ? `${Number(p.density).toFixed(1)}` : '—';
+            return `
+                <tr class="${isSelected ? 'active-depth-row' : ''}" data-depth="${p.depth}" style="cursor: pointer;" title="Click to slice depth at ${p.depth}m">
+                    <td style="font-weight: 600; color: ${isSelected ? '#38bdf8' : '#e2e8f0'};">${p.depth.toFixed(0)}m</td>
+                    <td>${tempStr}</td>
+                    <td>${salStr}</td>
+                    <td>${spdStr}</td>
+                    <td>${densStr}</td>
+                </tr>
+            `;
+        }).join('') : '';
+
+        // Tab 1: Variables View
+        let gridHtml = `
+            <div class="readout-depth-control-box">
+                <div class="depth-control-header">
+                    <span>DEPTH SOUNDING SLICE</span>
+                    <span style="color: #38bdf8; font-weight: 700;">${pointDepth.toFixed(1)} m</span>
+                </div>
+                <div class="depth-pills-row">
+                    ${depthPillsHtml}
+                </div>
+            </div>
+
+            <div class="readout-category-title">PHYSICAL OCEAN STATE (${pointDepth.toFixed(0)}m)</div>
+            <div class="readout-rows">
+                <span class="readout-label">Temperature</span>
+                <span class="readout-val">${formatVal(vars.ocean_temperature, units.ocean_temperature || '°C')}</span>
+                <span class="readout-label">Salinity</span>
+                <span class="readout-val">${formatVal(vars.salinity, units.salinity || 'PSU')}</span>
+                <span class="readout-label">Sea Surface Height</span>
+                <span class="readout-val">${formatVal(vars.sea_surface_height ?? vars.sea_level_anomaly, units.sea_surface_height || 'm')}</span>
+                <span class="readout-label">Current Velocity</span>
+                <span class="readout-val">${formatVal(vars.current_speed ?? (vars.current_u != null && vars.current_v != null ? Math.hypot(vars.current_u, vars.current_v) : null), 'm/s')}</span>
+                <span class="readout-label">Current Direction</span>
+                <span class="readout-val">${formatVal(vars.current_direction, '°')}</span>
+            </div>
+
+            <div class="readout-category-title">ATMOSPHERE & WINDS</div>
+            <div class="readout-rows">
+                <span class="readout-label">Air Temp</span>
+                <span class="readout-val">${formatVal(vars.air_temperature, '°C')}</span>
+                <span class="readout-label">Wind Velocity</span>
+                <span class="readout-val">${formatVal(vars.wind_speed, 'm/s')}</span>
+                <span class="readout-label">Wind Dir</span>
+                <span class="readout-val">${formatVal(vars.wind_direction, '°')}</span>
+                <span class="readout-label">Humidity</span>
+                <span class="readout-val">${formatVal(vars.relative_humidity, '%')}</span>
+                <span class="readout-label">Surface Pressure</span>
+                <span class="readout-val">${formatVal(vars.sea_level_pressure, 'hPa')}</span>
+            </div>
+            <div id="readoutMLSection"></div>
+        `;
+
+        if (soundingRowsHtml) {
+            gridHtml += `
+                <div class="readout-category-title" style="margin-top: 12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>VALUES ACROSS EACH DEPTH</span>
+                    <span style="font-size:9px; text-transform:none; color:#94a3b8; font-weight:normal;">Click row to slice depth</span>
+                </div>
+                <table class="readout-sounding-table">
+                    <thead>
+                        <tr>
+                            <th>Depth</th>
+                            <th>Temp</th>
+                            <th>Salinity</th>
+                            <th>Current</th>
+                            <th>Density</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${soundingRowsHtml}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        if (gridEl) {
+            gridEl.innerHTML = gridHtml;
+
+            // Wire depth pill clicks with instant local profile reuse
+            gridEl.querySelectorAll('.depth-pill').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetD = parseFloat(btn.dataset.depth);
+                    if (!isNaN(targetD)) {
+                        this.onDepthChange(targetD);
+                        if (this.lastInspectedData && Array.isArray(this.lastInspectedData.profile) && this.lastInspectedData.profile.length > 0) {
+                            const row = this.lastInspectedData.profile.find(p => Math.abs(p.depth - targetD) < 0.5);
+                            if (row) {
+                                this.activeInspectedPoint = { ...cell, depthM: targetD };
+                                this._selectSoundingDepthFast(cell, targetD, row);
+                                return;
+                            }
+                        }
+                        this.inspectPoint({ ...cell, depthM: targetD });
+                    }
+                });
+            });
+
+            // Wire sounding table row clicks with instant local profile reuse
+            gridEl.querySelectorAll('.readout-sounding-table tr[data-depth]').forEach(tr => {
+                tr.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetD = parseFloat(tr.dataset.depth);
+                    if (!isNaN(targetD)) {
+                        this.onDepthChange(targetD);
+                        if (this.lastInspectedData && Array.isArray(this.lastInspectedData.profile) && this.lastInspectedData.profile.length > 0) {
+                            const row = this.lastInspectedData.profile.find(p => Math.abs(p.depth - targetD) < 0.5);
+                            if (row) {
+                                this.activeInspectedPoint = { ...cell, depthM: targetD };
+                                this._selectSoundingDepthFast(cell, targetD, row);
+                                return;
+                            }
+                        }
+                        this.inspectPoint({ ...cell, depthM: targetD });
+                    }
+                });
+            });
+        }
+
+        if (timeEl) timeEl.textContent = new Date(this.activeTime || data.timestamp || Date.now()).toUTCString();
+
+        // Tab 2: Vertical Profile
+        this.renderPointVerticalProfile(this.pointProfileVar);
+
+        // Tab 4: Nearest Observation Collocation
+        const matchCard = document.getElementById('pointObsMatchCard');
+        if (matchCard) {
+            if (data.nearest_observation) {
+                const obs = data.nearest_observation;
+                const isGlider = obs.type === 'glider' || /glider/i.test(obs.platform || '');
+                matchCard.innerHTML = `
+                    <div class="obs-match-badge ${isGlider ? 'obs-match-glider' : 'obs-match-argo'}">
+                        <span>●</span>
+                        <span>${isGlider ? 'AUTONOMOUS GLIDER MATCH' : 'ARGO FLOAT MATCH'} · #${obs.id || obs.wmo || obs.glider_id}</span>
+                    </div>
+                    <div class="readout-rows" style="margin-top: 6px;">
+                        <span class="readout-label">Collocation Distance</span>
+                        <span class="readout-val" style="color: var(--accent); font-weight:700;">${obs.distance_km?.toFixed(1) || '0'} km</span>
+                        <span class="readout-label">Time Offset</span>
+                        <span class="readout-val">${obs.time_diff_days != null ? `${obs.time_diff_days.toFixed(1)} days` : (obs.time_diff_hours != null ? `${obs.time_diff_hours.toFixed(1)} hrs` : 'Concurrent')}</span>
+                        <span class="readout-label">Platform</span>
+                        <span class="readout-val">${obs.platform || (isGlider ? 'Underwater Glider' : 'CTD Float')}</span>
+                        <span class="readout-label">Institution</span>
+                        <span class="readout-val">${obs.institution || 'INCOIS / Argo'}</span>
+                    </div>
+                    ${obs.model_sst != null && obs.observed_sst != null ? `
+                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px;">
+                            <div style="color: var(--ink-muted); font-size: 10px; margin-bottom: 4px;">SURFACE SST COMPARISON</div>
+                            <div class="readout-rows">
+                                <span class="readout-label">Observed SST</span>
+                                <span class="readout-val">${obs.observed_sst.toFixed(2)} °C</span>
+                                <span class="readout-label">Model SST</span>
+                                <span class="readout-val">${obs.model_sst.toFixed(2)} °C</span>
+                                <span class="readout-label">Absolute Bias</span>
+                                <span class="readout-val" style="color:${Math.abs(obs.diff_sst) > 0.5 ? '#f59e0b' : '#10b981'}">${(obs.diff_sst > 0 ? '+' : '') + obs.diff_sst.toFixed(2)} °C</span>
+                            </div>
+                        </div>
+                    ` : ''}
+                    <button id="btnOpenMatchedObs" class="btn-secondary" style="width: 100%; margin-top: 10px; font-size: 11px; padding: 6px 10px;">
+                        VIEW IN OBSERVATION DRAWER →
+                    </button>
+                `;
+                document.getElementById('btnOpenMatchedObs')?.addEventListener('click', () => {
+                    this.profileViewer?.show(obs, this.activeTime);
+                });
+            } else {
+                matchCard.innerHTML = `
+                    <div style="color: var(--ink-muted); font-size: 11px; text-align: center; padding: 12px 0;">
+                        No in-situ Argo float or Glider observation within 100 km of this position.
+                    </div>
+                `;
+            }
+        }
+
+        const openAnalysisBtn = document.getElementById('btnOpenAnalysisFromReadout');
+        if (openAnalysisBtn) {
+            openAnalysisBtn.onclick = () => {
+                SelectionContext.setSelection({
+                    type: 'cell',
+                    lat: cell.lat,
+                    lon: cell.lon,
+                    depth: pointDepth
+                });
+                window.location.href = `/analysis.html?lat=${cell.lat.toFixed(4)}&lon=${cell.lon.toFixed(4)}`;
+            };
+        }
+    }
+
+    _selectSoundingDepthFast(cell, targetD, row) {
+        const coordsEl = document.getElementById('coords');
+        const activeVarValEl = document.getElementById('readoutActiveVarVal');
+        if (coordsEl) coordsEl.textContent = `${cell.lat.toFixed(4)}° N, ${cell.lon.toFixed(4)}° E · Depth: ${targetD.toFixed(1)} m`;
+
+        // Update active variable banner if row contains it
+        if (activeVarValEl) {
+            if (this.activeVar === 'ocean_temperature' && row.temperature != null) {
+                activeVarValEl.textContent = `${Number(row.temperature).toFixed(2)} °C`;
+            } else if (this.activeVar === 'salinity' && row.salinity != null) {
+                activeVarValEl.textContent = `${Number(row.salinity).toFixed(2)} PSU`;
+            } else if (this.activeVar === 'currents' && row.current_speed != null) {
+                activeVarValEl.textContent = `${Number(row.current_speed).toFixed(2)} m/s`;
+            }
+        }
+
+        // Update pill active class
+        document.querySelectorAll('.depth-pill').forEach(btn => {
+            const d = parseFloat(btn.dataset.depth);
+            btn.classList.toggle('active', Math.abs(d - targetD) < 0.5);
+        });
+
+        // Update table row active class
+        document.querySelectorAll('.readout-sounding-table tr[data-depth]').forEach(tr => {
+            const d = parseFloat(tr.dataset.depth);
+            const isMatch = Math.abs(d - targetD) < 0.5;
+            tr.classList.toggle('active-depth-row', isMatch);
+            const firstTd = tr.querySelector('td');
+            if (firstTd) firstTd.style.color = isMatch ? '#38bdf8' : '#e2e8f0';
+        });
+
+        // Update depth header label
+        const depthHeaderEl = document.querySelector('.depth-control-header span:last-child');
+        if (depthHeaderEl) depthHeaderEl.textContent = `${targetD.toFixed(1)} m`;
+    }
+
+    _patchMLPointDetails(mlData) {
+        this._lastMlPointData = mlData;
+        const mlSection = document.getElementById('readoutMLSection');
+        if (mlSection && (mlData?.anomaly || mlData?.hazard)) {
+            const aScore = mlData.anomaly?.anomaly_score;
+            const hRisk = mlData.hazard?.risk_score;
+            mlSection.innerHTML = `
+                <div class="readout-category-title">HAZARD RISK & ANOMALIES</div>
+                <div class="readout-rows">
+                    <span class="readout-label">Anomaly Score</span>
+                    <span class="readout-val">${aScore != null ? `${Number(aScore).toFixed(1)} / 100` : 'Normal'}</span>
+                    <span class="readout-label">Hazard Risk</span>
+                    <span class="readout-val">${hRisk != null ? `${Number(hRisk).toFixed(1)} / 100` : 'Low'}</span>
+                </div>
+            `;
         }
     }
 

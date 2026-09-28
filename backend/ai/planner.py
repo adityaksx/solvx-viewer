@@ -10,6 +10,7 @@ Implements:
 
 import re
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
 from ..config import DEFAULT_BBOX
@@ -377,7 +378,13 @@ class ScientificPlanner:
             center_lat = (bbox['min_lat'] + bbox['max_lat']) / 2
             center_lon = (bbox['min_lon'] + bbox['max_lon']) / 2
 
-            ts_res = query_time_series(center_lat, center_lon, variable=var, start_time="2023-01-01T00:00:00Z", end_time="2026-09-01T00:00:00Z")
+            now_utc = datetime.now(timezone.utc)
+            end_t_str = now_utc.strftime("%Y-%m-%dT00:00:00Z")
+            start_t_str = (now_utc - timedelta(days=3*365)).strftime("%Y-%m-%dT00:00:00Z")
+            y_start = now_utc.year - 3
+            y_end = now_utc.year
+
+            ts_res = query_time_series(center_lat, center_lon, variable=var, start_time=start_t_str, end_time=end_t_str)
             tool_calls.append(ToolCallRecord(
                 tool="query_time_series",
                 args={"lat": center_lat, "lon": center_lon, "variable": var, "years": 3},
@@ -403,12 +410,12 @@ class ScientificPlanner:
                 }]
             )
             charts.append(chart_spec)
-            provenance = get_data_provenance(var, bbox=bbox, time="2023-01-01 to 2026-09-01", processing=["temporal_slicing", "trend_aggregation"])
+            provenance = get_data_provenance(var, bbox=bbox, time=f"{y_start} to {y_end}", processing=["temporal_slicing", "trend_aggregation"])
 
             mean_val = round(sum(values) / len(values), 2) if values else 28.5
             return ChatResponse(
                 message=(
-                    f"**Historical 3-Year {var.capitalize()} Analysis (2023 – 2026):**\n\n"
+                    f"**Historical 3-Year {var.capitalize()} Analysis ({y_start} – {y_end}):**\n\n"
                     f"- **Domain Center**: {center_lat:.2f}°N, {center_lon:.2f}°E\n"
                     f"- **Mean {var.capitalize()}**: {mean_val} {unit}\n"
                     f"- **Observations Evaluated**: {len(values)} temporal cycles\n"

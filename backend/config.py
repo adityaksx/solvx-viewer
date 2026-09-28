@@ -4,6 +4,9 @@ import os
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / 'data'
 MODEL_DATA_DIR = DATA_DIR / 'model'
+EXTERNAL_DATA_DIR = DATA_DIR / 'external'
+EXTERNAL_OCEAN_DIR = EXTERNAL_DATA_DIR / 'ocean'
+EXTERNAL_OCEAN_MANIFEST = EXTERNAL_OCEAN_DIR / 'manifest.json'
 
 # Default preset bounding box (Bay of Bengal)
 DEFAULT_BBOX = {
@@ -127,7 +130,7 @@ MAX_LAND_TRIANGLES = 30000
 MAX_REQUEST_AREA_DEG2 = float(os.getenv('MAX_REQUEST_AREA_DEG2', '1500.0'))
 
 # Data Collector & Adapter Environment Configuration
-LOCAL_DATA_MODE = os.getenv('SOLVX_LOCAL_DATA_MODE', os.getenv('LOCAL_DATA_MODE', 'true')).lower() in ('1', 'true', 'yes')
+LOCAL_DATA_MODE = os.getenv('SOLVX_LOCAL_DATA_MODE', os.getenv('LOCAL_DATA_MODE', 'false')).lower() in ('1', 'true', 'yes')
 MOCK_DATA = os.getenv('MOCK_DATA', 'false').lower() in ('1', 'true', 'yes')
 
 # INCOIS ERDDAP & Ocean Data Services

@@ -10,8 +10,20 @@ from ..config import MODEL_DATA_DIR
 from ..processing.normalization import sanitize, normalize_time_coordinate, variable_catalog
 from ..processing.subset import subset_array, select_surface, select_time, select_depth
 from .cache_service import safe_open_dataset, NETCDF_LOCK
+from .compute_service import compute_vector_magnitudes
+from .profiling_service import stage_timer
 
 logger = logging.getLogger("solvx.ocean_data_service")
+
+# Memoized index for logical variable definitions
+_LOGICAL_CATALOG_CACHE: Dict[str, List[Any]] = {}
+_CURRENT_COMPONENTS_CACHE: Optional[Tuple[Optional[Path], Optional[str], Optional[str]]] = None
+
+def invalidate_ocean_metadata_cache():
+    """Clears cached file-to-logical-variable mappings."""
+    global _LOGICAL_CATALOG_CACHE, _CURRENT_COMPONENTS_CACHE
+    _LOGICAL_CATALOG_CACHE.clear()
+    _CURRENT_COMPONENTS_CACHE = None
 
 def get_nc_files() -> List[Path]:
     return sorted(MODEL_DATA_DIR.glob('*.nc'))
@@ -42,6 +54,9 @@ def aliases(file_name: str, var_name: str) -> Optional[str]:
     return None
 
 def find_logical(logical: str):
+    if logical in _LOGICAL_CATALOG_CACHE:
+        return _LOGICAL_CATALOG_CACHE[logical]
+
     out = []
     with NETCDF_LOCK:
         for f in get_nc_files():
@@ -52,9 +67,14 @@ def find_logical(logical: str):
                             out.append((f, n, dict(v.attrs), list(v.dims), list(v.shape)))
             except Exception:
                 pass
+    _LOGICAL_CATALOG_CACHE[logical] = out
     return out
 
 def find_current_components():
+    global _CURRENT_COMPONENTS_CACHE
+    if _CURRENT_COMPONENTS_CACHE is not None:
+        return _CURRENT_COMPONENTS_CACHE
+
     matches = find_logical('currents')
     groups = {}
     for f, n, a, d, s in matches:
@@ -70,7 +90,9 @@ def find_current_components():
             if v is None and (name in {'vo', 'v', 'vcur'} or 'northward' in std or 'northward' in long_name):
                 v = n
         if u and v:
+            _CURRENT_COMPONENTS_CACHE = (f, u, v)
             return f, u, v
+    _CURRENT_COMPONENTS_CACHE = (None, None, None)
     return None, None, None
 
 def get_ocean_catalog() -> Dict[str, Any]:
@@ -209,7 +231,7 @@ def get_ocean_current_grid(
 
         u_data = np.asarray(u.values, dtype=np.float32)
         v_data = np.asarray(v.values, dtype=np.float32)
-        speeds = np.hypot(u_data, v_data)
+        speeds, _, _ = compute_vector_magnitudes(u_data, v_data)
         valid_speeds = speeds[~np.isnan(speeds)]
         min_s = float(np.min(valid_speeds)) if len(valid_speeds) > 0 else 0.0
         max_s = float(np.max(valid_speeds)) if len(valid_speeds) > 0 else 1.0
@@ -990,4 +1012,155 @@ def get_ocean_vertical_slice(
             'max_val': round(max_v, 3),
             'units': a.get('units', '')
         }
+
+
+def get_ocean_volume(
+    variable: str = 'temperature',
+    time: Optional[str] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    depth_min: Optional[float] = None,
+    depth_max: Optional[float] = None,
+    stride: int = 1
+) -> Dict[str, Any]:
+    """Extracts a 3D oceanographic volume grid [depth, lat, lon]."""
+    if min_lat is not None and max_lat is not None and min_lat >= max_lat:
+        raise HTTPException(400, detail="min_lat must be strictly less than max_lat")
+    if min_lon is not None and max_lon is not None and min_lon >= max_lon:
+        raise HTTPException(400, detail="min_lon must be strictly less than max_lon")
+    if depth_min is not None and depth_max is not None and depth_min >= depth_max:
+        raise HTTPException(400, detail="depth_min must be strictly less than depth_max")
+
+    two_d_vars = {'sea_level', 'sea_surface_height', 'zos', 'temperature_anomaly', 'sst_anomaly'}
+    var_lower = variable.lower()
+    if var_lower in two_d_vars:
+        raise HTTPException(422, detail=f"Cannot extract 3D volume for 2D surface variable '{variable}'")
+
+    logical = aliases('', variable) or variable
+    if logical in two_d_vars:
+        raise HTTPException(422, detail=f"Cannot extract 3D volume for 2D surface variable '{variable}'")
+
+    if logical == 'currents':
+        cf, un, vn = find_current_components()
+        if not cf or not un or not vn:
+            raise HTTPException(404, detail="Current velocity components (uo, vo) not found")
+        with safe_open_dataset(cf) as ds:
+            da_u = ds[un]
+            da_v = ds[vn]
+            sub_u = subset_array(da_u, lat_min=min_lat, lat_max=max_lat, lon_min=min_lon, lon_max=max_lon, depth_min=depth_min, depth_max=depth_max, time_start=time, time_end=time, stride=stride)
+            sub_v = subset_array(da_v, lat_min=min_lat, lat_max=max_lat, lon_min=min_lon, lon_max=max_lon, depth_min=depth_min, depth_max=depth_max, time_start=time, time_end=time, stride=stride)
+
+            if time is None and 'time' in sub_u.dims:
+                sub_u = sub_u.isel(time=0)
+                sub_v = sub_v.isel(time=0)
+            elif time is not None:
+                sub_u = select_time(sub_u, time)
+                sub_v = select_time(sub_v, time)
+
+            depth_dim = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z') if dim in sub_u.dims), None)
+            if not depth_dim or depth_dim not in sub_u.coords:
+                raise HTTPException(422, detail="Currents dataset missing 3D depth dimension")
+
+            yd = 'latitude' if 'latitude' in sub_u.dims else 'lat' if 'lat' in sub_u.dims else None
+            xd = 'longitude' if 'longitude' in sub_u.dims else 'lon' if 'lon' in sub_u.dims else None
+            if not yd or not xd or sub_u.sizes[yd] == 0 or sub_u.sizes[xd] == 0 or sub_u.sizes[depth_dim] == 0:
+                raise HTTPException(404, detail="No data found in requested bounding box")
+
+            levels = [round(float(z), 2) for z in sub_u.coords[depth_dim].values]
+            lats = sanitize(sub_u.coords[yd].values.tolist())
+            lons = sanitize(sub_u.coords[xd].values.tolist())
+
+            u_vals = sub_u.values.astype(np.float32)
+            v_vals = sub_v.values.astype(np.float32)
+            speed = np.hypot(u_vals, v_vals)
+            valid = speed[~np.isnan(speed)]
+            min_v = float(valid.min()) if len(valid) > 0 else 0.0
+            max_v = float(valid.max()) if len(valid) > 0 else 1.0
+
+            time_val = str(sub_u.coords['time'].values) if 'time' in sub_u.coords else (time or "2026-08-01T00:00:00Z")
+
+            return {
+                'variable': 'currents',
+                'domain': 'ocean',
+                'units': 'm/s',
+                'level_type': 'depth',
+                'levels': levels,
+                'latitude': lats,
+                'longitude': lons,
+                'values': sanitize(speed.tolist()),
+                'min_value': round(min_v, 3),
+                'max_value': round(max_v, 3),
+                'time': time_val,
+                'metadata': {
+                    'shape': [len(levels), len(lats), len(lons)],
+                    'components': [un, vn],
+                    'file': cf.name
+                }
+            }
+
+    matches = find_logical(logical)
+    if not matches:
+        raise HTTPException(404, detail=f"Variable '{variable}' not found in catalog")
+
+    f, n, a, d, s = matches[0]
+    with safe_open_dataset(f) as ds:
+        da = ds[n]
+        depth_dim = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'depthw', 'lev', 'level', 'z') if dim in da.dims), None)
+        if not depth_dim or da.ndim < 3:
+            raise HTTPException(422, detail=f"Cannot extract 3D volume for 2D surface variable '{variable}'")
+
+        sub = subset_array(
+            da,
+            lat_min=min_lat,
+            lat_max=max_lat,
+            lon_min=min_lon,
+            lon_max=max_lon,
+            depth_min=depth_min,
+            depth_max=depth_max,
+            time_start=time,
+            time_end=time,
+            stride=stride
+        )
+        if time is None and 'time' in sub.dims:
+            sub = sub.isel(time=0)
+        elif time is not None:
+            sub = select_time(sub, time)
+
+        yd = 'latitude' if 'latitude' in sub.dims else 'lat' if 'lat' in sub.dims else None
+        xd = 'longitude' if 'longitude' in sub.dims else 'lon' if 'lon' in sub.dims else None
+        if not yd or not xd or depth_dim not in sub.coords or sub.sizes[yd] == 0 or sub.sizes[xd] == 0 or sub.sizes[depth_dim] == 0:
+            raise HTTPException(404, detail="No data found in requested bounding box")
+
+        levels = [round(float(z), 2) for z in sub.coords[depth_dim].values]
+        lats = sanitize(sub.coords[yd].values.tolist())
+        lons = sanitize(sub.coords[xd].values.tolist())
+        vals_raw = sub.values.astype(np.float32)
+
+        valid = vals_raw[~np.isnan(vals_raw)]
+        min_v = float(valid.min()) if len(valid) > 0 else 0.0
+        max_v = float(valid.max()) if len(valid) > 0 else 1.0
+
+        units = '°C' if logical == 'temperature' else 'PSU' if logical == 'salinity' else 'm/s' if logical == 'currents' else a.get('units', '')
+        time_val = str(sub.coords['time'].values) if 'time' in sub.coords else (time or "2026-08-01T00:00:00Z")
+
+        return {
+            'variable': logical,
+            'domain': 'ocean',
+            'units': units,
+            'level_type': 'depth',
+            'levels': levels,
+            'latitude': lats,
+            'longitude': lons,
+            'values': sanitize(vals_raw.tolist()),
+            'min_value': round(min_v, 3),
+            'max_value': round(max_v, 3),
+            'time': time_val,
+            'metadata': {
+                'shape': [len(levels), len(lats), len(lons)],
+                'file': f.name
+            }
+        }
+
 

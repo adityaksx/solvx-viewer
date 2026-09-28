@@ -413,12 +413,8 @@ class DataCollector:
                 except Exception as e:
                     logger.warning("Open-Meteo fetch failed for '%s': %s", var_norm, e)
 
-            # 2. Local-First Check: Bay of Bengal High-Resolution Archive
-            in_bay_of_bengal = (
-                bbox.min_lat >= 15.5 and bbox.max_lat <= 24.0 and
-                bbox.min_lon >= 83.5 and bbox.max_lon <= 93.5
-            )
-            if (prov_key in ('auto', 'incois', 'local') and in_bay_of_bengal):
+            # 2. Local-Only Mode Check (Only active when LOCAL_DATA_MODE is explicitly True or provider is 'local')
+            if (LOCAL_DATA_MODE or prov_key == 'local'):
                 try:
                     from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
                     incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
@@ -653,12 +649,7 @@ class DataCollector:
         prov_key = str(provider).strip().lower()
         target_vars = variables or ['ocean_temperature', 'salinity', 'currents', 'sea_surface_height']
 
-        in_bay_of_bengal = (
-            bbox.min_lat >= 15.5 and bbox.max_lat <= 24.0 and
-            bbox.min_lon >= 83.5 and bbox.max_lon <= 93.5
-        )
-
-        if (prov_key in ('auto', 'incois', 'local') and in_bay_of_bengal):
+        if (LOCAL_DATA_MODE or prov_key == 'local'):
             return {
                 'is_cached': True,
                 'source': 'local_disk',
@@ -806,51 +797,18 @@ class DataCollector:
         start: str = None,
         end: str = None
     ):
-        var_norm = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
-        
-        # Check if local/INCOIS timeline is available with real NetCDF coordinates
-        try:
-            incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm
-            incois_tl = self.incois.get_variable_timeline(incois_var, min_lat, max_lat, min_lon, max_lon, depth)
-            if incois_tl and incois_tl.get('available_timestamps'):
-                incois_tl['variable'] = variable
-                return incois_tl
-        except Exception as e:
-            logger.debug("Failed discovering timeline from INCOIS adapter: %s", e)
-
-        now_utc = datetime.now(timezone.utc)
-        try:
-            start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')) if (start and isinstance(start, str) and start.strip()) else now_utc - timedelta(days=7)
-        except Exception:
-            start_dt = now_utc - timedelta(days=7)
-            
-        try:
-            end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')) if (end and isinstance(end, str) and end.strip()) else now_utc
-        except Exception:
-            end_dt = now_utc
-            
-        if start_dt > end_dt:
-            start_dt, end_dt = end_dt, start_dt
-        
-        timestamps = []
-        curr = start_dt
-        while curr <= end_dt:
-            timestamps.append(curr.strftime('%Y-%m-%dT%H:%M:%SZ'))
-            curr += timedelta(days=1)
-            
-        return {
-            'provider': 'Copernicus / Open-Meteo',
-            'variable': variable,
-            'dataset': 'solvx_combined',
-            'available_from': timestamps[0] if timestamps else None,
-            'available_to': timestamps[-1] if timestamps else None,
-            'default_resolution': 'hourly' if len(timestamps) > 100 else 'daily',
-            'resolutions': ['hourly', 'daily', 'monthly'],
-            'historical': {'from': timestamps[0] if timestamps else None, 'to': timestamps[-1] if timestamps else None},
-            'forecast': {'from': timestamps[-1] if timestamps else None, 'to': timestamps[-1] if timestamps else None},
-            'available_timestamps': timestamps,
-            'depth_levels': [0.494]
-        }
+        from .timeline_service import get_variable_timeline
+        return get_variable_timeline(
+            variable=variable,
+            provider='auto',
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            depth=depth,
+            start=start,
+            end=end
+        )
 
 
     def get_eez(

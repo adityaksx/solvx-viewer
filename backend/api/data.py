@@ -157,7 +157,7 @@ def get_ocean_bundle(
 ):
     """Retrieves all core ocean variables (temperature, salinity, currents, sea_surface_height) at once."""
     try:
-        return COLLECTOR.get_ocean_bundle(
+        data = COLLECTOR.get_ocean_bundle(
             provider=provider,
             min_lat=min_lat,
             max_lat=max_lat,
@@ -170,6 +170,9 @@ def get_ocean_bundle(
             stride=stride,
             variables=variables
         )
+        import json
+        from fastapi.responses import Response
+        return Response(content=json.dumps(data).encode('utf-8'), media_type='application/json')
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:

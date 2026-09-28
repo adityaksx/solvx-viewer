@@ -18,11 +18,54 @@ from .services.observation_service import get_observations
 from .services.cache_service import safe_open_dataset, DATASET_METADATA_INDEX
 from .processing.normalization import variable_catalog, sanitize
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from .services.gpu_service import init_gpu
+    from .services.ocean_data_service import find_logical
+    from .services.data_collector import COLLECTOR
+    from .config import DEFAULT_BBOX
+    init_gpu()
+    # Pre-warm catalog
+    for v in ('temperature', 'salinity', 'currents', 'sea_level', 'chlorophyll'):
+        try:
+            find_logical(v)
+        except Exception:
+            pass
+    # Pre-warm default ocean bundle so initial user request is instantaneous
+    try:
+        COLLECTOR.get_ocean_bundle(
+            provider='auto',
+            min_lat=DEFAULT_BBOX['min_lat'],
+            max_lat=DEFAULT_BBOX['max_lat'],
+            min_lon=DEFAULT_BBOX['min_lon'],
+            max_lon=DEFAULT_BBOX['max_lon'],
+            depth=None,
+            time=None,
+            stride=1
+        )
+    except Exception:
+        pass
+    yield
+
 app = FastAPI(
     title='SolvX Ocean Data API',
     description='High-performance API for dynamic 3D oceanographic visualization and observation analysis',
-    version='3.1.0'
+    version='3.1.0',
+    lifespan=lifespan
 )
+
+from .services.profiling_service import profile_scope
+
+@app.middleware("http")
+async def profiling_middleware(request, call_next):
+    with profile_scope(request.url.path) as prof:
+        response = await call_next(request)
+        response.headers["Server-Timing"] = prof.to_server_timing_header()
+        response.headers["X-Process-Time"] = f"{prof.total_elapsed_ms}ms"
+        response.headers["X-Compute-Backend"] = prof.metadata.get("backend", "cpu")
+        return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +87,20 @@ app.include_router(ml.router)
 app.include_router(observations.router)
 app.include_router(analysis.router)
 app.include_router(ai.router)
+
+@app.get('/api/system/hardware')
+def hardware_telemetry():
+    import os
+    from .services.gpu_service import get_gpu_info
+    return {
+        'cpu': {
+            'logical_cores': os.cpu_count(),
+            'worker_pool_limit': 6,
+            'omp_threads': os.environ.get('OMP_NUM_THREADS', '2'),
+            'openblas_threads': os.environ.get('OPENBLAS_NUM_THREADS', '2'),
+        },
+        'gpu': get_gpu_info()
+    }
 
 @app.get('/')
 def root():

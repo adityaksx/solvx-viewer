@@ -22,7 +22,7 @@ import threading
 import urllib.request
 import urllib.error
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 
 from ..config import REQUEST_TIMEOUT
@@ -392,17 +392,33 @@ class HYCOMAdapter:
     ) -> Dict[str, Any]:
         """Discovers temporal coverage for HYCOM datasets."""
         var_cfg = HYCOM_VARIABLE_MAP.get(variable, HYCOM_VARIABLE_MAP['temperature'])
+        now_utc = datetime.now(timezone.utc)
+        now_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        # Dynamic 14-day history + 3-day forecast
+        start_dt = (now_utc - timedelta(days=14)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = (now_utc + timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        timestamps = []
+        curr = start_dt
+        while curr <= end_dt:
+            timestamps.append(curr.strftime('%Y-%m-%dT00:00:00Z'))
+            curr += timedelta(days=1)
+            
+        historical_ts = [t for t in timestamps if t <= now_iso]
+        forecast_ts = [t for t in timestamps if t > now_iso]
+
         return {
             'provider': 'HYCOM',
             'variable': variable,
             'dataset': var_cfg['dataset_id'],
-            'available_from': '2026-08-01T00:00:00Z',
-            'available_to': '2026-09-16T00:00:00Z',
+            'available_from': timestamps[0] if timestamps else None,
+            'available_to': timestamps[-1] if timestamps else None,
             'default_resolution': '3-hourly',
             'resolutions': ['3-hourly', 'daily'],
-            'historical': {'from': '2026-08-01T00:00:00Z', 'to': '2026-09-12T00:00:00Z'},
-            'forecast': {'from': '2026-09-13T00:00:00Z', 'to': '2026-09-16T00:00:00Z'},
-            'available_timestamps': ['2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-16T00:00:00Z'],
+            'historical': {'from': historical_ts[0] if historical_ts else None, 'to': historical_ts[-1] if historical_ts else None},
+            'forecast': {'from': forecast_ts[0] if forecast_ts else None, 'to': forecast_ts[-1] if forecast_ts else None},
+            'available_timestamps': timestamps,
             'depth_levels': [0.0, 5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]
         }
 

@@ -15,7 +15,8 @@ from ..services.ocean_data_service import (
     get_region_array,
     get_ocean_depths,
     get_ocean_slice,
-    get_ocean_vertical_slice
+    get_ocean_vertical_slice,
+    get_ocean_volume
 )
 
 router = APIRouter(prefix='/api/ocean', tags=['Ocean Data'])
@@ -77,6 +78,31 @@ def ocean_vertical_slice(
         latitude=latitude,
         longitude=longitude,
         num_points=num_points
+    )
+
+@router.get('/volume')
+def ocean_volume(
+    variable: str = Query('temperature'),
+    time: Optional[str] = None,
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    depth_min: Optional[float] = None,
+    depth_max: Optional[float] = None,
+    stride: int = Query(1, ge=1, le=20)
+):
+    """Extracts a 3D volumetric oceanographic grid [depth, lat, lon]."""
+    return get_ocean_volume(
+        variable=variable,
+        time=time,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        min_lon=min_lon,
+        max_lon=max_lon,
+        depth_min=depth_min,
+        depth_max=depth_max,
+        stride=stride
     )
 
 @router.get('/time')

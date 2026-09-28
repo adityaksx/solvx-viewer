@@ -2,8 +2,6 @@
    Clean, professional ocean-science application design system.
    Light mode is the default. Dark mode is toggled via [data-theme="dark"]. */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 /* =========================================================================
    1. DESIGN TOKENS (LIGHT DEFAULT & DARK OPTIONAL)
    ========================================================================= */

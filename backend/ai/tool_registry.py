@@ -502,7 +502,7 @@ def get_data_provenance(
         source="Copernicus Marine Service (CMEMS) / WMO Argo Profiling Float Network",
         variables=[variable],
         region=bbox or DEFAULT_BBOX,
-        time_range={"timestamp": time or "2026-09-01T00:00:00Z"},
+        time_range={"timestamp": time or datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")},
         depth_range={"depth_m": depth or 0.0},
         retrieved_at=datetime.now(timezone.utc).isoformat(),
         processing=processing or ["spatial_subset", "quality_control", "statistical_aggregation"]

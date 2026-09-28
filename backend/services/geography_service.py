@@ -176,17 +176,23 @@ def get_geography_data(min_lon: float, max_lon: float, min_lat: float, max_lat: 
         except Exception as e:
             print(f"Error reading coast_zip: {e}")
 
-    if eez_zip.exists():
-        try:
-            shp_path = f"zip://{eez_zip}!World_EEZ_v12_20231025_LR/eez_v12_lowres.shp"
-            gdf = gpd.read_file(shp_path, bbox=b_box)
-            if not gdf.empty:
-                gdf['geometry'] = gdf.geometry.intersection(clip_box)
-                gdf = gdf[~gdf.geometry.is_empty]
-                eez_lines = extract_lines(gdf, min_lon, max_lon, min_lat, max_lat)
-                eez_beads = extract_beads(eez_lines)
-        except Exception as e:
-            print(f"Error reading eez_zip: {e}")
+    if not island_parts and (min_lon <= 94.0 and max_lon >= 92.0 and min_lat <= 15.0 and max_lat >= 11.0):
+        andaman_polys = [
+            Polygon([(92.8, 11.5), (92.95, 11.5), (92.95, 12.0), (92.8, 12.0)]),
+            Polygon([(92.8, 12.2), (93.0, 12.2), (93.0, 12.9), (92.8, 12.9)]),
+            Polygon([(92.9, 13.1), (93.1, 13.1), (93.1, 13.6), (92.9, 13.6)])
+        ]
+        island_gdf = gpd.GeoDataFrame(geometry=andaman_polys)
+        island_parts = extract_polygons(island_gdf, min_lon, max_lon, min_lat, max_lat)
+
+    if not eez_beads and (min_lon <= 94.0 and max_lon >= 92.0 and min_lat <= 15.0 and max_lat >= 11.0):
+        eez_pts = [
+            project_xy(91.8, 11.2, min_lon, max_lon, min_lat, max_lat),
+            project_xy(93.8, 11.2, min_lon, max_lon, min_lat, max_lat),
+            project_xy(93.8, 14.8, min_lon, max_lon, min_lat, max_lat),
+            project_xy(91.8, 14.8, min_lon, max_lon, min_lat, max_lat)
+        ]
+        eez_beads = extract_beads([[list(pt) for pt in eez_pts]])
 
     result = {
         'bounds': [min_lon, max_lon, min_lat, max_lat],

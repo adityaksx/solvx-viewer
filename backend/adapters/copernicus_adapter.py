@@ -134,7 +134,13 @@ class CopernicusAdapter:
 
         norm_var = 'ocean_temperature' if variable in ('temperature', 'temp') else variable
         cfg = COPERNICUS_VARIABLE_CATALOG.get(norm_var, {})
-        vars_needed = cfg.get("vars") or ([cfg.get("var")] if cfg.get("var") else [])
+        from ..services.external_cache_service import EXTERNAL_CACHE
+        fast_cached = EXTERNAL_CACHE.find_cached_chunk(
+            norm_var, min_lat, max_lat, min_lon, max_lon,
+            time=time, start_time=start_time, end_time=end_time
+        )
+        if fast_cached:
+            return fast_cached
 
         all_nc = glob.glob(os.path.join(self.cache_dir, "*.nc"))
         if not all_nc:
@@ -308,6 +314,11 @@ class CopernicusAdapter:
                         )
                         if os.path.exists(tmp_path):
                             os.replace(tmp_path, out_nc)
+                            try:
+                                from ..services.external_cache_service import EXTERNAL_CACHE
+                                EXTERNAL_CACHE.register_file(out_nc, "copernicus", norm_var)
+                            except Exception as reg_err:
+                                logger.debug("Failed registering new file in manifest: %s", reg_err)
                     except Exception as dl_err:
                         if os.path.exists(tmp_path):
                             try:

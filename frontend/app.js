@@ -437,11 +437,16 @@ class SolvXApp {
         if (msgEl && msg) msgEl.textContent = msg;
     }
 
-    hideGeoModal(delayMs = 1200) {
-        setTimeout(() => {
+    hideGeoModal(delayMs = 0) {
+        if (delayMs > 0) {
+            setTimeout(() => {
+                const modal = document.getElementById('geoModal');
+                if (modal) modal.classList.add('hidden');
+            }, delayMs);
+        } else {
             const modal = document.getElementById('geoModal');
             if (modal) modal.classList.add('hidden');
-        }, delayMs);
+        }
     }
 
     updateDataProgress(step, state, text, pct, msg, estSeconds) {
@@ -573,7 +578,7 @@ class SolvXApp {
             this.activeTime = this.timelineControl.getCurrentTimestamp();
 
             this.status('Geography ready · Loading ocean variables for timeline…');
-            this.hideGeoModal(1200);
+            this.hideGeoModal(0);
 
             // Phase 2: Load all ocean variables at once for the current timeline date
             if (this.activeTime) {

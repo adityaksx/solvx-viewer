@@ -2,7 +2,7 @@ import os
 import json
 import math
 import logging
-import datetime
+from datetime import datetime, timezone, timedelta
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -433,7 +433,7 @@ class INCOISAdapter:
                 'dataset_id': var_config['dataset_id'],
                 'standard_name': var_config['standard_name'],
                 'description': var_config['description'],
-                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'retrieved_at': datetime.now(timezone.utc).isoformat()
             }
         }
 
@@ -507,7 +507,7 @@ class INCOISAdapter:
                 'dataset_id': 'incois_hoofs_curr',
                 'standard_name': 'sea_water_velocity',
                 'description': 'Horizontal Ocean Current Velocity (m/s)',
-                'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                'retrieved_at': datetime.now(timezone.utc).isoformat()
             }
         }
 
@@ -570,7 +570,7 @@ class INCOISAdapter:
                 'dataset': 'local_currents_nc',
                 'variable': 'currents',
                 'units': 'm/s',
-                'time': time or '2026-08-01T00:00:00Z',
+                'time': time or datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00Z'),
                 'depth': depth or 0.0,
                 'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
                 'latitude': lats,
@@ -586,7 +586,7 @@ class INCOISAdapter:
                     'dataset_id': 'local_currents_nc',
                     'standard_name': 'sea_water_velocity',
                     'description': 'Horizontal Ocean Current Velocity (m/s)',
-                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    'retrieved_at': datetime.now(timezone.utc).isoformat()
                 }
             }
 
@@ -679,7 +679,7 @@ class INCOISAdapter:
                             'dataset_id': var_config.get('dataset_id', 'derived_bgc'),
                             'standard_name': var_config.get('standard_name', variable),
                             'description': var_config.get('description', variable),
-                            'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                            'retrieved_at': datetime.now(timezone.utc).isoformat()
                         }
                     }
             except Exception as e:
@@ -722,14 +722,12 @@ class INCOISAdapter:
             lat_coord = 'latitude' if 'latitude' in sub_final.coords else 'lat'
             lon_coord = 'longitude' if 'longitude' in sub_final.coords else 'lon'
 
-            lats = sanitize(sub_final[lat_coord].values.tolist())
-            lons = sanitize(sub_final[lon_coord].values.tolist())
-            values = sanitize(sub_final.values.astype(np.float32).tolist())
+            lats = sanitize(sub_final[lat_coord].values)
+            lons = sanitize(sub_final[lon_coord].values)
+            values = sanitize(sub_final.values.astype(np.float32))
 
             depth_coord = next((d for d in ('depth', 'deptht', 'lev', 'z') if d in sub_final.coords), None)
-            raw_depth = sub_final[depth_coord].values.tolist() if depth_coord else []
-            if not isinstance(raw_depth, list):
-                raw_depth = [raw_depth]
+            raw_depth = sub_final[depth_coord].values if depth_coord else []
             depth_levels = sanitize(raw_depth)
 
             return {
@@ -755,7 +753,7 @@ class INCOISAdapter:
                     'standard_name': var_config.get('standard_name', variable),
                     'description': var_config.get('description', variable),
                     'depth_levels': depth_levels,
-                    'retrieved_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    'retrieved_at': datetime.now(timezone.utc).isoformat()
                 }
             }
 
@@ -820,8 +818,13 @@ class INCOISAdapter:
             except Exception as e:
                 logger.warning(f"Failed to fetch depth from ERDDAP API: {e}")
 
+        now_utc = datetime.now(timezone.utc)
+        now_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
         if not timestamps:
-            timestamps = ['2026-08-01T00:00:00Z', '2026-08-15T00:00:00Z', '2026-09-01T00:00:00Z']
+            curr = now_utc - timedelta(days=30)
+            while curr <= now_utc:
+                timestamps.append(curr.strftime('%Y-%m-%dT00:00:00Z'))
+                curr += timedelta(days=1)
 
         available_from = timestamps[0]
         available_to = timestamps[-1]
@@ -832,18 +835,17 @@ class INCOISAdapter:
         else:
             resolutions = ['daily', 'monthly']
 
-        # Historical vs Forecast boundary:
-        # Use midpoint or 60% mark as transition from historical assimilation to forecast prediction
-        mid_idx = int(len(timestamps) * 0.6)
-        split_date = timestamps[mid_idx]
+        # Historical vs Forecast boundary anchored strictly to current UTC time
+        historical_ts = [t for t in timestamps if t <= now_iso]
+        forecast_ts = [t for t in timestamps if t > now_iso]
 
         historical = {
-            'from': available_from,
-            'to': split_date
+            'from': historical_ts[0] if historical_ts else None,
+            'to': historical_ts[-1] if historical_ts else None
         }
         forecast = {
-            'from': timestamps[min(mid_idx + 1, len(timestamps) - 1)],
-            'to': available_to
+            'from': forecast_ts[0] if forecast_ts else None,
+            'to': forecast_ts[-1] if forecast_ts else None
         }
 
         mode = "LOCAL_ARCHIVE_FALLBACK" if LOCAL_DATA_MODE else "LIVE_API"

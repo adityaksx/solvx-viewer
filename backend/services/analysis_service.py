@@ -15,6 +15,9 @@ logger = logging.getLogger('solvx.analysis_service')
 
 from .observation_service import get_argo_observations, get_argo_float, ARGO_OBSERVATIONS
 from .ocean_data_service import find_logical, safe_open_dataset, select_time, sanitize
+from .profiling_service import stage_timer
+from .compute_service import compute_rmse_bias_mae
+from ..utils.grid_index import bilinear_weights_vectorized
 from ..models.analysis import (
     ComparisonPoint,
     ProfileComparisonResponse,
@@ -172,31 +175,86 @@ def extract_model_vertical_column(
     return ref_depths, ref_vals, True, "Physical Climatology Reference (Northern Indian Ocean / Bay of Bengal)"
 
 
-def compare_float_profile(
-    float_id: str,
+def extract_model_vertical_columns_batch(
+    coords: List[Tuple[float, float]],
     variable: str = 'temperature',
     time_iso: Optional[str] = None
-) -> ProfileComparisonResponse:
+) -> List[Tuple[np.ndarray, np.ndarray, bool, str]]:
     """
-    Compares an individual Argo float's vertical sounding profile against collocated
-    interpolated numerical model values. Computes RMSE, Mean Model Bias, and MAE.
-    The returned point difference is Model - Observation so the dashboard can use a
-    single signed convention for error / bias visualizations.
+    Extracts 1D vertical columns (depths, values) for multiple coordinate locations
+    in a single pass over the numerical model NetCDF dataset, avoiding repeated file opens.
     """
-    float_data = get_argo_float(float_id)
-    if not float_data:
-        raise ValueError(f"Argo profiling float '{float_id}' not found")
+    if not coords:
+        return []
 
+    with stage_timer("io_ms"):
+        matches = find_logical(variable)
+        if matches:
+            try:
+                f, n, a, d, _ = matches[0]
+                with safe_open_dataset(f) as ds:
+                    if n in ds:
+                        da = ds[n]
+                        if 'time' in da.dims:
+                            if time_iso:
+                                da = select_time(da, time_iso)
+                            else:
+                                da = da.isel(time=0)
+
+                        yd = next((dim for dim in ('latitude', 'lat') if dim in da.dims), None)
+                        xd = next((dim for dim in ('longitude', 'lon') if dim in da.dims), None)
+                        zd = next((dim for dim in ('depth', 'deptht', 'depthu', 'depthv', 'lev', 'level', 'z') if dim in da.dims), None)
+
+                        if yd and xd and zd:
+                            grid_lats = np.asarray(da.coords[yd].values, dtype=float)
+                            grid_lons = np.asarray(da.coords[xd].values, dtype=float)
+                            grid_depths = np.asarray(da.coords[zd].values, dtype=float)
+                            vals_3d = da.values.astype(np.float32)
+
+                            if vals_3d.ndim == 3 and len(grid_lats) >= 2 and len(grid_lons) >= 2:
+                                q_lats = np.array([c[0] for c in coords], dtype=float)
+                                q_lons = np.array([c[1] for c in coords], dtype=float)
+                                y0, y1, x0, x1, w00, w01, w10, w11 = bilinear_weights_vectorized(
+                                    grid_lats, grid_lons, q_lats, q_lons
+                                )
+                                model_src = f"Copernicus Global Ocean Analysis (NEMO 1/12°) - {f.name}"
+                                results = []
+                                for k in range(len(coords)):
+                                    v00 = vals_3d[:, y0[k], x0[k]]
+                                    v01 = vals_3d[:, y0[k], x1[k]]
+                                    v10 = vals_3d[:, y1[k], x0[k]]
+                                    v11 = vals_3d[:, y1[k], x1[k]]
+                                    col = w00[k] * v00 + w01[k] * v01 + w10[k] * v10 + w11[k] * v11
+                                    nan_mask = np.isnan(col)
+                                    if np.any(nan_mask):
+                                        col_near = vals_3d[:, y0[k], x0[k]]
+                                        col = np.where(nan_mask, col_near, col)
+                                    if not np.all(np.isnan(col)):
+                                        valid_mask = ~np.isnan(col)
+                                        results.append((grid_depths[valid_mask], col[valid_mask], False, model_src))
+                                    else:
+                                        results.append(extract_model_vertical_column(coords[k][0], coords[k][1], variable, time_iso))
+                                return results
+            except Exception as e:
+                logger.warning("Batch column extraction failed (%s), falling back to sequential: %s", variable, e)
+
+    # Fallback to sequential extraction
+    return [extract_model_vertical_column(lat, lon, variable, time_iso) for lat, lon in coords]
+
+
+def _build_profile_comparison(
+    float_data: Dict[str, Any],
+    model_depths: np.ndarray,
+    model_vals: np.ndarray,
+    is_fallback: bool,
+    model_source: str,
+    variable: str = 'temperature'
+) -> ProfileComparisonResponse:
+    """Helper constructing ProfileComparisonResponse from extracted model vertical column."""
     lat = float_data['latitude']
     lon = float_data['longitude']
     profile_points = float_data.get('profile', [])
 
-    # Extract model vertical column
-    model_depths, model_vals, is_fallback, model_source = extract_model_vertical_column(
-        lat, lon, variable=variable, time_iso=time_iso
-    )
-
-    # Sort model depths monotonically for interpolation
     sort_idx = np.argsort(model_depths)
     m_depths = model_depths[sort_idx]
     m_vals = model_vals[sort_idx]
@@ -210,7 +268,6 @@ def compare_float_profile(
 
     for pt in profile_points:
         z = float(pt.get('depth', 0.0))
-        # Support both 'temperature'/'temp' and 'salinity'/'sal' keys
         obs_val = pt.get(val_key)
         if obs_val is None:
             if variable == 'temperature':
@@ -226,8 +283,6 @@ def compare_float_profile(
             continue
 
         obs_val = float(obs_val)
-
-        # 1D linear vertical interpolation at exact observation depth z
         mod_val = float(np.interp(z, m_depths, m_vals))
         diff = obs_val - mod_val
         abs_diff = abs(diff)
@@ -277,6 +332,31 @@ def compare_float_profile(
     )
 
 
+def compare_float_profile(
+    float_id: str,
+    variable: str = 'temperature',
+    time_iso: Optional[str] = None
+) -> ProfileComparisonResponse:
+    """
+    Compares an individual Argo float's vertical sounding profile against collocated
+    interpolated numerical model values. Computes RMSE, Mean Model Bias, and MAE.
+    """
+    float_data = get_argo_float(float_id)
+    if not float_data:
+        raise ValueError(f"Argo profiling float '{float_id}' not found")
+
+    lat = float_data['latitude']
+    lon = float_data['longitude']
+
+    with stage_timer("io_ms"):
+        model_depths, model_vals, is_fallback, model_source = extract_model_vertical_column(
+            lat, lon, variable=variable, time_iso=time_iso
+        )
+
+    with stage_timer("compute_ms"):
+        return _build_profile_comparison(float_data, model_depths, model_vals, is_fallback, model_source, variable)
+
+
 def compare_regional_floats(
     min_lon: Optional[float] = None,
     max_lon: Optional[float] = None,
@@ -288,9 +368,10 @@ def compare_regional_floats(
 ) -> RegionalModelVsArgoResponse:
     """
     Evaluates numerical model accuracy against all active Argo floats in the given bounding box.
-    Calculates basin-wide aggregate RMSE, Bias, MAE, and discrepancy rankings.
+    Uses batched model grid extraction and unified compute reductions for high throughput.
     """
-    floats = get_argo_observations(min_lon=min_lon, max_lon=max_lon, min_lat=min_lat, max_lat=max_lat)
+    with stage_timer("io_ms"):
+        floats = get_argo_observations(min_lon=min_lon, max_lon=max_lon, min_lat=min_lat, max_lat=max_lat)
 
     comparisons: List[ProfileComparisonResponse] = []
     all_diffs = []
@@ -305,62 +386,71 @@ def compare_regional_floats(
         'sea_surface_height': 'm',
         'currents': 'm/s',
     }.get(variable, '')
-    for f in floats:
-        try:
-            comp = compare_float_profile(str(f['float_id']), variable=variable, time_iso=time_iso)
-            if comp.points_count > 0:
-                comparisons.append(comp)
-                for pt in comp.comparison:
-                    all_diffs.append(pt.diff)
-                    all_abs_diffs.append(pt.abs_diff)
 
-                if comp.rmse is not None:
-                    ranking.append(RegionalDiscrepancyRank(
-                        float_id=comp.float_id,
-                        wmo=comp.wmo,
-                        latitude=comp.latitude,
-                        longitude=comp.longitude,
-                        rmse=comp.rmse,
-                        bias=comp.bias or 0.0,
-                        max_diff=comp.max_diff or 0.0,
-                        unit=unit
-                    ))
-        except Exception as e:
-            logger.warning("Failed evaluating Argo float %s against model: %s", f.get('float_id'), e)
-            continue
+    if floats:
+        coords = [(float(f['latitude']), float(f['longitude'])) for f in floats]
+        # Batch extract all columns in a single NetCDF pass
+        columns = extract_model_vertical_columns_batch(coords, variable=variable, time_iso=time_iso)
+
+        with stage_timer("compute_ms"):
+            for f, col_info in zip(floats, columns):
+                try:
+                    m_depths, m_vals, is_fallback, model_src = col_info
+                    comp = _build_profile_comparison(f, m_depths, m_vals, is_fallback, model_src, variable)
+                    if comp.points_count > 0:
+                        comparisons.append(comp)
+                        for pt in comp.comparison:
+                            all_diffs.append(pt.diff)
+                            all_abs_diffs.append(pt.abs_diff)
+
+                        if comp.rmse is not None:
+                            ranking.append(RegionalDiscrepancyRank(
+                                float_id=comp.float_id,
+                                wmo=comp.wmo,
+                                latitude=comp.latitude,
+                                longitude=comp.longitude,
+                                rmse=comp.rmse,
+                                bias=comp.bias or 0.0,
+                                max_diff=comp.max_diff or 0.0,
+                                unit=unit
+                            ))
+                except Exception as e:
+                    logger.warning("Failed evaluating Argo float %s against model: %s", f.get('float_id'), e)
+                    continue
 
     # Sort ranking by RMSE descending (largest discrepancies first)
     ranking.sort(key=lambda r: r.rmse, reverse=True)
 
-    # Compute depth-dependent statistics across all vertical soundings
-    depth_errors = {}
-    max_diff_val = 0.0
-    max_diff_depth = None
-    max_diff_lat = None
-    max_diff_lon = None
-    for comp in comparisons:
-        for pt in comp.comparison:
-            d = round(float(pt.depth), 1)
-            if d not in depth_errors:
-                depth_errors[d] = []
-            depth_errors[d].append(pt.diff)
-            if pt.abs_diff > max_diff_val:
-                max_diff_val = pt.abs_diff
-                max_diff_depth = d
-                max_diff_lat = comp.latitude
-                max_diff_lon = comp.longitude
+    with stage_timer("compute_ms"):
+        # Compute depth-dependent statistics across all vertical soundings
+        depth_errors = {}
+        max_diff_val = 0.0
+        max_diff_depth = None
+        max_diff_lat = None
+        max_diff_lon = None
+        for comp in comparisons:
+            for pt in comp.comparison:
+                d = round(float(pt.depth), 1)
+                if d not in depth_errors:
+                    depth_errors[d] = []
+                depth_errors[d].append(pt.diff)
+                if pt.abs_diff > max_diff_val:
+                    max_diff_val = pt.abs_diff
+                    max_diff_depth = d
+                    max_diff_lat = comp.latitude
+                    max_diff_lon = comp.longitude
 
-    depth_of_max_rmse = None
-    max_depth_rmse = -1.0
-    for d, diffs in depth_errors.items():
-        d_rmse = float(np.sqrt(np.mean(np.square(diffs))))
-        if d_rmse > max_depth_rmse:
-            max_depth_rmse = d_rmse
-            depth_of_max_rmse = d
+        depth_of_max_rmse = None
+        max_depth_rmse = -1.0
+        for d, diffs in depth_errors.items():
+            d_rmse = float(np.sqrt(np.mean(np.square(diffs))))
+            if d_rmse > max_depth_rmse:
+                max_depth_rmse = d_rmse
+                depth_of_max_rmse = d
 
-    overall_rmse = float(np.sqrt(np.mean(np.square(all_diffs)))) if all_diffs else None
-    overall_bias = float(np.mean(all_diffs)) if all_diffs else None
-    overall_mae = float(np.mean(all_abs_diffs)) if all_abs_diffs else None
+        overall_rmse = float(np.sqrt(np.mean(np.square(all_diffs)))) if all_diffs else None
+        overall_bias = float(np.mean(all_diffs)) if all_diffs else None
+        overall_mae = float(np.mean(all_abs_diffs)) if all_abs_diffs else None
 
     return RegionalModelVsArgoResponse(
         variable=variable,
@@ -760,15 +850,16 @@ def detect_anomalies(
     anomalies: List[AnomalyRecord] = []
     total_depth_levels = 0
 
-    for obs in obs_list:
+    coords = [(float(obs.get('latitude', 0.0)), float(obs.get('longitude', 0.0))) for obs in obs_list]
+    model_columns = extract_model_vertical_columns_batch(coords, variable=variable, time_iso=time_iso)
+
+    for obs, (m_depths, m_vals, is_fallback, m_source) in zip(obs_list, model_columns):
         float_id  = str(obs.get('float_id', obs.get('id', 'unknown')))
         wmo       = int(obs.get('wmo', 0))
         lat       = float(obs.get('latitude', 0.0))
         lon       = float(obs.get('longitude', 0.0))
         timestamp = str(obs.get('timestamp', ''))
 
-        # Pre-fetch model column for this float's position
-        m_depths, m_vals, is_fallback, m_source = extract_model_vertical_column(lat, lon, variable=variable, time_iso=time_iso)
         sort_idx = np.argsort(m_depths)
         m_depths_s = m_depths[sort_idx]
         m_vals_s   = m_vals[sort_idx]

@@ -233,7 +233,7 @@ class TestSolvXDataCollector(unittest.TestCase):
         res = COLLECTOR.get_ocean_variable('temperature', min_lat=16.07, max_lat=23.52, min_lon=84.1, max_lon=93.0)
         source = res.get('source')
         self.assertIsInstance(source, dict)
-        self.assertIn(source.get('provider'), ('INCOIS', 'LOCAL'))
+        self.assertIn(source.get('provider'), ('INCOIS', 'LOCAL', 'COPERNICUS'))
         self.assertTrue(source.get('dataset'))
         self.assertIn('mode', source)
         self.assertIn('retrieved_at', source)

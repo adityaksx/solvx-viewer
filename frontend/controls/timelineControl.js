@@ -36,29 +36,28 @@ export class TimelineControl {
         this.setupEvents();
     }
 
-    _filterToDefaultTwoMonthRange(timestamps) {
+    _filterToDefaultOneYearRange(timestamps) {
         if (!timestamps || !timestamps.length) return [];
         const now = new Date();
-        const twoMonthsAgo = new Date(now.getTime());
-        // Calendar-month subtraction respecting variable month lengths
-        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+        const oneYearAgo = new Date(now.getTime());
+        oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
 
         const nowIso = now.toISOString();
-        const twoMonthsAgoIso = twoMonthsAgo.toISOString();
+        const oneYearAgoIso = oneYearAgo.toISOString();
 
-        // 1. Filter to timestamps in [twoMonthsAgo, now]
-        const inRange = timestamps.filter(ts => ts >= twoMonthsAgoIso && ts <= nowIso);
+        // 1. Filter to timestamps in [oneYearAgo, now]
+        const inRange = timestamps.filter(ts => ts >= oneYearAgoIso && ts <= nowIso);
         if (inRange.length > 0) {
             return inRange;
         }
 
         // 2. Fallback: If dataset is historical or in future, find the latest timestamp
-        // and take the 2 calendar months leading up to it so timeline is never empty.
+        // and take the 1 calendar year leading up to it so timeline is never empty.
         const latestTs = timestamps[timestamps.length - 1];
         const latestDate = new Date(latestTs);
         if (!isNaN(latestDate.getTime())) {
             const rangeStart = new Date(latestDate.getTime());
-            rangeStart.setMonth(rangeStart.getMonth() - 2);
+            rangeStart.setFullYear(rangeStart.getFullYear() - 1);
             const rangeStartIso = rangeStart.toISOString();
             const fallbackRange = timestamps.filter(ts => ts >= rangeStartIso && ts <= latestTs);
             if (fallbackRange.length > 0) {
@@ -82,13 +81,13 @@ export class TimelineControl {
             this.allTimestamps = data.available_timestamps || [];
             this.currentResolution = data.default_resolution || 'daily';
             
-            // Set default date range to last 2 calendar months relative to system time
+            // Set default date range to last 1 calendar year relative to system time
             if (this.allTimestamps.length > 0) {
                 if (start && end) {
                     this.windowTimestamps = this.allTimestamps.filter(ts => ts >= start && ts <= end);
                     if (!this.windowTimestamps.length) this.windowTimestamps = [...this.allTimestamps];
                 } else {
-                    this.windowTimestamps = this._filterToDefaultTwoMonthRange(this.allTimestamps);
+                    this.windowTimestamps = this._filterToDefaultOneYearRange(this.allTimestamps);
                 }
 
                 if (this.timeStart && this.windowTimestamps.length > 0) {
@@ -211,8 +210,12 @@ export class TimelineControl {
     getCurrentMeta() {
         const ts = this.getCurrentTimestamp();
         let isForecast = false;
-        if (this.timelineData?.forecast?.from && ts) {
-            isForecast = ts >= this.timelineData.forecast.from;
+        if (ts) {
+            if (this.timelineData?.forecast?.from) {
+                isForecast = ts >= this.timelineData.forecast.from;
+            } else {
+                isForecast = new Date(ts).getTime() > Date.now();
+            }
         }
         return {
             timestamp: ts,

@@ -20,10 +20,17 @@ def sanitize(v: Any) -> Any:
     if isinstance(v, np.generic):
         val = v.item()
         return val if not isinstance(val, float) or np.isfinite(val) else None
+    if isinstance(v, (list, tuple)):
+        if len(v) > 0 and isinstance(v[0], (float, int, np.floating, np.integer, list)):
+            try:
+                arr = np.asarray(v)
+                if np.issubdtype(arr.dtype, np.number):
+                    return sanitize(arr)
+            except Exception:
+                pass
+        return [sanitize(x) for x in v]
     if isinstance(v, dict):
         return {str(k): sanitize(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [sanitize(x) for x in v]
     if isinstance(v, float):
         return v if np.isfinite(v) else None
     return v
@@ -31,6 +38,8 @@ def sanitize(v: Any) -> Any:
 def normalize_time_coordinate(data: xr.DataArray) -> xr.DataArray:
     """Standardizes dataset time coordinate to UTC datetime64[ns]."""
     if 'time' not in data.dims or 'time' not in data.coords:
+        return data
+    if np.issubdtype(data.time.dtype, np.datetime64):
         return data
     raw = data.time.values
     try:

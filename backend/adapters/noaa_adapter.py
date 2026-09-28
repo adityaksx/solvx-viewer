@@ -20,7 +20,7 @@ import logging
 import urllib.request
 import urllib.error
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 
 import numpy as np
@@ -364,21 +364,29 @@ class NOAAAdapter:
             except Exception as e:
                 logger.warning(f"Failed to fetch depth from ERDDAP API: {e}")
                 
+        now_utc = datetime.now(timezone.utc)
+        now_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
         if not timestamps:
-            timestamps = ['2026-08-01T00:00:00Z', '2026-09-15T00:00:00Z']
+            curr = (now_utc - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+            while curr <= now_utc:
+                timestamps.append(curr.strftime('%Y-%m-%dT00:00:00Z'))
+                curr += timedelta(days=1)
         if not depth_levels:
             depth_levels = [0.0]
+
+        historical_ts = [t for t in timestamps if t <= now_iso]
+        forecast_ts = [t for t in timestamps if t > now_iso]
 
         return {
             'provider': 'NOAA',
             'variable': variable,
             'dataset': dataset_id,
-            'available_from': timestamps[0],
-            'available_to': timestamps[-1],
+            'available_from': timestamps[0] if timestamps else None,
+            'available_to': timestamps[-1] if timestamps else None,
             'default_resolution': 'daily',
             'resolutions': ['daily', 'monthly'],
-            'historical': {'from': timestamps[0], 'to': timestamps[-1]},
-            'forecast': None,
+            'historical': {'from': historical_ts[0] if historical_ts else None, 'to': historical_ts[-1] if historical_ts else None},
+            'forecast': {'from': forecast_ts[0] if forecast_ts else None, 'to': forecast_ts[-1] if forecast_ts else None} if forecast_ts else None,
             'available_timestamps': timestamps,
             'depth_levels': depth_levels
         }

@@ -121,3 +121,4 @@ plan.md
 server.log
 /data/external
 bug_report.md
+/frontend/vendor

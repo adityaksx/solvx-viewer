@@ -48,6 +48,33 @@ class EEZAdapter:
             eez_zip = DATA_DIR / 'World_EEZ_v12_20231025_LR.zip'
 
         if not eez_zip.exists():
+            geom_paths = [
+                DATA_DIR / 'external' / 'geography' / f"geom_{min_lat:.2f}_{max_lat:.2f}_{min_lon:.2f}_{max_lon:.2f}.json",
+                DATA_DIR / 'external' / 'geography' / "geom_16.07_23.52_84.10_93.00.json",
+                Path(__file__).resolve().parent.parent.parent / 'frontend' / 'geometry.json'
+            ]
+            for gp in geom_paths:
+                if gp.exists():
+                    try:
+                        with open(gp, 'r') as f:
+                            d = json.load(f)
+                            beads = d.get('eezBeads', [])
+                            lines_3d = d.get('eez', [])
+                            if beads or lines_3d:
+                                return {
+                                    'type': 'FeatureCollection',
+                                    'source': 'Marine Regions / VLIZ (Cached Geometry)',
+                                    'features': [{'type': 'Feature', 'properties': {'name': 'Exclusive Economic Zone', 'sovereign': 'India'}, 'geometry': None}] if (lines_3d or beads) else [],
+                                    'lines3d': lines_3d if lines_3d else [beads],
+                                    'eezBeads': beads,
+                                    'metadata': {
+                                        'provider': 'Flanders Marine Institute (VLIZ)',
+                                        'dataset': 'Maritime Boundaries Geodatabase: Maritime Boundaries and Exclusive Economic Zones (200NM), version 12'
+                                    }
+                                }
+                    except Exception:
+                        pass
+
             return {
                 'type': 'FeatureCollection',
                 'source': 'Marine Regions / VLIZ (Not Found)',

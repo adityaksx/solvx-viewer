@@ -105,7 +105,7 @@ class AnalysisDashboard {
     await this.loadTimeline();
 
     if (this.timeline.length > 0) {
-      await this.selectTime(0);
+      await this.selectTime(this.index);
     }
     this.updateProvenance();
     this.initAIAssistant();
@@ -117,6 +117,13 @@ class AnalysisDashboard {
       } else if (eventType === 'solvx:variableChange') {
         if (detail.id !== this.activeVar) {
           this.setVariable(detail.id);
+        }
+      } else if (eventType === 'solvx:timeChange') {
+        if (detail?.current && detail.current !== this.activeTime) {
+          const idx = this.timeline.indexOf(detail.current);
+          if (idx !== -1 && idx !== this.index) {
+            this.selectTime(idx);
+          }
         }
       }
     });
@@ -218,7 +225,7 @@ class AnalysisDashboard {
     await this.loadDepths();
     await this.loadTimeline();
     if (this.timeline.length > 0) {
-      await this.selectTime(0);
+      await this.selectTime(this.index);
     }
     if (this.scene) this.scene.fitCamera();
   }
@@ -415,7 +422,7 @@ class AnalysisDashboard {
     await this.loadDepths();
     await this.loadTimeline();
     if (this.timeline.length > 0) {
-      await this.selectTime(0);
+      await this.selectTime(this.index);
     }
   }
 
@@ -782,20 +789,20 @@ class AnalysisDashboard {
     const res = await ApiClient.getDataTimeline({ variable: this.getBaseVar(this.activeVar), bbox: this.bbox }).catch(() => ({ available_timestamps: [] }));
     const allTs = res.available_timestamps || [];
 
-    // Default 2 calendar months window relative to current system time
+    // Default 1 calendar year window relative to current system time
     const now = new Date();
-    const twoMonthsAgo = new Date(now.getTime());
-    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    const oneYearAgo = new Date(now.getTime());
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
     const nowIso = now.toISOString();
-    const twoMonthsAgoIso = twoMonthsAgo.toISOString();
+    const oneYearAgoIso = oneYearAgo.toISOString();
 
-    let windowTs = allTs.filter(ts => ts >= twoMonthsAgoIso && ts <= nowIso);
+    let windowTs = allTs.filter(ts => ts >= oneYearAgoIso && ts <= nowIso);
     if (!windowTs.length && allTs.length) {
       const latestTs = allTs[allTs.length - 1];
       const latestDate = new Date(latestTs);
       if (!isNaN(latestDate.getTime())) {
         const rStart = new Date(latestDate.getTime());
-        rStart.setMonth(rStart.getMonth() - 2);
+        rStart.setFullYear(rStart.getFullYear() - 1);
         windowTs = allTs.filter(ts => ts >= rStart.toISOString() && ts <= latestTs);
       }
       if (!windowTs.length) windowTs = allTs;
@@ -823,7 +830,7 @@ class AnalysisDashboard {
       }
     }
 
-    // Initialize range start and end dates
+    // Initialize range start and end dates and restore active selection
     if (this.timeline.length) {
       const startDate = this.timeline[0].slice(0, 10);
       const endDate = this.timeline[this.timeline.length - 1].slice(0, 10);
@@ -831,8 +838,14 @@ class AnalysisDashboard {
       const eInput = document.getElementById('rangeEndDate');
       if (sInput) { sInput.value = startDate; this.rangeStart = startDate; }
       if (eInput) { eInput.value = endDate; this.rangeEnd = endDate; }
-      // Default to latest timestamp in the window
-      this.index = this.timeline.length - 1;
+
+      let targetIdx = this.timeline.length - 1;
+      if (this.activeTime) {
+        const found = this.timeline.indexOf(this.activeTime);
+        if (found !== -1) targetIdx = found;
+      }
+      this.index = targetIdx;
+      this.activeTime = this.timeline[this.index];
       if (timeSelect) timeSelect.value = String(this.index);
     }
   }
@@ -843,8 +856,12 @@ class AnalysisDashboard {
     this.index = Math.max(0, Math.min(idx, this.timeline.length - 1));
     this.activeTime = this.timeline[this.index];
 
+    SelectionContext.setTime({ current: this.activeTime });
+
     const timeSelect = document.getElementById('analysisTimeMode');
-    if (timeSelect) timeSelect.value = String(this.index);
+    if (timeSelect && timeSelect.value !== String(this.index)) {
+      timeSelect.value = String(this.index);
+    }
 
     const d = new Date(this.activeTime);
     const dateText = Number.isNaN(d.getTime())
@@ -1543,6 +1560,29 @@ class AnalysisDashboard {
     setVal('kpi-anomalies', anomalyCount, null, v => v > 0 ? 'critical' : 'positive');
   }
 
+  sampleModelValue(lat, lon) {
+    const vars = this.bundleCache[this.activeTime] || {};
+    const vData = this.resolveVar(vars, this.activeVar);
+    if (!vData || !vData.values || !vData.latitude || !vData.longitude) return null;
+
+    const lats = vData.latitude;
+    const lons = vData.longitude;
+    const vals = vData.values;
+
+    let bestDist = Infinity;
+    let bestVal = null;
+    for (let j = 0; j < lats.length; j++) {
+      for (let i = 0; i < lons.length; i++) {
+        const d = (lats[j] - lat) ** 2 + (lons[i] - lon) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          bestVal = vals[j]?.[i];
+        }
+      }
+    }
+    return (bestVal != null && Number.isFinite(Number(bestVal))) ? Number(bestVal) : null;
+  }
+
   // Section 3 & 14: Dynamic Investigation Panel with Method Labelling
   updateInvestigationSidebar() {
     const sb = document.getElementById('investigationContent');
@@ -1551,12 +1591,14 @@ class AnalysisDashboard {
     const baseVar = this.getBaseVar(this.activeVar);
     const unit = this.getVariableUnit(this.activeVar);
     const acc = this.summaryData?.model_accuracy || {};
+    const timeStr = this.activeTime ? (this.activeTime.slice(0, 10) + ' ' + this.activeTime.slice(11, 16) + ' UTC') : 'Latest';
 
     if (this.selectedAnomaly) {
       const a = this.selectedAnomaly;
       const anomUnit = a.unit || unit;
       sb.innerHTML = `
         <div class="sidebar-row"><label>TARGET</label><span class="critical">Physical Anomaly</span></div>
+        <div class="sidebar-row"><label>TIMESTEP</label><span class="mono" style="color:var(--primary);font-weight:600;">${timeStr}</span></div>
         <div class="sidebar-row"><label>VARIABLE</label><span>${this.prettyVar(a.variable)}</span></div>
         <div class="sidebar-row"><label>COORDINATES</label><span class="mono">${a.latitude.toFixed(2)}°N, ${a.longitude.toFixed(2)}°E</span></div>
         <div class="sidebar-row"><label>DEPTH</label><span>${a.depth} m</span></div>
@@ -1590,13 +1632,13 @@ class AnalysisDashboard {
               ? (nearestPt.chl ?? nearestPt.chlorophyll)
               : nearestPt.value)
         : null;
-      const modelVal = nearestPt
-        ? (nearestPt.model ?? nearestPt[baseVar] ?? null)
-        : null;
+      const sampledModel = this.sampleModelValue(o.latitude, o.longitude);
+      const modelVal = sampledModel != null ? sampledModel : (nearestPt ? (nearestPt.model ?? nearestPt[baseVar] ?? null) : null);
       const errorVal = (obsVal != null && modelVal != null) ? (modelVal - obsVal) : null;
 
       sb.innerHTML = `
         <div class="sidebar-row"><label>TARGET</label><span style="color:${isGlider ? '#22d3ee' : '#f59e0b'};font-weight:700;">${isGlider ? 'Autonomous Glider' : 'Argo Profiling Float'}</span></div>
+        <div class="sidebar-row"><label>TIMESTEP</label><span class="mono" style="color:var(--primary);font-weight:600;">${timeStr}</span></div>
         <div class="sidebar-row"><label>PLATFORM</label><span>${o.platform || (isGlider ? 'Autonomous Underwater Glider' : 'Apex CTD Float')}</span></div>
         <div class="sidebar-row"><label>${isGlider ? 'GLIDER ID' : 'FLOAT ID'}</label><span class="mono">#${o.wmo || o.id || o.glider_id}</span></div>
         <div class="sidebar-row"><label>INSTITUTION</label><span>${o.institution || 'Copernicus Marine In-Situ'}</span></div>
@@ -1621,6 +1663,7 @@ class AnalysisDashboard {
       const r = this.selectedRegion;
       sb.innerHTML = `
         <div class="sidebar-row"><label>TARGET</label><span class="critical">Abnormal Region</span></div>
+        <div class="sidebar-row"><label>TIMESTEP</label><span class="mono" style="color:var(--primary);font-weight:600;">${timeStr}</span></div>
         <div class="sidebar-row"><label>REGION NAME</label><span>${r.name || r.id}</span></div>
         <div class="sidebar-row"><label>VARIABLE</label><span>${this.prettyVar(r.variable)}</span></div>
         <div class="sidebar-row"><label>DEPTH RANGE</label><span>${r.depth_range_m?.[0] ?? 0}m – ${r.depth_range_m?.[1] ?? 500}m</span></div>
@@ -1636,11 +1679,13 @@ class AnalysisDashboard {
       this._wireSidebarButtons();
     } else if (this.selectedCell) {
       const c = this.selectedCell;
+      const sampledModel = this.sampleModelValue(c.lat, c.lon);
       const ptVals = c.pointData?.variables || {};
-      const modelVal = ptVals[this.activeVar] ?? ptVals[this.getBaseVar(this.activeVar)];
+      const modelVal = sampledModel != null ? sampledModel : (ptVals[this.activeVar] ?? ptVals[this.getBaseVar(this.activeVar)]);
 
       sb.innerHTML = `
         <div class="sidebar-row"><label>TARGET</label><span>Ocean Grid Cell</span></div>
+        <div class="sidebar-row"><label>TIMESTEP</label><span class="mono" style="color:var(--primary);font-weight:600;">${timeStr}</span></div>
         <div class="sidebar-row"><label>COORDINATES</label><span class="mono">${c.lat.toFixed(3)}°N, ${c.lon.toFixed(3)}°E</span></div>
         <div class="sidebar-row"><label>SEABED DEPTH</label><span>${(c.depthM || 0).toFixed(1)} m</span></div>
         <div class="sidebar-row"><label>ACTIVE DEPTH</label><span>${this.activeDepth} m</span></div>

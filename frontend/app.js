@@ -733,7 +733,8 @@ class SolvXApp {
                 });
                 const halo = new THREE.Mesh(haloGeom, haloMat);
                 halo.position.set(0, 0.2 - y, 0);
-                halo.userData = { isArgoFloat: true, float: obs };
+                // Visual locator only — never a clickable Argo target.
+                halo.userData = { isArgoVisual: true, float: obs };
                 floatMarker.add(halo);
                 this.obsPulseRings.push(halo);
 
@@ -751,7 +752,8 @@ class SolvXApp {
                 });
                 const ray = new THREE.Line(rayGeom, rayMat);
                 ray.computeLineDistances();
-                ray.userData = { isArgoFloat: true, float: obs };
+                // Visual depth datum only — never a clickable Argo target.
+                ray.userData = { isArgoVisual: true, float: obs };
                 floatMarker.add(ray);
             } else {
                 // Argo Profiling Float (Golden Amber #f59e0b) - Prominent Scale
@@ -806,7 +808,8 @@ class SolvXApp {
                 });
                 const halo = new THREE.Mesh(haloGeom, haloMat);
                 halo.position.set(0, 0.2 - y, 0);
-                halo.userData = { isArgoFloat: true, float: obs };
+                // Visual locator only — never a clickable Argo target.
+                halo.userData = { isArgoVisual: true, float: obs };
                 floatMarker.add(halo);
                 this.obsPulseRings.push(halo);
 
@@ -824,7 +827,8 @@ class SolvXApp {
                 });
                 const wire = new THREE.Line(lineGeom, lineMat);
                 wire.computeLineDistances();
-                wire.userData = { isArgoFloat: true, float: obs };
+                // Visual sounding wire only — never a clickable Argo target.
+                wire.userData = { isArgoVisual: true, float: obs };
                 floatMarker.add(wire);
 
                 // CTD Sensor Package at Profiling Depth

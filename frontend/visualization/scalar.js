@@ -234,14 +234,42 @@ export class ScalarVisualizer {
         const variable = this.variable;
 
         this.water.recolorCells(c => {
-            const j = Math.floor(((c.lat - bounds[2]) / dLat) * lats);
-            const i = Math.floor(((c.lon - bounds[0]) / dLon) * lons);
-            
-            if (j < 0 || j >= lats || i < 0 || i >= lons) return null;
+            // Map the rendered cell center onto the actual data-grid coordinates.
+            // Using (N - 1) keeps both grid edges aligned with the regional bounds.
+            const u = ((c.lon - bounds[0]) / dLon) * Math.max(0, lons - 1);
+            const v = ((c.lat - bounds[2]) / dLat) * Math.max(0, lats - 1);
 
-            const val = is3D ? vals[dIdx]?.[j]?.[i] : vals[j]?.[i];
-            if (val == null || !Number.isFinite(val)) return null;
-            
+            if (u < 0 || v < 0 || u > Math.max(0, lons - 1) || v > Math.max(0, lats - 1)) {
+                return null;
+            }
+
+            const i0 = Math.floor(u);
+            const j0 = Math.floor(v);
+            const i1 = Math.min(i0 + 1, lons - 1);
+            const j1 = Math.min(j0 + 1, lats - 1);
+            const fu = u - i0;
+            const fv = v - j0;
+
+            const grid = is3D ? vals[dIdx] : vals;
+            const q00 = grid?.[j0]?.[i0];
+            const q10 = grid?.[j0]?.[i1];
+            const q01 = grid?.[j1]?.[i0];
+            const q11 = grid?.[j1]?.[i1];
+
+            const samples = [
+                [q00, (1 - fu) * (1 - fv)],
+                [q10, fu * (1 - fv)],
+                [q01, (1 - fu) * fv],
+                [q11, fu * fv]
+            ].filter(([value]) => Number.isFinite(value));
+
+            if (!samples.length) return null;
+
+            // Bilinear interpolation makes adjacent rendered cells transition
+            // continuously instead of snapping to one nearest grid point.
+            const weightSum = samples.reduce((sum, [, weight]) => sum + weight, 0) || 1;
+            const val = samples.reduce((sum, [value, weight]) => sum + value * weight, 0) / weightSum;
+
             const color = sampleColor(variable, val, volLo, volHi);
             _reusableColor.setRGB(color.r, color.g, color.b);
             return _reusableColor;

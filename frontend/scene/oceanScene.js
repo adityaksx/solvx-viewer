@@ -96,7 +96,11 @@ export class OceanScene {
         this.controls.maxDistance = 15000;
 
         window.addEventListener('resize', this.onResize.bind(this));
-        this.canvas.addEventListener('click', this.onClick.bind(this));
+        // Selection is deliberately pointer-click only. Track pointer movement
+        // so OrbitControls drags cannot accidentally trigger a selection on release.
+        this.canvas.addEventListener('pointerdown', this.onPointerDown.bind(this));
+        this.canvas.addEventListener('pointerup', this.onPointerUp.bind(this));
+        this.canvas.addEventListener('pointercancel', this.onPointerCancel.bind(this));
 
         this.animate(0);
     }
@@ -273,6 +277,30 @@ export class OceanScene {
         this.animateCameraTo(targetPos, targetVec, 550);
     }
 
+    onPointerDown(e) {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        this._pointerDown = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+    }
+
+    onPointerUp(e) {
+        if (!this._pointerDown || e.pointerId !== this._pointerDown.pointerId) return;
+
+        const dx = e.clientX - this._pointerDown.x;
+        const dy = e.clientY - this._pointerDown.y;
+        const moved = Math.hypot(dx, dy);
+        this._pointerDown = null;
+
+        // A click must be nearly stationary. Orbit/camera drags are never selections.
+        if (moved > 6) return;
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+        this.onClick(e);
+    }
+
+    onPointerCancel() {
+        this._pointerDown = null;
+    }
+
     onClick(e) {
         const rect = this.canvas.getBoundingClientRect();
         this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -302,7 +330,7 @@ export class OceanScene {
 
         // Check for Argo floats
         for (const hit of hits) {
-            if (hit.object.userData?.isArgoFloat || hit.object.userData?.float) {
+            if (hit.object.userData?.isArgoFloat && hit.object.userData?.float) {
                 if (this.onFloatClick) this.onFloatClick(hit.object.userData.float);
                 return;
             }

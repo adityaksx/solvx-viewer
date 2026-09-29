@@ -62,8 +62,10 @@ export class DynamicWater {
         const ny = t.y.length;
         const raw = t.rawDepthKm;
         
-        // Adaptive sampling targeting ~18000 cells
-        const step = Math.max(1, Math.ceil(Math.sqrt((nx * ny) / 18000)));
+        // Adaptive sampling targets a denser volume while keeping instanced rendering performant.
+        // The previous ~18k-cell target made individual blocks visibly oversized at this regional scale.
+        const targetCells = 60000;
+        const step = Math.max(1, Math.ceil(Math.sqrt(((nx - 1) * (ny - 1)) / targetCells)));
 
         const midLat = (this.bounds[2] + this.bounds[3]) / 2;
         const midLon = (this.bounds[0] + this.bounds[1]) / 2;
@@ -97,8 +99,10 @@ export class DynamicWater {
                 this.cells.push({
                     x: posX,
                     z: posZ,
-                    sx: Math.max(0.25, Math.abs(t.y[j2] - t.y[j]) * 0.995),
-                    sz: Math.max(0.25, Math.abs(t.x[i2] - t.x[i]) * 0.995),
+                    // Do not shrink adjacent cells. The old 0.995 factor created visible seams
+                    // between neighboring instances. Exact grid extents make the volume continuous.
+                    sx: Math.max(0.25, Math.abs(t.y[j2] - t.y[j])),
+                    sz: Math.max(0.25, Math.abs(t.x[i2] - t.x[i])),
                     h: h,
                     depthM: minD * 1000,
                     lat: lat,

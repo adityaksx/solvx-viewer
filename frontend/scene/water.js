@@ -114,6 +114,8 @@ export class DynamicWater {
         if (!this.cells.length) return;
 
         const maxH = Math.max(...this.cells.map(c => c.h), 1);
+        const minDepthVal = Math.min(...this.cells.map(c => c.depthM));
+        const maxDepthVal = Math.max(...this.cells.map(c => c.depthM));
 
         const boxGeom = new THREE.BoxGeometry(1, 1, 1);
         
@@ -121,6 +123,13 @@ export class DynamicWater {
         const useDepthArray = new Float32Array(this.cells.length);
         useDepthArray.fill(1.0); // 1.0 = use depth gradient, 0.0 = use instance color
         boxGeom.setAttribute('instanceUseDepth', new THREE.InstancedBufferAttribute(useDepthArray, 1));
+
+        // Actual bathymetric depth in meters, independent of rendered vertical exaggeration
+        const depthArray = new Float32Array(this.cells.length);
+        for (let i = 0; i < this.cells.length; i++) {
+            depthArray[i] = this.cells[i].depthM;
+        }
+        boxGeom.setAttribute('instanceDepth', new THREE.InstancedBufferAttribute(depthArray, 1));
 
         const boxMat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
@@ -135,25 +144,21 @@ export class DynamicWater {
         boxMat.onBeforeCompile = (shader) => {
             shader.uniforms.surfaceColor = { value: new THREE.Color(0.18, 0.60, 0.85) };
             shader.uniforms.deepColor = { value: new THREE.Color(0.08, 0.35, 0.55) };
-            shader.uniforms.minDepth = { value: 0.0 };
-            shader.uniforms.maxDepth = { value: maxH };
+            shader.uniforms.minDepth = { value: minDepthVal };
+            shader.uniforms.maxDepth = { value: maxDepthVal };
 
             shader.vertexShader = `
                 attribute float instanceUseDepth;
+                attribute float instanceDepth;
                 varying float vUseDepth;
-                varying float vDepth;
+                varying float vInstanceDepth;
                 ${shader.vertexShader}
             `.replace(
                 '#include <worldpos_vertex>',
                 `
                 #include <worldpos_vertex>
                 vUseDepth = instanceUseDepth;
-                // Compute instanced local Y to ignore later root.scale.y exaggeration
-                vec4 localInstancedPos = vec4(transformed, 1.0);
-                #ifdef USE_INSTANCING
-                    localInstancedPos = instanceMatrix * localInstancedPos;
-                #endif
-                vDepth = localInstancedPos.y;
+                vInstanceDepth = instanceDepth;
                 `
             );
 
@@ -163,7 +168,7 @@ export class DynamicWater {
                 uniform float minDepth;
                 uniform float maxDepth;
                 varying float vUseDepth;
-                varying float vDepth;
+                varying float vInstanceDepth;
                 ${shader.fragmentShader}
             `.replace(
                 '#include <color_fragment>',
@@ -174,9 +179,7 @@ export class DynamicWater {
                     float depthRange = maxDepth - minDepth;
                     float t = 0.0;
                     if (abs(depthRange) > 0.000001) {
-                        // vDepth is world Y (surface is ~0, deep is negative)
-                        // Normalize such that 0 -> 0 (surface), and -maxDepth -> 1 (deep)
-                        t = clamp((-vDepth - minDepth) / depthRange, 0.0, 1.0);
+                        t = clamp((vInstanceDepth - minDepth) / depthRange, 0.0, 1.0);
                     }
                     diffuseColor.rgb = mix(surfaceColor, deepColor, t);
                 }

@@ -140,6 +140,7 @@ export class OceanVolumeRenderer {
             transparent: true,
             depthWrite: false,
             uniforms: {
+                uInverseModelMatrix: { value: new THREE.Matrix4() },
                 uData3D: { value: null },
                 uHasData3D: { value: false },
                 uColorMap: { value: this.colorMapTexture },
@@ -156,13 +157,10 @@ export class OceanVolumeRenderer {
             },
             vertexShader: `
                 out vec3 vLocalPos;
-                out vec3 vWorldPos;
 
                 void main() {
                     vLocalPos = position; // Unit box [-0.5, 0.5]^3
-                    vec4 wp = modelMatrix * vec4(position, 1.0);
-                    vWorldPos = wp.xyz;
-                    gl_Position = projectionMatrix * viewMatrix * wp;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                 }
             `,
             fragmentShader: `
@@ -171,10 +169,10 @@ export class OceanVolumeRenderer {
                 precision highp sampler2D;
 
                 in vec3 vLocalPos;
-                in vec3 vWorldPos;
 
                 out vec4 fragColor;
 
+                uniform mat4 uInverseModelMatrix;
                 uniform sampler3D uData3D;
                 uniform bool uHasData3D;
                 uniform sampler2D uColorMap;
@@ -211,8 +209,8 @@ export class OceanVolumeRenderer {
                         discard;
                     }
 
-                    // Compute object-space ray
-                    vec3 ro = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
+                    // Compute object-space ray using CPU-provided inverse model matrix
+                    vec3 ro = (uInverseModelMatrix * vec4(cameraPosition, 1.0)).xyz;
                     vec3 rd = normalize(vLocalPos - ro);
 
                     float tEnter, tExit;
@@ -329,6 +327,13 @@ export class OceanVolumeRenderer {
         this.mesh.renderOrder = 10;
         this.mesh.visible = false;
 
+        this.mesh.onBeforeRender = () => {
+            this.mesh.updateMatrixWorld(true);
+            if (this.material?.uniforms?.uInverseModelMatrix) {
+                this.material.uniforms.uInverseModelMatrix.value.copy(this.mesh.matrixWorld).invert();
+            }
+        };
+
         this.updateDimensions();
     }
 
@@ -345,6 +350,12 @@ export class OceanVolumeRenderer {
 
         this.mesh.scale.set(widthX, maxH, widthZ);
         this.mesh.position.set(centerX, -maxH / 2, centerZ);
+
+        this.mesh.updateMatrix();
+        this.mesh.updateMatrixWorld(true);
+        if (this.material?.uniforms?.uInverseModelMatrix) {
+            this.material.uniforms.uInverseModelMatrix.value.copy(this.mesh.matrixWorld).invert();
+        }
     }
 
     setBathyTex(tex) {

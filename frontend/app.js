@@ -397,7 +397,13 @@ class SolvXApp {
 
     applyLayerVisibility(layer, visible) {
         if (layer === 'scientific') {
-            if (this.water?.instancedVolume) this.water.instancedVolume.visible = visible;
+            if (this.water?.volumeRenderer) {
+                this.water.volumeRenderer.setVisible(visible && this.activeDepthMode === 'volume');
+            }
+            if (this.water?.instancedVolume) {
+                const showInstanced = visible && (this.activeDepthMode !== 'volume' || !this.water?.volumeRenderer?.mesh?.visible);
+                this.water.instancedVolume.visible = showInstanced;
+            }
         } else if (layer === 'observations') {
             if (this.argoMarkersGroup) this.argoMarkersGroup.visible = visible;
         } else if (layer === 'currents') {

@@ -744,6 +744,7 @@ class INCOISAdapter:
                 'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
                 'latitude': lats,
                 'longitude': lons,
+                'depth_levels': depth_levels,
                 'values': values,
                 'metadata': {
                     'provider': 'LOCAL',

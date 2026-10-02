@@ -1,5 +1,6 @@
 // SolvX Viewer — Bathymetry-Driven 3D Ocean Volumetric Columns
 import * as THREE from 'three';
+import { OceanVolumeRenderer } from './oceanVolumeRenderer.js';
 
 const _tempCol = new THREE.Color();
 
@@ -18,6 +19,13 @@ export class DynamicWater {
 
         // Retain bathymetry texture for subsurface slice masking if needed
         this.bathyTex = this._buildBathymetryTexture();
+
+        // 3D Ocean Volume Ray-Marching Renderer
+        this.volumeRenderer = new OceanVolumeRenderer(this.bathymetry, this.sceneManager, {
+            bathyTex: this.bathyTex,
+            opacity: this.opacity
+        });
+        this.group.add(this.volumeRenderer.mesh);
 
         this.buildVolume();
     }
@@ -225,6 +233,9 @@ export class DynamicWater {
             this.instancedVolume.material.opacity = this.opacity;
             this.instancedVolume.visible = this.opacity > 0.01;
         }
+        if (this.volumeRenderer) {
+            this.volumeRenderer.setOpacity(this.opacity);
+        }
     }
 
     setTemperature(temp) {
@@ -285,6 +296,10 @@ export class DynamicWater {
         if (this.bathyTex) {
             this.bathyTex.dispose();
             this.bathyTex = null;
+        }
+        if (this.volumeRenderer) {
+            this.volumeRenderer.dispose();
+            this.volumeRenderer = null;
         }
         if (this.instancedVolume) {
             this.instancedVolume.geometry?.dispose();

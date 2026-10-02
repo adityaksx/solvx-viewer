@@ -158,8 +158,8 @@ export class ScalarVisualizer {
 
         if (dataArray && dataArray.values && dataArray.values.length) {
             let sliceOrVolume = dataArray.values;
-            if (Array.isArray(dataArray.values[0]) && Array.isArray(dataArray.values[0][0])) {
-                const depths = dataArray.metadata?.depth_levels;
+            if (mode !== 'volume' && Array.isArray(dataArray.values[0]) && Array.isArray(dataArray.values[0][0])) {
+                const depths = dataArray.metadata?.depth_levels || dataArray.depth_levels;
                 const idx = findDepthIndex(depths, depthM);
                 sliceOrVolume = extractSlice2D(dataArray, idx);
             }
@@ -285,25 +285,58 @@ export class ScalarVisualizer {
         if (this.variable === 'currents') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
+            if (this.water?.instancedVolume) this.water.instancedVolume.visible = true;
             return;
         }
 
         if (!this.currentData && !(this.customVerticalCoords && this.customVerticalCoords.transectData)) {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
+            if (this.water?.instancedVolume) this.water.instancedVolume.visible = true;
             return;
         }
 
         if (mode === 'volume') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
-            if (this.water) {
-                this.water.setOpacity(0.45);
+
+            const vals = this.currentData?.values;
+            const is3D = Array.isArray(vals) && Array.isArray(vals[0]) && Array.isArray(vals[0][0]);
+            const depthLevels = this.currentData?.metadata?.depth_levels || this.currentData?.depth_levels;
+
+            if (is3D && this.water?.volumeRenderer) {
+                this.water.volumeRenderer.setField(
+                    vals,
+                    depthLevels,
+                    this.variable,
+                    this.range.lo,
+                    this.range.hi
+                );
+                this.water.volumeRenderer.setVisible(true);
+                if (this.water.instancedVolume) {
+                    this.water.instancedVolume.visible = false;
+                }
+            } else {
+                if (this.water?.volumeRenderer) {
+                    this.water.volumeRenderer.setVisible(false);
+                }
+                if (this.water) {
+                    this.water.setOpacity(0.45);
+                    if (this.water.instancedVolume) this.water.instancedVolume.visible = true;
+                }
             }
             return;
         }
         
         if (mode === 'vertical' || mode === 'vertical_custom') {
+            if (this.water?.volumeRenderer) {
+                this.water.volumeRenderer.setVisible(false);
+            }
+            if (this.water?.instancedVolume) {
+                this.water.instancedVolume.visible = false;
+            }
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = true;
             if (this.water) {
@@ -365,6 +398,13 @@ export class ScalarVisualizer {
         }
         
         // Horizontal slice mode
+        if (this.water?.volumeRenderer) {
+            this.water.volumeRenderer.setVisible(false);
+        }
+        if (this.water?.instancedVolume) {
+            this.water.instancedVolume.visible = true;
+        }
+
         const isSurface = (depthM == null || Math.abs(depthM) < 1);
 
         let slice2d = null;

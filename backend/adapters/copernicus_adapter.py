@@ -151,6 +151,7 @@ class CopernicusAdapter:
         t_start = _to_naive_utc(start_time)
         t_end = _to_naive_utc(end_time)
         t_req = _to_naive_utc(time)
+        vars_needed = cfg.get("vars") or ([cfg["var"]] if "var" in cfg else [])
 
         candidates = []
         for c in all_nc:

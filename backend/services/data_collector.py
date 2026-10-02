@@ -413,8 +413,8 @@ class DataCollector:
                 except Exception as e:
                     logger.warning("Open-Meteo fetch failed for '%s': %s", var_norm, e)
 
-            # 2. Local-Only Mode Check (Only active when LOCAL_DATA_MODE is explicitly True or provider is 'local')
-            if (LOCAL_DATA_MODE or prov_key == 'local'):
+            # 2. Local-Only / Volume Mode Check (Active when LOCAL_DATA_MODE is True, provider is 'local'/'incois', or full 3D volume in Bay of Bengal)
+            if (LOCAL_DATA_MODE or prov_key in ('local', 'incois') or (prov_key == 'auto' and depth is None and 15.0 <= bbox.min_lat and bbox.max_lat <= 24.5 and 83.0 <= bbox.min_lon and bbox.max_lon <= 94.0)):
                 try:
                     from ..adapters.incois_adapter import INCOIS_VARIABLE_MAP
                     incois_var = 'temperature' if var_norm in ('ocean_temperature', 'temperature') else var_norm

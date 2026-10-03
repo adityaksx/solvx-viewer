@@ -22,7 +22,7 @@ export class AppGui {
             colorMode: 'variable',
             opacity: 0.85,
             raySteps: 128,
-            verticalExaggeration: 5.0,
+            verticalExaggeration: 70.0,
             palette: 'Ocean Thermal (Turbo)',
             paletteMin: 0.0,
             paletteMax: 1.0,
@@ -93,7 +93,7 @@ export class AppGui {
             .name('Ray Steps')
             .onChange(val => this.app.oceanManager.setRaySteps(Number(val)));
 
-        fRender.add(this.params, 'verticalExaggeration', 1.0, 20.0, 0.5)
+        fRender.add(this.params, 'verticalExaggeration', 1.0, 100.0, 1.0)
             .name('Vertical Exaggeration')
             .onChange(val => this.app.onExaggerationChange(val));
 
@@ -143,29 +143,74 @@ export class AppGui {
         const fLayers = this.gui.addFolder('Scene Layers');
         this.folders.layers = fLayers;
 
-        fLayers.add(this.params, 'showOcean').name('Ocean Volume')
+        this.controllers.showOcean = fLayers.add(this.params, 'showOcean').name('Ocean Volume')
             .onChange(v => this.app.oceanManager.volumeRenderer.visible = v);
 
-        fLayers.add(this.params, 'showSeabed').name('Bathymetric Seabed')
+        this.controllers.showSeabed = fLayers.add(this.params, 'showSeabed').name('Bathymetric Seabed')
             .onChange(v => {
                 if (this.app.seabedMesh) this.app.seabedMesh.visible = v;
             });
 
-        fLayers.add(this.params, 'showLand').name('Land Topography')
+        this.controllers.showLand = fLayers.add(this.params, 'showLand').name('Land Topography')
             .onChange(v => {
                 if (this.app.landMesh) this.app.landMesh.visible = v;
             });
 
-        fLayers.add(this.params, 'showCoastline').name('Coastline Vectors')
+        this.controllers.showCoastline = fLayers.add(this.params, 'showCoastline').name('Coastline Vectors')
             .onChange(v => {
                 if (this.app.coastlineMesh) this.app.coastlineMesh.visible = v;
             });
 
-        fLayers.add(this.params, 'showBoundingBox').name('Bounding Box')
+        this.controllers.showBoundingBox = fLayers.add(this.params, 'showBoundingBox').name('Bounding Box')
             .onChange(v => this.app.oceanManager.wireframeBox.visible = v);
 
-        fLayers.add(this.params, 'showGrid').name('Geographic Grid')
+        this.controllers.showGrid = fLayers.add(this.params, 'showGrid').name('Geographic Grid')
             .onChange(v => this.app.oceanManager.setGridVisible(v));
+
+        // Quick Layer Presets for Diagnostics
+        const presets = {
+            allLayers: () => {
+                this.params.showOcean = true;
+                this.params.showSeabed = true;
+                this.params.showLand = true;
+                this.params.showCoastline = true;
+                this.params.showBoundingBox = true;
+                this.params.showGrid = true;
+                this.syncLayerVisibility();
+            },
+            volumeOnly: () => {
+                this.params.showOcean = true;
+                this.params.showSeabed = false;
+                this.params.showLand = false;
+                this.params.showCoastline = false;
+                this.params.showBoundingBox = true;
+                this.params.showGrid = true;
+                this.syncLayerVisibility();
+            },
+            seabedOnly: () => {
+                this.params.showOcean = false;
+                this.params.showSeabed = true;
+                this.params.showLand = false;
+                this.params.showCoastline = true;
+                this.params.showBoundingBox = true;
+                this.params.showGrid = true;
+                this.syncLayerVisibility();
+            },
+            landOnly: () => {
+                this.params.showOcean = false;
+                this.params.showSeabed = false;
+                this.params.showLand = true;
+                this.params.showCoastline = true;
+                this.params.showBoundingBox = true;
+                this.params.showGrid = true;
+                this.syncLayerVisibility();
+            }
+        };
+
+        fLayers.add(presets, 'allLayers').name('Preset: All Layers');
+        fLayers.add(presets, 'volumeOnly').name('Preset: Volume Only');
+        fLayers.add(presets, 'seabedOnly').name('Preset: Seabed Only');
+        fLayers.add(presets, 'landOnly').name('Preset: Land Only');
 
         // ---- 5. View Controls ----
         const fViews = this.gui.addFolder('Camera Views');
@@ -173,6 +218,22 @@ export class AppGui {
         fViews.add(this.params, 'viewTop').name('Top View (Lon × Lat)');
         fViews.add(this.params, 'viewSide').name('Side View (Lat × Depth)');
         fViews.add(this.params, 'viewReset').name('Reset Camera');
+    }
+
+    syncLayerVisibility() {
+        this.app.oceanManager.volumeRenderer.visible = this.params.showOcean;
+        if (this.app.seabedMesh) this.app.seabedMesh.visible = this.params.showSeabed;
+        if (this.app.landMesh) this.app.landMesh.visible = this.params.showLand;
+        if (this.app.coastlineMesh) this.app.coastlineMesh.visible = this.params.showCoastline;
+        this.app.oceanManager.wireframeBox.visible = this.params.showBoundingBox;
+        this.app.oceanManager.setGridVisible(this.params.showGrid);
+
+        this.controllers.showOcean?.updateDisplay();
+        this.controllers.showSeabed?.updateDisplay();
+        this.controllers.showLand?.updateDisplay();
+        this.controllers.showCoastline?.updateDisplay();
+        this.controllers.showBoundingBox?.updateDisplay();
+        this.controllers.showGrid?.updateDisplay();
     }
 
     updateDepthRange() {

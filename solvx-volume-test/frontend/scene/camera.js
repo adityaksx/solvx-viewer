@@ -12,19 +12,19 @@ export class CameraManager {
         const width = canvas.clientWidth || window.innerWidth;
         const height = canvas.clientHeight || window.innerHeight;
 
-        this.camera = camera || new THREE.PerspectiveCamera(45, width / height, 0.5, 20000);
-        this.camera.position.set(0, 450, 750);
+        this.camera = camera || new THREE.PerspectiveCamera(45, width / height, 0.5, 25000);
+        this.camera.position.set(0, 500, 850);
 
         this.controls = new OrbitControls(this.camera, this.canvas);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.08;
         this.controls.screenSpacePanning = true;
         this.controls.minDistance = 10;
-        this.controls.maxDistance = 15000;
-        this.controls.target.set(0, -50, 0);
+        this.controls.maxDistance = 25000;
+        this.controls.target.set(0, -35, 0);
 
-        this.defaultTarget = new THREE.Vector3(0, -50, 0);
-        this.defaultPosition = new THREE.Vector3(0, 450, 750);
+        this.defaultTarget = new THREE.Vector3(0, -35, 0);
+        this.defaultPosition = new THREE.Vector3(0, 500, 850);
     }
 
     onResize() {
@@ -39,32 +39,34 @@ export class CameraManager {
     }
 
     setView(viewName) {
-        const target = this.controls.target;
         switch (viewName) {
             case 'top':
                 // Straight down view: Longitude (X) x Latitude (Z)
-                this.camera.position.set(target.x, target.y + 900, target.z + 0.001);
+                this.controls.target.set(0, -35, 0);
+                this.camera.position.set(0, 1200, 0.001);
                 this.camera.up.set(0, 0, -1);
                 break;
             case 'side':
                 // Side view: Latitude (Z) x Depth (Y)
-                this.camera.position.set(target.x + 950, target.y, target.z);
+                this.controls.target.set(0, -35, 0);
+                this.camera.position.set(1200, -35, 0);
                 this.camera.up.set(0, 1, 0);
                 break;
             case 'front':
                 // Front view: Longitude (X) x Depth (Y)
-                this.camera.position.set(target.x, target.y, target.z + 950);
+                this.controls.target.set(0, -35, 0);
+                this.camera.position.set(0, -35, 1200);
                 this.camera.up.set(0, 1, 0);
                 break;
             case '3d':
             case 'reset':
             default:
-                this.camera.position.copy(this.defaultPosition);
                 this.controls.target.copy(this.defaultTarget);
+                this.camera.position.copy(this.defaultPosition);
                 this.camera.up.set(0, 1, 0);
                 break;
         }
-        this.camera.lookAt(target);
+        this.camera.lookAt(this.controls.target);
         this.controls.update();
     }
 

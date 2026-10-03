@@ -55,6 +55,23 @@ export class OceanVolumeManager {
         this.volumeRenderer.uniforms.palette.value = tex;
     }
 
+    setBathymetry(bathyObj) {
+        if (!bathyObj) return;
+        const uniforms = this.volumeRenderer.uniforms;
+        uniforms.bathymetryTexture.value = bathyObj.texture;
+        uniforms.bathyBounds.value.set(
+            bathyObj.bounds[0],
+            bathyObj.bounds[1],
+            bathyObj.bounds[2],
+            bathyObj.bounds[3]
+        );
+        uniforms.hasBathymetry.value = 1.0;
+    }
+
+    setVerticalExaggeration(exVal) {
+        this.volumeRenderer.uniforms.verticalExaggeration.value = exVal;
+    }
+
     applyVolumeData(volumeResult) {
         this.volumeData = volumeResult;
         this.volumeMeta = volumeResult.meta;
@@ -64,6 +81,19 @@ export class OceanVolumeManager {
         uniforms.volumeOrigin.value.copy(volumeResult.volumeOrigin);
         uniforms.volumeResolution.value.copy(volumeResult.volumeResolution);
         uniforms.voxelSize.value.copy(volumeResult.voxelSize);
+
+        const ex = volumeResult.geoConfig?.verticalExaggeration || 70.0;
+        uniforms.verticalExaggeration.value = ex;
+
+        const metaBounds = volumeResult.meta?.bounds;
+        if (metaBounds) {
+            uniforms.datasetBounds.value.set(
+                metaBounds.lon_min,
+                metaBounds.lon_max,
+                metaBounds.lat_min,
+                metaBounds.lat_max
+            );
+        }
 
         // Reset clipping to entire volume
         const b = volumeResult.worldBounds;
@@ -112,7 +142,7 @@ export class OceanVolumeManager {
         );
     }
 
-    setDepthRange(minDepthM, maxDepthM, verticalExaggeration = 5.0) {
+    setDepthRange(minDepthM, maxDepthM, verticalExaggeration = 70.0) {
         if (!this.volumeData) return;
         const b = this.volumeData.worldBounds;
         const ex = this.volumeData.geoConfig?.verticalExaggeration || verticalExaggeration;
@@ -141,7 +171,7 @@ export class OceanVolumeManager {
         this.volumeRenderer.uniforms.extinctionCoefficient.value = extinction;
     }
 
-    setSliceMode(enabled, depthM = 100.0, verticalExaggeration = 5.0) {
+    setSliceMode(enabled, depthM = 100.0, verticalExaggeration = 70.0) {
         this.isSliceMode = enabled;
         this.sliceDepthM = depthM;
         if (!this.volumeData) return;

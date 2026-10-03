@@ -42,7 +42,7 @@ export function buildSeabedMesh(bathymetryData, geoConfig) {
     const bounds = bathymetryData.bounds || [geoConfig.lonMin, geoConfig.lonMax, geoConfig.latMin, geoConfig.latMax];
     const [bLonMin, bLonMax, bLatMin, bLatMax] = bounds;
 
-    const bedrockY = -Math.max(geoConfig.depthMax, 3500) / 1000.0 * geoConfig.verticalExaggeration;
+    const boundaryBaseY = GeographicTransform.depthToWorldY(geoConfig.depthMax, geoConfig);
 
     // 1. Bathymetric Surface Heightfield
     const pos = [];
@@ -59,8 +59,8 @@ export function buildSeabedMesh(bathymetryData, geoConfig) {
             const lon = bLonMin + lonNorm * (bLonMax - bLonMin);
 
             const rawDepthKm = Number((t.rawDepthKm[j] || [])[i]);
-            // Skip land (elevation <= 0.05 km)
-            if (rawDepthKm == null || isNaN(rawDepthKm) || rawDepthKm <= 0.05) continue;
+            // Skip land (elevation <= 0.02 km, i.e. 20m)
+            if (rawDepthKm == null || isNaN(rawDepthKm) || rawDepthKm <= 0.02) continue;
 
             const depthM = rawDepthKm * 1000.0;
             const worldPt = GeographicTransform.geoToWorld(lon, lat, depthM, geoConfig);
@@ -110,9 +110,9 @@ export function buildSeabedMesh(bathymetryData, geoConfig) {
         const base = sidePos.length / 3;
         sidePos.push(
             x1, y1, z1,
-            x1, bedrockY, z1,
+            x1, boundaryBaseY, z1,
             x2, y2, z2,
-            x2, bedrockY, z2
+            x2, boundaryBaseY, z2
         );
         sideIdx.push(base, base + 2, base + 1, base + 2, base + 3, base + 1);
     }

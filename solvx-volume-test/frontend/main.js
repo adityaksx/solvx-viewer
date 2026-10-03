@@ -11,6 +11,7 @@ import { buildSeabedMesh } from './scene/seabed.js';
 import { buildCoastlines } from './scene/coastline.js';
 import { GeographicTransform } from './scene/geographicTransform.js';
 import { createOceanVolumeTexture } from './renderer/volumeTexture.js';
+import { createBathymetryTexture } from './renderer/bathymetryTexture.js';
 import { AppGui } from './controls/gui.js';
 import { OceanProbe } from './controls/controls.js';
 
@@ -26,6 +27,7 @@ class App {
         this.coastlineMesh = null;
         this.geometryData = null;
         this.bathymetryData = null;
+        this.bathymetryTextureObj = null;
         this.datasetMeta = null;
         this.geoConfig = null;
 
@@ -34,7 +36,7 @@ class App {
         this.currentVariable = 'temperature';
         this.currentTime = 0;
         this.currentStride = 1;
-        this.verticalExaggeration = 5.0;
+        this.verticalExaggeration = 70.0;
 
         // Performance Metrics
         this.fpsFrames = 0;
@@ -163,6 +165,13 @@ class App {
 
             this.geometryData = geomRes;
             this.bathymetryData = bathyRes;
+
+            if (this.bathymetryData) {
+                this.bathymetryTextureObj = createBathymetryTexture(this.bathymetryData);
+                if (this.oceanManager) {
+                    this.oceanManager.setBathymetry(this.bathymetryTextureObj);
+                }
+            }
 
             this.rebuildGeographicLayers();
 
@@ -343,6 +352,9 @@ class App {
 
     onExaggerationChange(exVal) {
         this.verticalExaggeration = exVal;
+        if (this.oceanManager) {
+            this.oceanManager.setVerticalExaggeration(exVal);
+        }
         this.rebuildGeographicLayers();
         this.reloadVolume();
     }

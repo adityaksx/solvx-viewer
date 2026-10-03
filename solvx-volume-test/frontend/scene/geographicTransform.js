@@ -29,7 +29,7 @@ export class GeographicTransform {
 
         const worldWidth = options.worldWidth || (lonMax - lonMin) * klon;   // X extent (km)
         const worldLength = options.worldLength || (latMax - latMin) * klat; // Z extent (km)
-        const verticalExaggeration = options.verticalExaggeration || 5.0;
+        const verticalExaggeration = options.verticalExaggeration || 70.0;
 
         // World Height (Y extent in world units)
         const maxDepthKm = depthMax / 1000.0;

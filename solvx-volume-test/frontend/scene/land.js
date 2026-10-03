@@ -27,7 +27,7 @@ export function buildLandMesh(geometryData, geoConfig) {
     const kmYMax = tY.length ? tY[tY.length - 1] : geoConfig.worldLength / 2;
 
     const topY = 0.5; // Slightly elevated above surface to prevent z-fighting
-    const bedrockY = -Math.max(geoConfig.depthMax, 3500) / 1000.0 * geoConfig.verticalExaggeration;
+    const boundaryBaseY = GeographicTransform.depthToWorldY(geoConfig.depthMax, geoConfig);
 
     // 1. Build Polygon Geometry (Top surface)
     const pos = [];
@@ -104,9 +104,9 @@ export function buildLandMesh(geometryData, geoConfig) {
             const q = sidePos.length / 3;
             sidePos.push(
                 aWorld.x, topY, aWorld.z,
-                aWorld.x, bedrockY, aWorld.z,
+                aWorld.x, boundaryBaseY, aWorld.z,
                 bWorld.x, topY, bWorld.z,
-                bWorld.x, bedrockY, bWorld.z
+                bWorld.x, boundaryBaseY, bWorld.z
             );
             sideIdx.push(q, q + 2, q + 1, q + 2, q + 3, q + 1);
         }

@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { GeographicTransform } from '../scene/geographicTransform.js';
 
 export function createOceanVolumeTexture(arrayBuffer, meta, options = {}) {
-    const verticalExaggeration = options.verticalExaggeration || 5.0;
+    const verticalExaggeration = options.verticalExaggeration || 70.0;
     const geoConfig = options.geoConfig || GeographicTransform.createGeoConfig(meta.bounds, { verticalExaggeration });
     const [nz, ny, nx] = meta.shape; // [depthCount, latCount, lonCount]
     const srcFloats = new Float32Array(arrayBuffer);

@@ -402,7 +402,7 @@ class SolvXApp {
                 this.water.volumeRenderer.setVisible(visible && isVolumeMode);
             }
             if (this.scalarViz?.sliceMesh) {
-                this.scalarViz.sliceMesh.visible = visible && !isVolumeMode && (this.activeDepthMode === 'slice');
+                this.scalarViz.sliceMesh.visible = visible && !isVolumeMode && (this.activeDepthMode === 'slice' || this.activeDepthMode === 'horizontal');
             }
             if (this.scalarViz?.verticalSliceMesh) {
                 this.scalarViz.verticalSliceMesh.visible = visible && !isVolumeMode && (this.activeDepthMode === 'vertical' || this.activeDepthMode === 'vertical_custom');
@@ -541,7 +541,10 @@ class SolvXApp {
             // Parallel fetch of catalog, geography, bathymetry, eez, and observations
             const [catalogData, geoData, bathyData, eezData, argoData, gliderData] = await Promise.all([
                 ApiClient.getDataVariables().catch(() => ({ variables: [] })),
-                ApiClient.getDataGeometry(bbox).then(res => {
+                ApiClient.getDataGeometry(bbox).catch(err => {
+                    console.warn('Geometry fetch failed:', err);
+                    return null;
+                }).then(res => {
                     this.updateGeoProgress('stepCoast', 'done', 'Loaded', 40, 'Coastlines & islands processed');
                     return res;
                 }),
@@ -1223,7 +1226,7 @@ class SolvXApp {
         }
 
         try {
-            if (this.activeVar === 'currents') {
+            if (this.activeVar === 'currents' && this.activeDepthMode !== 'volume') {
                 await this.loadCurrents();
             } else {
                 const requestParams = {
@@ -1263,12 +1266,12 @@ class SolvXApp {
     async loadCurrents() {
         const depthNotice = document.getElementById('currentDepthNotice');
         try {
-            const data = await ApiClient.getCurrentField(
-                this.currentBBox,
-                this.activeDepth || 0,
-                this.activeTime,
-                3
-            );
+            const data = await ApiClient.getCurrentField({
+                bbox: this.currentBBox,
+                depth: this.activeDepth || 0,
+                time: this.activeTime,
+                stride: 3
+            });
 
             if (data && data.available === false) {
                 if (depthNotice) {
@@ -1352,6 +1355,9 @@ class SolvXApp {
 
     onDepthChange(depthM) {
         this.activeDepth = depthM;
+        if (this.activeDepthMode === 'volume' && this.water?.volumeRenderer) {
+            this.water.volumeRenderer.setClipDepth(depthM);
+        }
         if (this.activeVar !== 'currents') {
             this.scalarViz?.sliceAtDepth(depthM, this.activeDepthMode);
         } else {
@@ -1368,10 +1374,13 @@ class SolvXApp {
     }
 
     onDepthModeChange(mode, depthM) {
-        this.activeDepthMode = mode;
+        this.activeDepthMode = (mode === 'horizontal') ? 'slice' : mode;
         this.activeDepth = depthM;
+        if (this.activeDepthMode === 'volume' && this.water?.volumeRenderer) {
+            this.water.volumeRenderer.setClipDepth(depthM);
+        }
         this.applyLayerVisibility('scientific', this.layerState.scientific);
-        if (mode === 'volume' || mode === 'vertical') {
+        if (this.activeDepthMode === 'volume' || this.activeDepthMode === 'vertical') {
             this.loadTimelineBundle(this.activeTime);
         } else {
             this.onDepthChange(depthM);
@@ -2356,6 +2365,8 @@ class SolvXApp {
 
 const app = new SolvXApp();
 window.solvx = app;
+window.app = app;
+window.solvxApp = app;
 window.solvxViewer = app.viewerController;
 app.init().catch(err => {
     console.error('Fatal initialization error:', err);

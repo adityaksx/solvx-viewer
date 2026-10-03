@@ -30,7 +30,8 @@ class GeographyAdapter:
         max_lon: float
     ) -> Dict[str, Any]:
         """Fetches 3D land polygons, coastline vectors, and maritime boundaries."""
-        if LOCAL_DATA_MODE:
+        from ..services.geography_service import is_near_default, FRONTEND_GEOM
+        if LOCAL_DATA_MODE or (is_near_default(min_lon, max_lon, min_lat, max_lat) and FRONTEND_GEOM.exists()):
             return self._fetch_from_local_source(min_lat, max_lat, min_lon, max_lon)
 
         return self._fetch_from_api(min_lat, max_lat, min_lon, max_lon)

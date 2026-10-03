@@ -67,11 +67,42 @@ export class OceanVariableDataset {
         this.min = min;
         this.max = max;
         this._stats = null;
+        this._flatBuffer = null;
 
         if (this.values3D) {
             this.validate();
             this.getStats();
         }
+    }
+
+    get levels() {
+        return this.depthLevels;
+    }
+
+    get depth() {
+        return this.dimensions.depth;
+    }
+
+    get height() {
+        return this.dimensions.latitude;
+    }
+
+    get width() {
+        return this.dimensions.longitude;
+    }
+
+    get values() {
+        if (!this._flatBuffer) {
+            this._flatBuffer = this.flatten().buffer;
+        }
+        return this._flatBuffer;
+    }
+
+    getScientificValue(depthIdx, yIdx, xIdx) {
+        if (!this.values3D || depthIdx < 0 || depthIdx >= this.dimensions.depth) return null;
+        const v = this.values3D[depthIdx]?.[yIdx]?.[xIdx];
+        if (v == null || !Number.isFinite(v) || v <= -900) return null;
+        return Number(v);
     }
 
     /**

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { updateLegendUI, sampleColor } from './colorScale.js';
 import { createDataTexture2D, extractSlice2D, findDepthIndex } from './dataTexture.js';
+import { OceanVariableDataset } from './OceanVariableDataset.js';
 
 const _reusableColor = new THREE.Color();
 
@@ -71,6 +72,7 @@ export class ScalarVisualizer {
         this.range = { lo: 24.0, hi: 31.0 };
         this.units = '°C';
         this.currentData = null;
+        this.dataset = null;
         this.lastRenderedDepth = null;
         this.lastMode = null;
         
@@ -78,6 +80,14 @@ export class ScalarVisualizer {
         this.sliceMesh = null;
         this.verticalSliceMesh = null;
         this.initSliceMesh();
+    }
+
+    get volumeRenderer() {
+        return this.water?.volumeRenderer;
+    }
+
+    get volumeFieldData() {
+        return this.dataset || this.water?.volumeRenderer?.dataset;
     }
 
     initSliceMesh() {
@@ -195,7 +205,7 @@ export class ScalarVisualizer {
     }
 
     updateSliceTexture(depthM, mode = 'slice') {
-        if (this.variable === 'currents') {
+        if (this.variable === 'currents' && mode !== 'volume') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
@@ -217,28 +227,25 @@ export class ScalarVisualizer {
             const is3D = Array.isArray(vals) && Array.isArray(vals[0]) && Array.isArray(vals[0][0]);
             const depthLevels = this.currentData?.metadata?.depth_levels || this.currentData?.depth_levels;
 
-            if (is3D && this.water?.volumeRenderer) {
-                // Phase 2 Runtime Data Proof
-                const midLat = Math.floor((vals[0]?.length || 0) / 2);
-                const midLon = Math.floor((vals[0]?.[0]?.length || 0) / 2);
-                console.log('[Phase 2 Proof] 3D Array Shape:', vals.length, vals[0].length, vals[0][0].length);
-                if (depthLevels) {
-                    console.log('[Phase 2 Proof] Depth Levels count:', depthLevels.length, 'min:', depthLevels[0], 'max:', depthLevels[depthLevels.length - 1]);
-                }
-                console.log(`[Phase 2 Proof] Vertical Profile at [${midLat}][${midLon}]:`,
-                    'z=0:', vals[0]?.[midLat]?.[midLon],
-                    'z=10:', vals[10]?.[midLat]?.[midLon],
-                    'z=20:', vals[20]?.[midLat]?.[midLon],
-                    'z=31:', vals[31]?.[midLat]?.[midLon]
-                );
+            if (this.currentData instanceof OceanVariableDataset) {
+                this.dataset = this.currentData;
+            } else if (is3D) {
+                this.dataset = new OceanVariableDataset({
+                    variable: this.variable,
+                    values3D: vals,
+                    depthLevels: depthLevels,
+                    latitudes: this.currentData?.metadata?.latitudes || this.currentData?.latitude || this.currentData?.lats || [],
+                    longitudes: this.currentData?.metadata?.longitudes || this.currentData?.longitude || this.currentData?.lons || [],
+                    min: this.range.lo,
+                    max: this.range.hi,
+                    units: this.currentData?.units || this.units
+                });
+            } else {
+                this.dataset = null;
+            }
 
-                this.water.volumeRenderer.setField(
-                    vals,
-                    depthLevels,
-                    this.variable,
-                    this.range.lo,
-                    this.range.hi
-                );
+            if (this.dataset && this.water?.volumeRenderer) {
+                this.water.volumeRenderer.setDataset(this.dataset);
                 this.water.volumeRenderer.setVisible(true);
             } else {
                 if (this.water?.volumeRenderer) {

@@ -538,6 +538,61 @@ class INCOISAdapter:
             })
 
         if variable == 'currents':
+            if depth is None:
+                # 3D Ocean Current Speed Magnitude Volume
+                curr_file = find_file('currents.nc')
+                with safe_open_dataset(curr_file) as ds:
+                    uo_da = subset_array(ds['uo'], lat_min=min_lat, lat_max=max_lat, lon_min=min_lon, lon_max=max_lon, time_start=time, time_end=time, stride=stride)
+                    vo_da = subset_array(ds['vo'], lat_min=min_lat, lat_max=max_lat, lon_min=min_lon, lon_max=max_lon, time_start=time, time_end=time, stride=stride)
+                    if time is None and 'time' in uo_da.dims:
+                        uo_da = uo_da.isel(time=0)
+                        vo_da = vo_da.isel(time=0)
+                    elif time is not None:
+                        uo_da = select_time(uo_da, time)
+                        vo_da = select_time(vo_da, time)
+
+                    uo_arr = uo_da.values.astype(np.float32)
+                    vo_arr = vo_da.values.astype(np.float32)
+                    speed_arr = np.sqrt(uo_arr**2 + vo_arr**2)
+
+                    lat_coord = 'latitude' if 'latitude' in uo_da.coords else 'lat'
+                    lon_coord = 'longitude' if 'longitude' in uo_da.coords else 'lon'
+                    depth_coord = next((d for d in ('depth', 'deptht', 'lev', 'z') if d in uo_da.coords), None)
+
+                    lats = sanitize(uo_da[lat_coord].values)
+                    lons = sanitize(uo_da[lon_coord].values)
+                    raw_depth = uo_da[depth_coord].values if depth_coord else []
+                    depth_levels = sanitize(raw_depth)
+                    values = sanitize(speed_arr)
+
+                    return {
+                        'type': 'ocean_variable',
+                        'requested_provider': 'incois',
+                        'provider': 'LOCAL',
+                        'source_type': 'local_netcdf',
+                        'fallback': True,
+                        'dataset': 'currents.nc',
+                        'variable': 'currents',
+                        'units': 'm/s',
+                        'time': time or datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00Z'),
+                        'depth': None,
+                        'bbox': {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon},
+                        'latitude': lats,
+                        'longitude': lons,
+                        'depth_levels': depth_levels,
+                        'values': values,
+                        'metadata': {
+                            'provider': 'LOCAL',
+                            'source_type': 'local_netcdf',
+                            'service': 'Indian Ocean Model Archive (Local NetCDF)',
+                            'dataset_id': 'local_currents_nc',
+                            'standard_name': 'sea_water_speed',
+                            'description': '3D Ocean Current Speed Magnitude (m/s)',
+                            'depth_levels': depth_levels,
+                            'retrieved_at': datetime.now(timezone.utc).isoformat()
+                        }
+                    }
+
             cg = get_ocean_current_grid(time=time, depth=depth, stride=stride)
             lats = cg['latitude']
             lons = cg['longitude']
@@ -578,6 +633,7 @@ class INCOISAdapter:
                 'u': u_grid,
                 'v': v_grid,
                 'speed': speed_grid,
+                'values': speed_grid,
                 'direction': dir_grid,
                 'metadata': {
                     'provider': 'LOCAL',

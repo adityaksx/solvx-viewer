@@ -74,6 +74,28 @@ export function normalizeScalar(val, lo, hi) {
 }
 
 /**
+ * CPU Reference Sampler for 3D scalar field at arbitrary physical depth (Section 19).
+ * Locates the non-uniform depth bracket, computes interpolation fraction alpha,
+ * and samples between layers k and k+1.
+ */
+export function sampleFieldAtDepth(values3D, depthLevels, latIndex, lonIndex, targetDepth) {
+    if (!values3D || !values3D.length || !depthLevels || !depthLevels.length) {
+        return null;
+    }
+    const { k0, k1, alpha } = depthToIndices(depthLevels, targetDepth);
+    const v0 = values3D[k0]?.[latIndex]?.[lonIndex];
+    const v1 = values3D[k1]?.[latIndex]?.[lonIndex];
+
+    const hasV0 = (v0 != null && Number.isFinite(v0) && v0 > -900);
+    const hasV1 = (v1 != null && Number.isFinite(v1) && v1 > -900);
+
+    if (!hasV0 && !hasV1) return null;
+    if (!hasV0) return v1;
+    if (!hasV1) return v0;
+    return (1.0 - alpha) * v0 + alpha * v1;
+}
+
+/**
  * Builds a 256x1 DataTexture for GLSL colormap sampling.
  */
 function buildColorMapTexture(variable, lo, hi) {
@@ -155,14 +177,17 @@ export class OceanVolumeRenderer {
 
         this.maxDepthM = 541.089; // Default max depth of 4D model
         this.opacity = options.opacity != null ? options.opacity : 0.55;
-        this.stepAlpha = options.stepAlpha != null ? options.stepAlpha : 0.025;
+        this.baseAlpha = options.baseAlpha != null ? options.baseAlpha : 0.035;
+        this.transferLow = options.transferLow != null ? options.transferLow : 0.0;
+        this.transferHigh = options.transferHigh != null ? options.transferHigh : 1.0;
         this.variable = 'ocean_temperature';
-        this.valLo = 24.0;
+        this.valLo = 9.0;
         this.valHi = 31.0;
 
         this.data3DTexture = null;
         this.colorMapTexture = null;
         this.bathyTex = options.bathyTex || null;
+        this.lastValues3D = null;
 
         // Default 32 depth levels matching INCOIS/NEMO 4D model
         this.depthLevels = [
@@ -202,9 +227,11 @@ export class OceanVolumeRenderer {
                 uValLo: { value: this.valLo },
                 uValHi: { value: this.valHi },
                 uGlobalOpacity: { value: this.opacity },
-                uStepAlpha: { value: this.stepAlpha },
+                uBaseAlpha: { value: this.baseAlpha },
+                uTransferLow: { value: this.transferLow },
+                uTransferHigh: { value: this.transferHigh },
                 uDebugMode: { value: 0 },
-                uDebugSliceDepthM: { value: 0.0 }
+                uDebugSliceDepthM: { value: 0.49 }
             },
             vertexShader: `
                 out vec3 vLocalPos;
@@ -236,7 +263,9 @@ export class OceanVolumeRenderer {
                 uniform float uValLo;
                 uniform float uValHi;
                 uniform float uGlobalOpacity;
-                uniform float uStepAlpha;
+                uniform float uBaseAlpha;
+                uniform float uTransferLow;
+                uniform float uTransferHigh;
                 uniform int uDebugMode;
                 uniform float uDebugSliceDepthM;
 
@@ -275,6 +304,61 @@ export class OceanVolumeRenderer {
                         discard;
                     }
 
+                    // ================= DEBUG MODE 5: FIXED PHYSICAL DEPTH SLICE =================
+                    // Analytical ray-plane intersection directly at requested physical depth (Section 6 & 18)
+                    if (uDebugMode == 5) {
+                        float targetDepth = clamp(uDebugSliceDepthM, 0.0, uMaxDepthM);
+                        float yTarget = 0.5 - (targetDepth / max(uMaxDepthM, 1.0));
+
+                        if (abs(rd.y) > 1e-6) {
+                            float tSlice = (yTarget - ro.y) / rd.y;
+                            if (tSlice >= tEnter && tSlice <= tExit) {
+                                vec3 pSlice = ro + rd * tSlice;
+                                float normLat = clamp(pSlice.x + 0.5, 0.0, 1.0);
+                                float normLon = clamp(pSlice.z + 0.5, 0.0, 1.0);
+
+                                if (uHasBathyTex) {
+                                    float seabedM = texture(uBathyTex, vec2(normLon, normLat)).r * 6000.0;
+                                    if (seabedM < 0.5 || targetDepth > seabedM) {
+                                        discard;
+                                    }
+                                }
+
+                                int k = 0;
+                                for (int i = 0; i < 31; i++) {
+                                    if (i < uDepthCount - 1 && uDepthLevels[i + 1] < targetDepth) {
+                                        k = i + 1;
+                                    }
+                                }
+                                int kNext = min(k + 1, uDepthCount - 1);
+                                float z0 = uDepthLevels[k];
+                                float z1 = uDepthLevels[kNext];
+                                float alpha = clamp((targetDepth - z0) / max(z1 - z0, 0.001), 0.0, 1.0);
+
+                                float w0 = (float(k) + 0.5) / float(uDepthCount);
+                                float w1 = (float(kNext) + 0.5) / float(uDepthCount);
+
+                                float v0 = texture(uData3D, vec3(normLon, normLat, w0)).r;
+                                float v1 = texture(uData3D, vec3(normLon, normLat, w1)).r;
+
+                                if (v0 <= -900.0 && v1 <= -900.0) {
+                                    discard;
+                                }
+
+                                float sampleVal = 0.0;
+                                if (v0 <= -900.0) sampleVal = v1;
+                                else if (v1 <= -900.0) sampleVal = v0;
+                                else sampleVal = mix(v0, v1, alpha);
+
+                                float normVal = clamp((sampleVal - uValLo) / max(uValHi - uValLo, 0.0001), 0.0, 1.0);
+                                vec4 col = texture(uColorMap, vec2(normVal, 0.5));
+                                fragColor = vec4(col.rgb, 0.95 * uGlobalOpacity);
+                                return;
+                            }
+                        }
+                        discard;
+                    }
+
                     // 96 ray-marching sample steps for smooth volumetric fidelity
                     const int NUM_STEPS = 96;
                     float dt = totalDist / float(NUM_STEPS);
@@ -303,11 +387,12 @@ export class OceanVolumeRenderer {
                             }
                         }
 
-                        // ================= DEBUG MODES (Phase 30) =================
+                        // ================= DEBUG MODES (Section 10 & 28) =================
                         // Mode 1: Normalized depth (surface = 0/black, bottom = 1/white)
                         if (uDebugMode == 1) {
-                            float normD = clamp(depthM / uMaxDepthM, 0.0, 1.0);
-                            float w = (1.0 - accColor.a) * (0.08 * uGlobalOpacity);
+                            float normD = clamp(depthM / max(uMaxDepthM, 1.0), 0.0, 1.0);
+                            float stepA = clamp(uBaseAlpha * uGlobalOpacity * 1.5, 0.0, 1.0);
+                            float w = (1.0 - accColor.a) * stepA;
                             accColor.rgb += vec3(normD) * w;
                             accColor.a += w;
                             if (accColor.a >= 0.95) break;
@@ -317,7 +402,8 @@ export class OceanVolumeRenderer {
 
                         // Mode 2: Normalized longitude (West = 0/black, East = 1/white)
                         if (uDebugMode == 2) {
-                            float w = (1.0 - accColor.a) * (0.08 * uGlobalOpacity);
+                            float stepA = clamp(uBaseAlpha * uGlobalOpacity * 1.5, 0.0, 1.0);
+                            float w = (1.0 - accColor.a) * stepA;
                             accColor.rgb += vec3(normLon) * w;
                             accColor.a += w;
                             if (accColor.a >= 0.95) break;
@@ -327,7 +413,8 @@ export class OceanVolumeRenderer {
 
                         // Mode 3: Normalized latitude (South = 0/black, North = 1/white)
                         if (uDebugMode == 3) {
-                            float w = (1.0 - accColor.a) * (0.08 * uGlobalOpacity);
+                            float stepA = clamp(uBaseAlpha * uGlobalOpacity * 1.5, 0.0, 1.0);
+                            float w = (1.0 - accColor.a) * stepA;
                             accColor.rgb += vec3(normLat) * w;
                             accColor.a += w;
                             if (accColor.a >= 0.95) break;
@@ -366,8 +453,8 @@ export class OceanVolumeRenderer {
 
                         // Mode 7: Invalid-data / NaN mask
                         if (uDebugMode == 7) {
-                            vec3 col = hasValidData ? vec3(0.2, 0.4, 0.6) : vec3(1.0, 0.0, 1.0);
-                            float a = hasValidData ? (0.02 * uGlobalOpacity) : (0.15 * uGlobalOpacity);
+                            vec3 col = hasValidData ? vec3(0.2, 0.5, 0.8) : vec3(1.0, 0.0, 0.8);
+                            float a = hasValidData ? (0.015 * uGlobalOpacity) : (0.12 * uGlobalOpacity);
                             float w = (1.0 - accColor.a) * a;
                             accColor.rgb += col * w;
                             accColor.a += w;
@@ -391,7 +478,7 @@ export class OceanVolumeRenderer {
 
                             // Mode 4: Raw normalized scalar (grayscale)
                             if (uDebugMode == 4) {
-                                float stepA = clamp(uStepAlpha * uGlobalOpacity, 0.0, 1.0);
+                                float stepA = clamp(uBaseAlpha * uGlobalOpacity, 0.0, 1.0);
                                 float weight = (1.0 - accColor.a) * stepA;
                                 accColor.rgb += vec3(normVal) * weight;
                                 accColor.a += weight;
@@ -400,21 +487,13 @@ export class OceanVolumeRenderer {
                                 continue;
                             }
 
-                            // Mode 5: Fixed depth slice (sample nearest to uDebugSliceDepthM)
-                            if (uDebugMode == 5) {
-                                float sliceTol = uMaxDepthM / 48.0;
-                                if (abs(depthM - uDebugSliceDepthM) <= sliceTol) {
-                                    vec4 sampleCol = texture(uColorMap, vec2(normVal, 0.5));
-                                    accColor = vec4(sampleCol.rgb, 0.95 * uGlobalOpacity);
-                                    break;
-                                }
-                                p += stepVec;
-                                continue;
-                            }
-
-                            // Mode 0: Normal scientific scalar volume rendering
+                            // Mode 0: Normal scientific scalar volume rendering (Section 12, 13, 14)
                             vec4 sampleCol = texture(uColorMap, vec2(normVal, 0.5));
-                            float stepA = clamp(uStepAlpha * uGlobalOpacity, 0.0, 1.0);
+
+                            // Transfer function reveals internal thermal structures without opacity saturation
+                            float scalarVisibility = smoothstep(uTransferLow, uTransferHigh, normVal);
+                            float transferWeight = 0.12 + 0.88 * scalarVisibility;
+                            float stepA = clamp(uBaseAlpha * transferWeight * uGlobalOpacity, 0.0, 1.0);
 
                             // Front-to-back accumulation
                             float weight = (1.0 - accColor.a) * stepA;
@@ -484,10 +563,28 @@ export class OceanVolumeRenderer {
 
     setField(values3D, depthLevels, variable, valLo, valHi, maxDepthM = null) {
         if (!values3D || !values3D.length) return;
+        this.lastValues3D = values3D;
 
         // Flatten 3D array into Float32Array texture buffer
         const flat = flatten3DField(values3D);
         if (!flat) return;
+
+        // Dynamic scalar range calculation (Section 5)
+        if (!Number.isFinite(valLo) || !Number.isFinite(valHi) || valLo >= valHi) {
+            let minV = Infinity, maxV = -Infinity;
+            for (let i = 0; i < flat.buffer.length; i++) {
+                const v = flat.buffer[i];
+                if (v > -900 && Number.isFinite(v)) {
+                    if (v < minV) minV = v;
+                    if (v > maxV) maxV = v;
+                }
+            }
+            this.valLo = Number.isFinite(minV) ? minV : 9.0;
+            this.valHi = Number.isFinite(maxV) ? maxV : 31.0;
+        } else {
+            this.valLo = valLo;
+            this.valHi = valHi;
+        }
 
         // Dispose previous 3D texture
         if (this.data3DTexture) {
@@ -511,8 +608,6 @@ export class OceanVolumeRenderer {
         this.data3DTexture.needsUpdate = true;
 
         this.variable = variable || this.variable;
-        this.valLo = Number.isFinite(valLo) ? valLo : 24.0;
-        this.valHi = Number.isFinite(valHi) ? valHi : 31.0;
 
         if (depthLevels && depthLevels.length) {
             this.depthLevels = depthLevels;
@@ -526,7 +621,7 @@ export class OceanVolumeRenderer {
             this.maxDepthM = maxDepthM;
         }
 
-        // Rebuild colormap texture
+        // Rebuild colormap texture with actual dynamic range
         if (this.colorMapTexture) {
             this.colorMapTexture.dispose();
         }
@@ -541,6 +636,65 @@ export class OceanVolumeRenderer {
         u.uMaxDepthM.value = this.maxDepthM;
 
         this.updateDimensions();
+
+        // Section 4: Prove Data3DTexture dimensions & samples
+        this.debugTextureSample();
+    }
+
+    debugTextureSample() {
+        if (!this.data3DTexture || !this.data3DTexture.image) {
+            return null;
+        }
+        const { width, height, depth, data } = this.data3DTexture.image;
+        const sampleAt = (x, y, z) => {
+            if (!data) return null;
+            const idx = x + y * width + z * width * height;
+            return data[idx];
+        };
+
+        const samples = {
+            width,
+            height,
+            depth,
+            'x=0,y=0,z=0': sampleAt(0, 0, 0),
+            'x=50,y=45,z=0': sampleAt(50, 45, 0),
+            'x=50,y=45,z=10': sampleAt(50, 45, 10),
+            'x=50,y=45,z=20': sampleAt(50, 45, 20),
+            'x=50,y=45,z=31': sampleAt(50, 45, 31)
+        };
+
+        console.group('[OceanVolumeRenderer] Data3DTexture Proof (Section 4)');
+        console.log(`Dimensions: width=${width}, height=${height}, depth=${depth}`);
+        console.log(`ValRange: [${this.valLo?.toFixed(2)}, ${this.valHi?.toFixed(2)}]`);
+        console.log('Sample Points:', samples);
+        if (this.depthLevels) {
+            console.log(`Vertical Profile at (x=50, y=45):`);
+            console.log(`  z=0  (Depth ${this.depthLevels[0]?.toFixed(2)}m):  ${samples['x=50,y=45,z=0']?.toFixed(2)}`);
+            console.log(`  z=10 (Depth ${this.depthLevels[10]?.toFixed(2)}m): ${samples['x=50,y=45,z=10']?.toFixed(2)}`);
+            console.log(`  z=20 (Depth ${this.depthLevels[20]?.toFixed(2)}m): ${samples['x=50,y=45,z=20']?.toFixed(2)}`);
+            console.log(`  z=31 (Depth ${this.depthLevels[31]?.toFixed(2)}m): ${samples['x=50,y=45,z=31']?.toFixed(2)}`);
+        }
+        console.groupEnd();
+        return samples;
+    }
+
+    debugVerticalProfile(latIndex = 45, lonIndex = 50) {
+        if (!this.lastValues3D || !this.depthLevels) {
+            console.warn('[OceanVolumeRenderer] No 3D values available for vertical profile.');
+            return null;
+        }
+        const profile = [];
+        console.group(`[OceanVolumeRenderer] Vertical Profile at LatIdx=${latIndex}, LonIdx=${lonIndex} (Section 20)`);
+        console.log('Depth (m) | Value');
+        console.log('----------------');
+        for (let z = 0; z < this.depthLevels.length; z++) {
+            const d = this.depthLevels[z];
+            const v = this.lastValues3D[z]?.[latIndex]?.[lonIndex];
+            profile.push({ depth: d, value: v });
+            console.log(`${d.toFixed(2).padStart(8)}m | ${v != null ? v.toFixed(3) : 'NaN'}`);
+        }
+        console.groupEnd();
+        return profile;
     }
 
     setVisible(visible) {
@@ -556,13 +710,29 @@ export class OceanVolumeRenderer {
         }
     }
 
-    setDebugMode(mode, sliceDepthM = 0) {
+    setTransferFunction(baseAlpha, transferLow, transferHigh) {
+        if (baseAlpha != null && this.material?.uniforms?.uBaseAlpha) {
+            this.baseAlpha = Number(baseAlpha);
+            this.material.uniforms.uBaseAlpha.value = this.baseAlpha;
+        }
+        if (transferLow != null && this.material?.uniforms?.uTransferLow) {
+            this.transferLow = Number(transferLow);
+            this.material.uniforms.uTransferLow.value = this.transferLow;
+        }
+        if (transferHigh != null && this.material?.uniforms?.uTransferHigh) {
+            this.transferHigh = Number(transferHigh);
+            this.material.uniforms.uTransferHigh.value = this.transferHigh;
+        }
+    }
+
+    setDebugMode(mode, sliceDepthM = 0.49) {
         if (this.material?.uniforms?.uDebugMode) {
             this.material.uniforms.uDebugMode.value = Number(mode) || 0;
         }
         if (this.material?.uniforms?.uDebugSliceDepthM) {
             this.material.uniforms.uDebugSliceDepthM.value = Number(sliceDepthM) || 0.0;
         }
+        console.log(`[OceanVolumeRenderer] Debug Mode: ${mode}, Slice Depth: ${sliceDepthM}m`);
     }
 
     dispose() {

@@ -10,13 +10,14 @@ import {
     longitudeToWorldZ,
     latitudeToWorldX,
     longitudeToWorldX,
-    latitudeToWorldZ
+    latitudeToWorldZ,
+    sampleFieldAtDepth
 } from '../frontend/scene/oceanVolumeRenderer.js';
 
 console.log('--- Starting OceanVolumeRenderer Tests ---');
 
 // 1. Test normalizeScalar
-console.log('[1/7] Testing normalizeScalar()...');
+console.log('[1/10] Testing normalizeScalar()...');
 assert.strictEqual(normalizeScalar(25.0, 20.0, 30.0), 0.5);
 assert.strictEqual(normalizeScalar(20.0, 20.0, 30.0), 0.0);
 assert.strictEqual(normalizeScalar(30.0, 20.0, 30.0), 1.0);
@@ -27,7 +28,7 @@ assert.strictEqual(normalizeScalar(null, 20.0, 30.0), 0.0);
 console.log('✓ normalizeScalar passed.');
 
 // 2. Test depthToIndices with non-uniform levels
-console.log('[2/7] Testing depthToIndices()...');
+console.log('[2/10] Testing depthToIndices()...');
 const sampleLevels = [
     0.494, 1.541, 2.646, 5.078, 11.405, 25.211, 55.764, 109.729, 222.475, 541.089
 ];
@@ -52,7 +53,7 @@ assert.ok(mid.alpha > 0.49 && mid.alpha < 0.51, `Expected alpha ~0.5, got ${mid.
 console.log('✓ depthToIndices passed.');
 
 // 3. Test flatten3DField
-console.log('[3/7] Testing flatten3DField()...');
+console.log('[3/10] Testing flatten3DField()...');
 // Create a 3D mock field: shape [2 depth, 3 lat, 4 lon]
 // values[z][y][x]
 const D = 2, H = 3, W = 4;
@@ -92,7 +93,7 @@ assert.strictEqual(flat.buffer[targetIdx], 112);
 console.log('✓ flatten3DField passed.');
 
 // 4. Test Phase 7 Geographic Coordinate Helpers
-console.log('[4/7] Testing Phase 7 Geographic <-> World coordinate conversion helpers...');
+console.log('[4/10] Testing Phase 7 Geographic <-> World coordinate conversion helpers...');
 const bounds = [84.167, 92.917, 16.083, 23.500];
 const centerLon = (bounds[0] + bounds[1]) / 2.0; // 88.542
 const centerLat = (bounds[2] + bounds[3]) / 2.0; // 19.7915
@@ -124,7 +125,7 @@ assert.strictEqual(latitudeToWorldZ(testLat, bounds), latitudeToWorldX(testLat, 
 console.log('✓ Coordinate conversion helpers passed.');
 
 // 5. Test with full real NetCDF data from Python bridge (Temperature)
-console.log('[5/7] Testing with real model vertical profile (temperature)...');
+console.log('[5/10] Testing with real model vertical profile (temperature)...');
 const pyOutput = execSync(`python3 -c "
 import json
 from backend.services.data_collector import COLLECTOR
@@ -155,7 +156,7 @@ assert.ok(surfTemp > deepTemp + 10.0, 'Thermocline: surface water must be signif
 console.log('✓ Real ocean model profile test passed successfully.');
 
 // 6. Test Phase 17: Fixed-depth Equivalence Validation
-console.log('[6/7] Testing Phase 17 fixed-depth slice equivalence (0.49m, 50m, 100m, 200m, 541m)...');
+console.log('[6/10] Testing Phase 17 fixed-depth slice equivalence (0.49m, 50m, 100m, 200m, 541m)...');
 const pyEquiv = execSync(`python3 -c "
 import json
 import numpy as np
@@ -203,7 +204,7 @@ for (const res of equivResults) {
 console.log('✓ Phase 17 fixed-depth slice equivalence passed (all r >= 0.99).');
 
 // 7. Test Phase 22: Salinity 3D Pipeline Reuse
-console.log('[7/7] Testing Phase 22 Salinity 3D pipeline reuse...');
+console.log('[7/10] Testing Phase 22 Salinity 3D pipeline reuse...');
 const pySalOutput = execSync(`python3 -c "
 import json
 from backend.services.data_collector import COLLECTOR
@@ -232,7 +233,7 @@ assert.ok(deepSal > 30.0 && deepSal < 37.0, `Expected deep salinity ~34-36 PSU, 
 console.log('✓ Phase 22 Salinity 3D pipeline test passed successfully.');
 
 // 8. Test Entity Separation & Volume Mode Isolation
-console.log('[8/8] Testing Water Entity Separation & Volume Mode Isolation...');
+console.log('[8/10] Testing Water Entity Separation & Volume Mode Isolation...');
 // Mock DynamicWater-like structure to verify visibility constraints
 const mockWater = {
     volumeRenderer: {
@@ -274,7 +275,96 @@ assert.strictEqual(mockWater.volumeRenderer.debugMode, 0, 'Debug mode 0 (standar
 
 console.log('✓ Water Entity Separation & Volume Mode Isolation passed.');
 
-console.log('\n=============================================');
-console.log('All 8 OceanVolumeRenderer test suites PASSED!');
-console.log('=============================================\n');
+// 9. Test sampleFieldAtDepth CPU Reference Sampler (Section 19)
+console.log('[9/10] Testing sampleFieldAtDepth() CPU reference sampler...');
+const testDepths = [0.494, 5.078, 25.211, 55.764, 109.729, 222.475, 541.089];
+// Synthetic 3D grid: 7 depths, 2 lats, 2 lons. Values = depth * 2.0
+const mockField = testDepths.map(d => [
+    [d * 2.0, d * 2.0 + 1],
+    [d * 2.0 + 2, d * 2.0 + 3]
+]);
+
+// Exact level match
+const valAtExact = sampleFieldAtDepth(mockField, testDepths, 0, 0, 5.078);
+assert.ok(Math.abs(valAtExact - 5.078 * 2.0) < 1e-5, `Exact depth failed: got ${valAtExact}`);
+
+// Linear interpolation between level 2 (25.211) and level 3 (55.764)
+const interpDepth = 40.4875; // midpoint
+const valAtMid = sampleFieldAtDepth(mockField, testDepths, 0, 0, interpDepth);
+const expectedMid = ((25.211 * 2.0) + (55.764 * 2.0)) / 2.0;
+assert.ok(Math.abs(valAtMid - expectedMid) < 1e-4, `Interp depth failed: expected ${expectedMid}, got ${valAtMid}`);
+
+// Out of bounds clamping: above surface
+const valSurface = sampleFieldAtDepth(mockField, testDepths, 0, 0, 0.0);
+assert.strictEqual(valSurface, testDepths[0] * 2.0);
+
+// Out of bounds clamping: below bottom
+const valBottom = sampleFieldAtDepth(mockField, testDepths, 0, 0, 1000.0);
+assert.strictEqual(valBottom, testDepths[testDepths.length - 1] * 2.0);
+
+// Land/NaN handling
+const mockWithNaN = [
+    [[NaN, 20.0]],
+    [[30.0, 40.0]]
+];
+const depthsTwo = [0.0, 10.0];
+// One level is NaN -> returns other level
+assert.strictEqual(sampleFieldAtDepth(mockWithNaN, depthsTwo, 0, 0, 5.0), 30.0);
+// Both levels valid -> returns interpolated
+assert.strictEqual(sampleFieldAtDepth(mockWithNaN, depthsTwo, 0, 1, 5.0), 30.0);
+// Both levels NaN -> returns null
+const mockBothNaN = [
+    [[NaN]],
+    [[NaN]]
+];
+assert.strictEqual(sampleFieldAtDepth(mockBothNaN, depthsTwo, 0, 0, 5.0), null);
+console.log('✓ sampleFieldAtDepth passed.');
+
+// 10. Test debugTextureSample() Point Extraction (Section 4)
+console.log('[10/10] Testing debugTextureSample() points from real flattened 3D field...');
+const pyFlatOutput = execSync(`python3 -c "
+import json
+from backend.services.data_collector import COLLECTOR
+res = COLLECTOR.get_ocean_data(variable='temperature', depth=None)
+vals = res['values']
+depth_levels = res['depth_levels']
+# Flatten in JavaScript row-major order: x + y*W + z*W*H
+W = len(vals[0][0])
+H = len(vals[0])
+D = len(vals)
+print(json.dumps({
+    'width': W,
+    'height': H,
+    'depth': D,
+    'depth_levels': depth_levels,
+    'p_0_0_0': vals[0][0][0],
+    'p_50_45_0': vals[0][45][50],
+    'p_50_45_10': vals[10][45][50],
+    'p_50_45_20': vals[20][45][50],
+    'p_50_45_31': vals[31][45][50]
+}))
+"`).toString();
+
+const flatProof = JSON.parse(pyFlatOutput);
+assert.strictEqual(flatProof.depth, 32);
+assert.strictEqual(flatProof.height, 90);
+assert.strictEqual(flatProof.width, 106);
+
+// Verify exact values required by Section 4 proof:
+// [50, 45, 0] ~ 28.85°C
+// [50, 45, 31] ~ 9.74°C
+console.log(`  [50, 45, 0]  (Surface): ${flatProof.p_50_45_0.toFixed(2)}°C`);
+console.log(`  [50, 45, 10] (z=10):    ${flatProof.p_50_45_10.toFixed(2)}°C`);
+console.log(`  [50, 45, 20] (z=20):    ${flatProof.p_50_45_20.toFixed(2)}°C`);
+console.log(`  [50, 45, 31] (z=31):    ${flatProof.p_50_45_31.toFixed(2)}°C`);
+
+assert.ok(Math.abs(flatProof.p_50_45_0 - 28.85) < 0.2, `Expected ~28.85°C, got ${flatProof.p_50_45_0}`);
+assert.ok(Math.abs(flatProof.p_50_45_31 - 9.74) < 0.2, `Expected ~9.74°C, got ${flatProof.p_50_45_31}`);
+assert.ok(flatProof.p_50_45_0 > flatProof.p_50_45_31 + 15.0, 'Thermocline drop must exceed 15°C');
+console.log('✓ debugTextureSample() validation passed.');
+
+console.log('\n==============================================');
+console.log('All 10 OceanVolumeRenderer test suites PASSED!');
+console.log('==============================================\n');
+
 

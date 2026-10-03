@@ -33,7 +33,13 @@ export class DepthControl {
         this.transectSingleUnit = document.getElementById('transectSingleUnit');
         this.applyVertBtn = document.getElementById('applyVertSliceBtn');
         this.clearVertBtn = document.getElementById('clearVertSliceBtn');
-        this.vertInfo = document.getElementById('vertSliceInfo');
+        // 3D Volume Diagnostic Elements (Section 28)
+        this.volumeDebugControls = document.getElementById('volumeDebugControls');
+        this.volumeDebugBtns = document.querySelectorAll('[data-volume-debug]');
+        this.volumeDebugDepthRow = document.getElementById('volumeDebugDepthRow');
+        this.volumeDepthBtns = document.querySelectorAll('[data-volume-depth]');
+        this.currentDebugMode = 0;
+        this.currentDebugSliceDepth = 0.49;
 
         this.depthLevels = [];
 
@@ -92,6 +98,13 @@ export class DepthControl {
                 this.vertControls.classList.add('hidden');
             }
         }
+        if (this.volumeDebugControls) {
+            if (this.currentMode === 'volume') {
+                this.volumeDebugControls.classList.remove('hidden');
+            } else {
+                this.volumeDebugControls.classList.add('hidden');
+            }
+        }
     }
 
     setupEvents() {
@@ -99,6 +112,42 @@ export class DepthControl {
         this.modeButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 this.setMode(btn.dataset.depthMode || 'volume');
+            });
+        });
+
+        // 3D Volume Diagnostic Mode Buttons (Section 28)
+        this.volumeDebugBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.volumeDebugBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const mode = Number(btn.dataset.volumeDebug || 0);
+                this.currentDebugMode = mode;
+
+                if (this.volumeDebugDepthRow) {
+                    if (mode === 5) {
+                        this.volumeDebugDepthRow.classList.remove('hidden');
+                    } else {
+                        this.volumeDebugDepthRow.classList.add('hidden');
+                    }
+                }
+
+                if (window.solvxVolumeRenderer) {
+                    window.solvxVolumeRenderer.setDebugMode(mode, this.currentDebugSliceDepth);
+                }
+            });
+        });
+
+        // 3D Volume Diagnostic Slice Depth Buttons
+        this.volumeDepthBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.volumeDepthBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const depth = Number(btn.dataset.volumeDepth || 0.49);
+                this.currentDebugSliceDepth = depth;
+
+                if (window.solvxVolumeRenderer) {
+                    window.solvxVolumeRenderer.setDebugMode(this.currentDebugMode, this.currentDebugSliceDepth);
+                }
             });
         });
 

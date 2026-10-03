@@ -275,6 +275,33 @@
           </div>
         </div>
 
+        <!-- Progressive Disclosure: 3D Volume Diagnostics (Section 28) -->
+        <div id="volumeDebugControls" class="slice-disclosure-box">
+          <div class="slice-label-row">
+            <label style="font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; color: var(--text-dim, #718096);">3D VOLUME DIAGNOSTICS</label>
+          </div>
+          <div class="segmented-control" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+            <button class="segmented-btn active" data-volume-debug="0" style="padding: 3px 6px; font-size: 0.7rem;">Normal</button>
+            <button class="segmented-btn" data-volume-debug="1" style="padding: 3px 6px; font-size: 0.7rem;">Depth</button>
+            <button class="segmented-btn" data-volume-debug="2" style="padding: 3px 6px; font-size: 0.7rem;">Longitude</button>
+            <button class="segmented-btn" data-volume-debug="3" style="padding: 3px 6px; font-size: 0.7rem;">Latitude</button>
+            <button class="segmented-btn" data-volume-debug="4" style="padding: 3px 6px; font-size: 0.7rem;">Raw Scalar</button>
+            <button class="segmented-btn" data-volume-debug="5" style="padding: 3px 6px; font-size: 0.7rem;">Fixed Depth</button>
+            <button class="segmented-btn" data-volume-debug="6" style="padding: 3px 6px; font-size: 0.7rem;">Bathy</button>
+            <button class="segmented-btn" data-volume-debug="7" style="padding: 3px 6px; font-size: 0.7rem;">Validity</button>
+          </div>
+          <div id="volumeDebugDepthRow" class="hidden" style="margin-top: 8px;">
+            <div style="font-size: 0.68rem; color: var(--text-dim, #718096); margin-bottom: 4px;">Target Slice Depth:</div>
+            <div class="segmented-control" style="display: flex; gap: 4px;">
+              <button class="segmented-btn active" data-volume-depth="0.49" style="padding: 3px 6px; font-size: 0.68rem;">0.49m</button>
+              <button class="segmented-btn" data-volume-depth="50" style="padding: 3px 6px; font-size: 0.68rem;">50m</button>
+              <button class="segmented-btn" data-volume-depth="100" style="padding: 3px 6px; font-size: 0.68rem;">100m</button>
+              <button class="segmented-btn" data-volume-depth="200" style="padding: 3px 6px; font-size: 0.68rem;">200m</button>
+              <button class="segmented-btn" data-volume-depth="500" style="padding: 3px 6px; font-size: 0.68rem;">500m</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Progressive Disclosure: Horizontal Slice -->
         <div id="horizontalSliceControls" class="slice-disclosure-box hidden">
           <div class="slice-input-group">

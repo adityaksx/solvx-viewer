@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SolvX × Three.js Volume Renderer — Prototype</title>
+    <link rel="stylesheet" href="./style.css">
+
+    <!-- ES Module Import Map -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "/node_modules/three/build/three.module.js",
+            "three/addons/": "/node_modules/three/examples/jsm/",
+            "lil-gui": "./vendor/lil-gui.esm.min.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="canvas-container">
+        <canvas id="ocean-canvas"></canvas>
+    </div>
+
+    <!-- Header Banner -->
+    <div id="header">
+        <h1>🌊 SolvX 3D Ocean Volume Renderer</h1>
+        <p>Physically Positioned Ray-Marching Volumetric Ocean Field</p>
+    </div>
+
+    <!-- Live Diagnostic HUD (Section 55) -->
+    <div id="hud">
+        <div class="hud-row"><span class="hud-label">FPS</span><span class="hud-val" id="hud-fps">--</span></div>
+        <div class="hud-divider"></div>
+        <div class="hud-row"><span class="hud-label">Dataset</span><span class="hud-val" id="hud-dataset">Loading...</span></div>
+        <div class="hud-row"><span class="hud-label">Variable</span><span class="hud-val" id="hud-variable">--</span></div>
+        <div class="hud-row"><span class="hud-label">Volume Grid</span><span class="hud-val" id="hud-shape">--</span></div>
+        <div class="hud-row"><span class="hud-label">Voxels</span><span class="hud-val" id="hud-voxels">--</span></div>
+        <div class="hud-divider"></div>
+        <div class="hud-row"><span class="hud-label">Latitude Range</span><span class="hud-val" id="hud-lat">--</span></div>
+        <div class="hud-row"><span class="hud-label">Longitude Range</span><span class="hud-val" id="hud-lon">--</span></div>
+        <div class="hud-row"><span class="hud-label">Depth Range</span><span class="hud-val" id="hud-depth">--</span></div>
+        <div class="hud-row"><span class="hud-label">Value Range</span><span class="hud-val" id="hud-range">--</span></div>
+        <div class="hud-divider"></div>
+        <div class="hud-row"><span class="hud-label">Cursor/Probe</span><span class="hud-val" id="hud-cursor">Click ocean</span></div>
+    </div>
+
+    <!-- Value Probe Popup Card (Section 31) -->
+    <div id="probe-card">
+        <h3>
+            <span>Observation Probe</span>
+            <span class="close-btn" id="probe-close">&times;</span>
+        </h3>
+        <div class="hud-row"><span class="hud-label">Longitude</span><span class="hud-val" id="probe-lon">--</span></div>
+        <div class="hud-row"><span class="hud-label">Latitude</span><span class="hud-val" id="probe-lat">--</span></div>
+        <div class="hud-row"><span class="hud-label">Depth</span><span class="hud-val" id="probe-depth">--</span></div>
+        <div class="hud-divider"></div>
+        <div class="hud-row"><span class="hud-label">Value</span><span class="hud-val" id="probe-val">--</span></div>
+        <div class="hud-row" id="probe-ground-truth-row"><span class="hud-label">Ground Truth</span><span class="hud-val" id="probe-truth">--</span></div>
+    </div>
+
+    <!-- Quick Camera View Bar (Section 28) -->
+    <div id="quick-views">
+        <button class="view-btn active" id="btn-3d">3D Isometric</button>
+        <button class="view-btn" id="btn-top">Top (Lon × Lat)</button>
+        <button class="view-btn" id="btn-side">Side (Lat × Depth)</button>
+        <button class="view-btn" id="btn-reset">Reset</button>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="spinner">
+        <div class="loader"></div>
+        <span id="spinner-text">Loading Ocean Volume...</span>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -1,0 +1,220 @@
+/* SolvX Volume Renderer Test Prototype Stylesheet */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body, html {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #0b0f19;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #e2e8f0;
+    user-select: none;
+}
+
+#canvas-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Header Banner */
+#header {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 10px;
+    padding: 12px 18px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    pointer-events: auto;
+}
+
+#header h1 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #38bdf8;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#header p {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 4px;
+}
+
+/* Diagnostic HUD */
+#hud {
+    position: absolute;
+    top: 96px;
+    left: 16px;
+    z-index: 10;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 10px;
+    padding: 14px 16px;
+    width: 270px;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.hud-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
+.hud-label {
+    color: #64748b;
+}
+
+.hud-val {
+    color: #38bdf8;
+    font-weight: 600;
+}
+
+.hud-divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.15);
+    margin: 8px 0;
+}
+
+/* Value Probe Callout Card */
+#probe-card {
+    position: absolute;
+    z-index: 20;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(16px);
+    border: 1px solid #38bdf8;
+    border-radius: 10px;
+    padding: 12px 16px;
+    min-width: 220px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 16px rgba(56, 189, 248, 0.3);
+    pointer-events: auto;
+    display: none;
+    transform: translate(12px, -50%);
+}
+
+#probe-card h3 {
+    font-size: 13px;
+    color: #38bdf8;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+    padding-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+}
+
+#probe-card .close-btn {
+    cursor: pointer;
+    color: #94a3b8;
+    font-weight: bold;
+}
+
+#probe-card .close-btn:hover {
+    color: #fff;
+}
+
+/* Loading Spinner */
+#spinner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 100;
+    background: rgba(15, 23, 42, 0.9);
+    padding: 20px 32px;
+    border-radius: 12px;
+    border: 1px solid #38bdf8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+.loader {
+    width: 36px;
+    height: 36px;
+    border: 3px solid rgba(56, 189, 248, 0.2);
+    border-top: 3px solid #38bdf8;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Quick View Bar (Bottom Center) */
+#quick-views {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+    background: rgba(15, 23, 42, 0.85);
+    padding: 6px 10px;
+    border-radius: 30px;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    backdrop-filter: blur(10px);
+}
+
+.view-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.view-btn:hover, .view-btn.active {
+    background: rgba(56, 189, 248, 0.2);
+    color: #38bdf8;
+}
+
+/* lil-gui custom tweaks */
+.lil-gui {
+    --background-color: rgba(15, 23, 42, 0.88) !important;
+    --text-color: #cbd5e1 !important;
+    --title-background-color: rgba(30, 41, 59, 0.9) !important;
+    --widget-color: rgba(51, 65, 85, 0.8) !important;
+    --hover-color: rgba(71, 85, 105, 0.9) !important;
+    --focus-color: #38bdf8 !important;
+    --number-color: #38bdf8 !important;
+    --string-color: #34d399 !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    border: 1px solid rgba(148, 163, 184, 0.2) !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5) !important;
+    top: 16px !important;
+    right: 16px !important;
+}

@@ -4,9 +4,11 @@
  */
 
 import * as THREE from 'three';
+import { GeographicTransform } from '../scene/geographicTransform.js';
 
 export function createOceanVolumeTexture(arrayBuffer, meta, options = {}) {
     const verticalExaggeration = options.verticalExaggeration || 5.0;
+    const geoConfig = options.geoConfig || GeographicTransform.createGeoConfig(meta.bounds, { verticalExaggeration });
     const [nz, ny, nx] = meta.shape; // [depthCount, latCount, lonCount]
     const srcFloats = new Float32Array(arrayBuffer);
 
@@ -55,23 +57,13 @@ export function createOceanVolumeTexture(arrayBuffer, meta, options = {}) {
     texture.wrapR = THREE.ClampToEdgeWrapping;
     texture.needsUpdate = true;
 
-    // Calculate world-space bounds and voxel size
-    const bounds = meta.bounds;
-    const midLon = (bounds.lon_min + bounds.lon_max) / 2.0;
-    const midLat = (bounds.lat_min + bounds.lat_max) / 2.0;
-    const klon = 111.32 * Math.cos((midLat * Math.PI) / 180.0);
-    const klat = 111.32;
-
-    const xMin = (bounds.lon_min - midLon) * klon;
-    const xMax = (bounds.lon_max - midLon) * klon;
-    const zMin = (bounds.lat_min - midLat) * klat;
-    const zMax = (bounds.lat_max - midLat) * klat;
-
-    // Depth in km * verticalExaggeration
-    const maxDepthKm = bounds.depth_max / 1000.0;
-    const minDepthKm = bounds.depth_min / 1000.0;
-    const yMin = -maxDepthKm * verticalExaggeration;
-    const yMax = -minDepthKm * verticalExaggeration; // surface is Y ~ 0
+    // Calculate world-space bounds and voxel size via canonical GeographicTransform
+    const xMin = -geoConfig.worldWidth / 2.0;
+    const xMax = geoConfig.worldWidth / 2.0;
+    const zMin = -geoConfig.worldLength / 2.0;
+    const zMax = geoConfig.worldLength / 2.0;
+    const yMin = GeographicTransform.depthToWorldY(geoConfig.depthMax, geoConfig);
+    const yMax = GeographicTransform.depthToWorldY(geoConfig.depthMin, geoConfig); // Surface is Y = 0
 
     const volumeOrigin = new THREE.Vector3(xMin, yMin, zMin);
     const volumeResolution = new THREE.Vector3(width, height, depth);
@@ -91,8 +83,14 @@ export function createOceanVolumeTexture(arrayBuffer, meta, options = {}) {
             yMin, yMax,
             zMin, zMax,
         },
-        geographicBounds: bounds,
-        projection: { midLon, midLat, klon, klat },
+        geographicBounds: meta.bounds,
+        geoConfig,
+        projection: {
+            midLon: geoConfig.centerLon,
+            midLat: geoConfig.centerLat,
+            klon: geoConfig.klon,
+            klat: geoConfig.klat,
+        },
         rawBuffer: srcFloats,
         shape: [nz, ny, nx],
         meta,

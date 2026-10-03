@@ -208,9 +208,9 @@ export default class VolumeRenderer extends THREE.Mesh {
         valueMultiplier:       { value: 1.0 },
         valueAdded:            { value: 0.0 },
 
-        extinctionCoefficient: { value: 0.05 },
+        extinctionCoefficient: { value: 0.20 },
         extinctionMultiplier:  { value: 1.0 },
-        alphaMultiplier:       { value: 0.65 },
+        alphaMultiplier:       { value: 0.85 },
     };
 
     constructor(options = {}) {

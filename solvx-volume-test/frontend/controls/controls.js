@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { GeographicTransform } from '../scene/geographicTransform.js';
 
 export class OceanProbe {
     constructor(domElement, camera, oceanManager, onProbeResult) {
@@ -63,15 +64,12 @@ export class OceanProbe {
         // Ray enters at hitPoint. Step along ray slightly into the volume
         const probePoint = hitPoint.clone().addScaledVector(ray.direction, 5.0);
 
-        // Convert world coordinate back to geographic coordinates
-        const proj = vol.projection;
-        const lon = proj.midLon + probePoint.x / proj.klon;
-        const lat = proj.midLat + probePoint.z / proj.klat;
-
-        // Convert Y back to physical depth (meters)
-        // Y = - (depthM / 1000.0) * verticalExaggeration
-        const verticalEx = Math.abs(b.yMin) / Math.max(vol.meta.bounds.depth_max / 1000.0, 1e-4);
-        const depthM = Math.max(0, -probePoint.y / verticalEx * 1000.0);
+        // Convert world coordinate back to geographic coordinates via canonical GeographicTransform
+        const geoConfig = vol.geoConfig || GeographicTransform.createGeoConfig(vol.meta.bounds);
+        const geoCoord = GeographicTransform.worldToGeo(probePoint.x, probePoint.y, probePoint.z, geoConfig);
+        const lon = geoCoord.lon;
+        const lat = geoCoord.lat;
+        const depthM = geoCoord.depth;
 
         // Sample voxel value from CPU buffer
         const [nz, ny, nx] = vol.shape;
@@ -87,10 +85,10 @@ export class OceanProbe {
 
         // NetCDF raw buffer index: zi * (ny * nx) + yi * nx + xi
         const rawIdx = zi * (ny * nx) + yi * nx + xi;
-        const normalizedVal = vol.rawBuffer[rawIdx];
+        const normalizedVal = vol.rawBuffer ? vol.rawBuffer[rawIdx] : 0.0;
 
         // Denormalize to physical value
-        const pr = vol.meta.physical_range;
+        const pr = vol.meta.physical_range || { min: 0, max: 1 };
         const isMasked = normalizedVal <= 0.01;
         const physVal = isMasked ? null : pr.min + ((normalizedVal - 0.02) / 0.98) * (pr.max - pr.min);
 
@@ -103,18 +101,28 @@ export class OceanProbe {
             depthMeters: Number(depthM.toFixed(1)),
             dataset: datasetName,
             variable: vol.meta.variable,
-            units: vol.meta.units,
+            units: vol.meta.units || '',
             physicalValue: physVal != null ? Number(physVal.toFixed(2)) : null,
             isMasked,
+            seabedDepth: null,
+            isBelowSeabed: false,
+            isLand: false,
+            isValid: !isMasked,
             meta: vol.meta,
         };
 
-        // Asynchronously call backend /api/point to verify ground truth
+        // Asynchronously call backend /api/point to verify ground truth & bathymetric depth
         fetch(`/api/point?dataset=${encodeURIComponent(datasetName)}&variable=${encodeURIComponent(vol.meta.variable)}&lat=${lat}&lon=${lon}&depth=${depthM}`)
             .then(res => res.ok ? res.json() : null)
             .then(backendPoint => {
-                if (backendPoint && backendPoint.value != null) {
-                    probeData.backendGroundTruth = backendPoint.value;
+                if (backendPoint) {
+                    if (backendPoint.value != null) {
+                        probeData.backendGroundTruth = backendPoint.value;
+                    }
+                    probeData.seabedDepth = backendPoint.seabed_depth;
+                    probeData.isBelowSeabed = backendPoint.is_below_seabed;
+                    probeData.isLand = backendPoint.is_land;
+                    probeData.isValid = backendPoint.is_valid;
                 }
                 this.onProbeResult(probeData);
             })

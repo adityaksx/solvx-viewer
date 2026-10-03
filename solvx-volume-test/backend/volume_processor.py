@@ -1,13 +1,16 @@
 """
 Volume Preprocessor for SolvX NetCDF data.
 Handles subsetting, downsampling, axis alignment, NaN masking,
-normalization, and binary float32 serialization.
-Follows Sections 11, 12, 13, 14, 15, 16, 36, 37.
+bathymetric water masking, normalization, and binary float32 serialization.
+Follows Sections 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 36, 37.
 """
 
 from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 import xarray as xr
+from .bathymetry import BathymetryService
+
+bathy_service = BathymetryService()
 
 
 class VolumeProcessor:
@@ -24,6 +27,7 @@ class VolumeProcessor:
         depth_min: Optional[float] = None,
         depth_max: Optional[float] = None,
         stride: int = 1,
+        color_mode: str = "variable",
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         """
         Extracts, subsets, downsamples, and canonicalizes a 3D scalar volume.
@@ -47,11 +51,9 @@ class VolumeProcessor:
             da = da.isel({time_dim: safe_time_idx})
 
         # 2. Geographic & Depth Subsetting (Section 13)
-        # Handle coordinate ascending vs descending
         if lat_min is not None or lat_max is not None:
             lats = ds.coords[lat_dim].values
             if len(lats) > 1 and lats[0] > lats[-1]:
-                # Descending latitudes
                 s_min = lat_max if lat_max is not None else float(lats.min())
                 s_max = lat_min if lat_min is not None else float(lats.max())
                 da = da.sel({lat_dim: slice(s_min, s_max)})
@@ -89,7 +91,6 @@ class VolumeProcessor:
 
         # 4. Downsampling (Section 36)
         if stride > 1:
-            # Apply stride to lat and lon, and optionally depth if depth > 10
             z_stride = stride if da.sizes[da.dims[0]] > 16 else 1
             da = da.isel({
                 da.dims[0]: slice(None, None, z_stride),
@@ -97,8 +98,7 @@ class VolumeProcessor:
                 da.dims[2]: slice(None, None, stride)
             })
 
-        # Load values into numpy float32
-        raw_values = np.asarray(da.values, dtype=np.float32)
+        raw_values = np.asarray(da.values, dtype=np.float32).copy()
 
         # 5. Extract Extents & Coordinates
         final_lats = [float(x) for x in da.coords[lat_dim].values]
@@ -110,33 +110,69 @@ class VolumeProcessor:
 
         nz, ny, nx = raw_values.shape
 
-        # 6. NaN Handling and Normalization (Section 15 & 16)
+        # 6. Bathymetric Water Mask & Land Mask (Sections 18, 19, 20)
         valid_mask = np.isfinite(raw_values)
-        nan_count = int((~valid_mask).sum())
-        total_voxels = raw_values.size
 
-        if np.any(valid_mask):
-            phys_min = float(raw_values[valid_mask].min())
-            phys_max = float(raw_values[valid_mask].max())
-            phys_mean = float(raw_values[valid_mask].mean())
-        else:
+        lats_arr = np.array(final_lats, dtype=np.float32)
+        lons_arr = np.array(final_lons, dtype=np.float32)
+        depths_arr = np.array(final_depths, dtype=np.float32)
+        bathy_grid = bathy_service.get_depth_grid(lats_arr, lons_arr)
+
+        # Land mask: where bathymetry <= 20m, water is completely masked
+        land_mask_2d = bathy_grid <= 20.0
+        valid_mask[:, land_mask_2d] = False
+
+        # Water mask below seabed: for each depth level z, if depth > bathy_grid, mask out
+        for z in range(nz):
+            below_seabed = depths_arr[z] > bathy_grid
+            valid_mask[z, below_seabed] = False
+
+        # 7. Support debug color modes (Section 27)
+        if color_mode == "depth":
+            depth_3d = depths_arr[:, np.newaxis, np.newaxis]
+            raw_values = np.broadcast_to(depth_3d, (nz, ny, nx)).copy()
+            phys_min = float(depths_arr.min())
+            phys_max = float(depths_arr.max())
+            phys_mean = (phys_min + phys_max) / 2.0
+            display_units = "m"
+        elif color_mode == "bathymetry":
+            bathy_3d = bathy_grid[np.newaxis, :, :]
+            raw_values = np.broadcast_to(bathy_3d, (nz, ny, nx)).copy()
+            phys_min = float(np.min(bathy_grid))
+            phys_max = float(np.max(bathy_grid))
+            phys_mean = float(np.mean(bathy_grid))
+            display_units = "m"
+        elif color_mode == "mask":
+            raw_values = np.where(valid_mask, 1.0, 0.0).astype(np.float32)
             phys_min = 0.0
             phys_max = 1.0
-            phys_mean = 0.5
+            phys_mean = float(valid_mask.mean())
+            display_units = "flag"
+        else:
+            if np.any(valid_mask):
+                phys_min = float(raw_values[valid_mask].min())
+                phys_max = float(raw_values[valid_mask].max())
+                phys_mean = float(raw_values[valid_mask].mean())
+            else:
+                phys_min = 0.0
+                phys_max = 1.0
+                phys_mean = 0.5
+            display_units = da.attrs.get("units", "")
 
-        # Normalization: map valid values to [0.02, 1.0] so that 0.0 is strictly reserved
-        # for transparent/masked/land regions (cutoff in shader is ~0.01)
+        # 8. Normalization (Section 16)
         normalized = np.zeros_like(raw_values, dtype=np.float32)
         val_range = max(phys_max - phys_min, 1e-6)
 
         if np.any(valid_mask):
-            # Scale from 0.02 to 1.0
             normalized[valid_mask] = 0.02 + 0.98 * ((raw_values[valid_mask] - phys_min) / val_range)
 
-        # Metadata dictionary
+        nan_count = int((~valid_mask).sum())
+        total_voxels = raw_values.size
+
         meta = {
             "variable": variable_name,
-            "units": da.attrs.get("units", ""),
+            "color_mode": color_mode,
+            "units": display_units,
             "long_name": da.attrs.get("long_name", variable_name),
             "shape": [int(nz), int(ny), int(nx)],
             "axis_order": ["depth", "latitude", "longitude"],
@@ -185,8 +221,7 @@ class VolumeProcessor:
         time_index: int = 0,
     ) -> Dict[str, Any]:
         """
-        Samples an exact point from the dataset using nearest-neighbor / interpolation (Section 40).
-        Used by the interactive mouse probe to verify GPU visual values against ground truth scientific data.
+        Samples an exact point from dataset and verifies against bathymetry (Sections 31 & 32).
         """
         if variable_name not in ds.data_vars:
             raise KeyError(f"Variable '{variable_name}' not found.")
@@ -215,11 +250,21 @@ class VolumeProcessor:
         actual_lon = float(nearest.coords[lon_dim].values)
         actual_depth = float(nearest.coords[depth_dim].values) if depth_dim and depth_dim in nearest.coords else 0.0
 
+        # Check seabed depth from bathymetry (Sections 31 & 32)
+        seabed_depth = bathy_service.get_depth(actual_lat, actual_lon)
+        is_land = seabed_depth <= 20.0
+        is_below_seabed = (depth > seabed_depth) if (seabed_depth > 20.0 and depth is not None) else is_land
+
+        is_valid = (val is not None) and (not is_below_seabed) and (not is_land)
+
         return {
             "requested": {"latitude": lat, "longitude": lon, "depth": depth},
             "matched": {"latitude": actual_lat, "longitude": actual_lon, "depth": actual_depth},
             "variable": variable_name,
-            "value": val,
+            "value": val if is_valid else None,
+            "seabed_depth": round(seabed_depth, 1),
+            "is_below_seabed": is_below_seabed,
+            "is_land": is_land,
             "units": da.attrs.get("units", ""),
-            "is_valid": val is not None,
+            "is_valid": is_valid,
         }

@@ -39,26 +39,36 @@ const puppeteer = require('puppeteer');
 
     // Test clicking the ocean to test probe
     console.log('Testing interactive probe click...');
-    await page.mouse.click(650, 420);
-    await new Promise(r => setTimeout(r, 1000));
+    await page.mouse.click(750, 320);
+    await new Promise(r => setTimeout(r, 1500));
     await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_probe.png' });
     console.log('Captured screenshot_probe.png');
 
     // Test switching dataset to real temperature.nc via page script
     console.log('Testing dataset switch to real temperature.nc...');
     await page.evaluate(() => {
-        const app = window.appInstance || document.querySelector('canvas')?.__app;
-        // Trigger dataset switch via UI controller if exposed or reload
-        const datasetSelect = document.querySelector('.lil-gui select');
-        if (datasetSelect) {
-            datasetSelect.value = 'temperature.nc';
-            datasetSelect.dispatchEvent(new Event('change'));
+        const app = window.appInstance;
+        if (app) {
+            app.onDatasetChange('temperature.nc');
         }
     });
 
     await new Promise(r => setTimeout(r, 3500));
     await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_real_temp.png' });
     console.log('Captured screenshot_real_temp.png');
+
+    // Test diagnostic color mode (bathymetry)
+    console.log('Testing diagnostic color mode (bathymetry)...');
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app) {
+            app.gui.params.colorMode = 'bathymetry';
+            app.onColorModeChange('bathymetry');
+        }
+    });
+    await new Promise(r => setTimeout(r, 2500));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_color_bathymetry.png' });
+    console.log('Captured screenshot_color_bathymetry.png');
 
     await browser.close();
     console.log('E2E Render test completed successfully! Errors:', errors.length);

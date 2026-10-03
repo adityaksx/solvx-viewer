@@ -1,19 +1,49 @@
 /**
- * 3D Land Geometry and Coastlines for SolvX Scene.
- * Follows Section 20 of the prototype plan.
+ * 3D Land Geometry and Topography for SolvX Scene.
+ * Uses canonical GeographicTransform.
+ * Follows Sections 20 & 23 of the implementation plan.
  */
 
 import * as THREE from 'three';
+import { GeographicTransform } from './geographicTransform.js';
 
-function buildPolygonGeometry(parts, y = 0) {
+export function buildLandMesh(geometryData, geoConfig) {
+    const group = new THREE.Group();
+    group.name = "LandGroup";
+
+    const parts = geometryData.land || [];
+    if (!parts.length) return group;
+
+    const gBounds = geometryData.bounds || [geoConfig.lonMin, geoConfig.lonMax, geoConfig.latMin, geoConfig.latMax];
+    const gLonMin = gBounds[0], gLonMax = gBounds[1];
+    const gLatMin = gBounds[2], gLatMax = gBounds[3];
+
+    // Reference terrain range for normalizing km coordinates in geometry.json
+    const tX = geometryData.terrain?.x || [];
+    const tY = geometryData.terrain?.y || [];
+    const kmXMin = tX.length ? tX[0] : -geoConfig.worldWidth / 2;
+    const kmXMax = tX.length ? tX[tX.length - 1] : geoConfig.worldWidth / 2;
+    const kmYMin = tY.length ? tY[0] : -geoConfig.worldLength / 2;
+    const kmYMax = tY.length ? tY[tY.length - 1] : geoConfig.worldLength / 2;
+
+    const topY = 0.5; // Slightly elevated above surface to prevent z-fighting
+    const bedrockY = -Math.max(geoConfig.depthMax, 3500) / 1000.0 * geoConfig.verticalExaggeration;
+
+    // 1. Build Polygon Geometry (Top surface)
     const pos = [];
     const index = [];
     let base = 0;
 
-    for (const p of parts || []) {
+    for (const p of parts) {
         for (const v of p.vertices || []) {
-            // v[0] = Easting/X (km), v[1] = Northing/Z (km)
-            pos.push(Number(v[0]), y, Number(v[1]));
+            const normX = (v[0] - kmXMin) / Math.max(kmXMax - kmXMin, 1e-6);
+            const normZ = (v[1] - kmYMin) / Math.max(kmYMax - kmYMin, 1e-6);
+
+            const lon = gLonMin + normX * (gLonMax - gLonMin);
+            const lat = gLatMin + normZ * (gLatMax - gLatMin);
+
+            const worldPt = GeographicTransform.geoToWorld(lon, lat, 0, geoConfig);
+            pos.push(worldPt.x, topY, worldPt.z);
         }
         for (const t of p.triangles || []) {
             index.push(base + t[0], base + t[1], base + t[2]);
@@ -21,27 +51,14 @@ function buildPolygonGeometry(parts, y = 0) {
         base += (p.vertices || []).length;
     }
 
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(index);
-    g.computeVertexNormals();
-    return g;
-}
+    const landGeom = new THREE.BufferGeometry();
+    landGeom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    landGeom.setIndex(index);
+    landGeom.computeVertexNormals();
 
-export function buildLandMesh(geometryData, verticalExaggeration = 5.0) {
-    const group = new THREE.Group();
-    group.name = "LandGroup";
-
-    const parts = geometryData.land || [];
-    if (!parts.length) return group;
-
-    const topY = 1.0; // Slightly elevated above surface to prevent z-fighting
-    const bedrockY = -3.5 * verticalExaggeration; // 3.5 km bedrock
-
-    // Top surface (coastal vegetation / topography)
     const topMat = new THREE.MeshStandardMaterial({
-        color: 0x3da35d, // Vibrant coastal green
-        roughness: 0.7,
+        color: 0x3da35d, // Coastal green
+        roughness: 0.70,
         metalness: 0.05,
         side: THREE.DoubleSide,
         depthWrite: true,
@@ -50,14 +67,14 @@ export function buildLandMesh(geometryData, verticalExaggeration = 5.0) {
         polygonOffsetUnits: -1
     });
 
-    const topMesh = new THREE.Mesh(buildPolygonGeometry(parts, topY), topMat);
+    const topMesh = new THREE.Mesh(landGeom, topMat);
     topMesh.renderOrder = 1;
     group.add(topMesh);
 
-    // Soil / bedrock side walls
+    // 2. Extruded Soil Sides down to bedrock
     const sideMat = new THREE.MeshStandardMaterial({
         color: 0x7c6853, // Earth brown
-        roughness: 0.9,
+        roughness: 0.90,
         metalness: 0.02,
         side: THREE.DoubleSide,
         depthWrite: true
@@ -71,15 +88,26 @@ export function buildLandMesh(geometryData, verticalExaggeration = 5.0) {
         for (let i = 0; i < ring.length - 1; i++) {
             const a = ring[i];
             const b = ring[i + 1];
+
+            const aNormX = (a[0] - kmXMin) / Math.max(kmXMax - kmXMin, 1e-6);
+            const aNormZ = (a[1] - kmYMin) / Math.max(kmYMax - kmYMin, 1e-6);
+            const aLon = gLonMin + aNormX * (gLonMax - gLonMin);
+            const aLat = gLatMin + aNormZ * (gLatMax - gLatMin);
+            const aWorld = GeographicTransform.geoToWorld(aLon, aLat, 0, geoConfig);
+
+            const bNormX = (b[0] - kmXMin) / Math.max(kmXMax - kmXMin, 1e-6);
+            const bNormZ = (b[1] - kmYMin) / Math.max(kmYMax - kmYMin, 1e-6);
+            const bLon = gLonMin + bNormX * (gLonMax - gLonMin);
+            const bLat = gLatMin + bNormZ * (gLatMax - gLatMin);
+            const bWorld = GeographicTransform.geoToWorld(bLon, bLat, 0, geoConfig);
+
             const q = sidePos.length / 3;
-
             sidePos.push(
-                Number(a[0]), topY, Number(a[1]),
-                Number(a[0]), bedrockY, Number(a[1]),
-                Number(b[0]), topY, Number(b[1]),
-                Number(b[0]), bedrockY, Number(b[1])
+                aWorld.x, topY, aWorld.z,
+                aWorld.x, bedrockY, aWorld.z,
+                bWorld.x, topY, bWorld.z,
+                bWorld.x, bedrockY, bWorld.z
             );
-
             sideIdx.push(q, q + 2, q + 1, q + 2, q + 3, q + 1);
         }
     }
@@ -89,25 +117,10 @@ export function buildLandMesh(geometryData, verticalExaggeration = 5.0) {
         sideGeom.setAttribute('position', new THREE.Float32BufferAttribute(sidePos, 3));
         sideGeom.setIndex(sideIdx);
         sideGeom.computeVertexNormals();
+
         const sideMesh = new THREE.Mesh(sideGeom, sideMat);
         sideMesh.renderOrder = 1;
         group.add(sideMesh);
-    }
-
-    // Coastlines
-    const coastlines = geometryData.coast || [];
-    const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2, depthWrite: true });
-
-    for (const seg of coastlines) {
-        if (!seg || seg.length < 2) continue;
-        const pts = [];
-        for (const pt of seg) {
-            pts.push(new THREE.Vector3(Number(pt[0]), topY + 0.5, Number(pt[1])));
-        }
-        const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
-        const line = new THREE.Line(lineGeom, lineMat);
-        line.renderOrder = 2;
-        group.add(line);
     }
 
     return group;

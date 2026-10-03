@@ -88,6 +88,7 @@ def get_volume_metadata(
     depth_min: Optional[float] = Query(None),
     depth_max: Optional[float] = Query(None),
     stride: int = Query(1, ge=1, le=16),
+    color_mode: str = Query("variable"),
 ):
     """Returns metadata for the subsetted 3D volume."""
     try:
@@ -104,6 +105,7 @@ def get_volume_metadata(
             depth_min=depth_min,
             depth_max=depth_max,
             stride=stride,
+            color_mode=color_mode,
         )
         meta["dataset"] = dataset
         return meta
@@ -123,6 +125,7 @@ def get_volume_binary(
     depth_min: Optional[float] = Query(None),
     depth_max: Optional[float] = Query(None),
     stride: int = Query(1, ge=1, le=16),
+    color_mode: str = Query("variable"),
 ):
     """
     Returns normalized Float32 little-endian binary stream (Section 37 & 39).
@@ -142,6 +145,7 @@ def get_volume_binary(
             depth_min=depth_min,
             depth_max=depth_max,
             stride=stride,
+            color_mode=color_mode,
         )
 
         raw_bytes = vol.astype("<f4").tobytes()

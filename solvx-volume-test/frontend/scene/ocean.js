@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import VolumeRenderer from '../renderer/VolumeRenderer.js';
 import { buildPaletteTexture } from '../renderer/palette.js';
+import { buildCoordinateGrid } from './coordinateGrid.js';
 
 export class OceanVolumeManager {
     constructor(scene, app = null) {
@@ -39,12 +40,9 @@ export class OceanVolumeManager {
         this.wireframeBox.name = "VolumeBoundingBox";
         this.scene.add(this.wireframeBox);
 
-        // 3. Surface Reference Grid at Sea Level (Y = 0) (depthWrite false)
-        this.surfaceGrid = new THREE.GridHelper(1000, 20, 0x0088cc, 0x003366);
-        this.surfaceGrid.position.y = 0.0;
-        this.surfaceGrid.material.transparent = true;
-        this.surfaceGrid.material.opacity = 0.35;
-        this.surfaceGrid.material.depthWrite = false;
+        // 3. Coordinate Grid (initialized when geoConfig is available)
+        this.coordinateGrid = null;
+        this.surfaceGrid = new THREE.Group(); // Reference kept for backwards compatibility
         this.scene.add(this.surfaceGrid);
 
         // 4. Set Initial Palette
@@ -74,6 +72,27 @@ export class OceanVolumeManager {
 
         // Update Bounding Box Wireframe
         this.updateBoundingBox(b);
+
+        // Update Geographic Coordinate Grid
+        if (volumeResult.geoConfig) {
+            this.updateCoordinateGrid(volumeResult.geoConfig);
+        }
+    }
+
+    updateCoordinateGrid(geoConfig) {
+        if (this.coordinateGrid) {
+            this.scene.remove(this.coordinateGrid);
+            this.coordinateGrid = null;
+        }
+        this.coordinateGrid = buildCoordinateGrid(geoConfig);
+        const isVisible = this.app?.gui?.params?.showGrid ?? true;
+        this.coordinateGrid.visible = isVisible;
+        this.scene.add(this.coordinateGrid);
+    }
+
+    setGridVisible(visible) {
+        if (this.coordinateGrid) this.coordinateGrid.visible = visible;
+        if (this.surfaceGrid) this.surfaceGrid.visible = visible;
     }
 
     updateBoundingBox(b) {
@@ -96,8 +115,9 @@ export class OceanVolumeManager {
     setDepthRange(minDepthM, maxDepthM, verticalExaggeration = 5.0) {
         if (!this.volumeData) return;
         const b = this.volumeData.worldBounds;
-        const yTop = -(minDepthM / 1000.0) * verticalExaggeration;
-        const yBottom = -(maxDepthM / 1000.0) * verticalExaggeration;
+        const ex = this.volumeData.geoConfig?.verticalExaggeration || verticalExaggeration;
+        const yTop = -(minDepthM / 1000.0) * ex;
+        const yBottom = -(maxDepthM / 1000.0) * ex;
 
         const uniforms = this.volumeRenderer.uniforms;
         uniforms.clipMin.value.y = Math.max(b.yMin, Math.min(yBottom, yTop));
@@ -128,9 +148,10 @@ export class OceanVolumeManager {
 
         const b = this.volumeData.worldBounds;
         const uniforms = this.volumeRenderer.uniforms;
+        const ex = this.volumeData.geoConfig?.verticalExaggeration || verticalExaggeration;
 
         if (enabled) {
-            const sliceY = -(depthM / 1000.0) * verticalExaggeration;
+            const sliceY = -(depthM / 1000.0) * ex;
             const halfThickness = (voxelSizeY => Math.max(voxelSizeY * 0.8, 1.0))(this.volumeData.voxelSize.y);
             uniforms.clipMin.value.y = sliceY - halfThickness;
             uniforms.clipMax.value.y = sliceY + halfThickness;

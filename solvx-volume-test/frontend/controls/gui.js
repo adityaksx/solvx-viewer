@@ -19,13 +19,14 @@ export class AppGui {
             stride: 1,
 
             // Rendering
-            opacity: 0.65,
+            colorMode: 'variable',
+            opacity: 0.85,
             raySteps: 128,
             verticalExaggeration: 5.0,
             palette: 'Ocean Thermal (Turbo)',
             paletteMin: 0.0,
             paletteMax: 1.0,
-            extinction: 0.05,
+            extinction: 0.20,
 
             // Depth
             depthMin: 0,
@@ -37,6 +38,7 @@ export class AppGui {
             showOcean: true,
             showSeabed: true,
             showLand: true,
+            showCoastline: true,
             showBoundingBox: true,
             showGrid: true,
 
@@ -78,6 +80,10 @@ export class AppGui {
         // ---- 2. Rendering Folder ----
         const fRender = this.gui.addFolder('Volume Rendering');
         this.folders.render = fRender;
+
+        fRender.add(this.params, 'colorMode', ['variable', 'depth', 'bathymetry', 'mask'])
+            .name('Color Mode')
+            .onChange(val => this.app.onColorModeChange(val));
 
         fRender.add(this.params, 'opacity', 0.0, 1.0, 0.02)
             .name('Ocean Opacity')
@@ -145,16 +151,21 @@ export class AppGui {
                 if (this.app.seabedMesh) this.app.seabedMesh.visible = v;
             });
 
-        fLayers.add(this.params, 'showLand').name('Land & Coastline')
+        fLayers.add(this.params, 'showLand').name('Land Topography')
             .onChange(v => {
                 if (this.app.landMesh) this.app.landMesh.visible = v;
+            });
+
+        fLayers.add(this.params, 'showCoastline').name('Coastline Vectors')
+            .onChange(v => {
+                if (this.app.coastlineMesh) this.app.coastlineMesh.visible = v;
             });
 
         fLayers.add(this.params, 'showBoundingBox').name('Bounding Box')
             .onChange(v => this.app.oceanManager.wireframeBox.visible = v);
 
-        fLayers.add(this.params, 'showGrid').name('Surface Grid')
-            .onChange(v => this.app.oceanManager.surfaceGrid.visible = v);
+        fLayers.add(this.params, 'showGrid').name('Geographic Grid')
+            .onChange(v => this.app.oceanManager.setGridVisible(v));
 
         // ---- 5. View Controls ----
         const fViews = this.gui.addFolder('Camera Views');

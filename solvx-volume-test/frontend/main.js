@@ -8,6 +8,8 @@ import { CameraManager } from './scene/camera.js';
 import { OceanVolumeManager } from './scene/ocean.js';
 import { buildLandMesh } from './scene/land.js';
 import { buildSeabedMesh } from './scene/seabed.js';
+import { buildCoastlines } from './scene/coastline.js';
+import { GeographicTransform } from './scene/geographicTransform.js';
 import { createOceanVolumeTexture } from './renderer/volumeTexture.js';
 import { AppGui } from './controls/gui.js';
 import { OceanProbe } from './controls/controls.js';
@@ -21,8 +23,11 @@ class App {
         // Scene Layers
         this.landMesh = null;
         this.seabedMesh = null;
+        this.coastlineMesh = null;
         this.geometryData = null;
         this.bathymetryData = null;
+        this.datasetMeta = null;
+        this.geoConfig = null;
 
         // Current Dataset State
         this.currentDataset = 'synthetic_ocean.nc';
@@ -57,6 +62,7 @@ class App {
         this.renderer.setSize(width, height);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.renderer.autoClear = false;
 
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x080e1a); // Deep marine background
@@ -181,29 +187,54 @@ class App {
         }
     }
 
+    getGeoConfig() {
+        const bounds = this.datasetMeta?.bounds || this.geometryData?.bounds || [84.105, 92.993, 16.071, 23.524, 0, 1000];
+        return GeographicTransform.createGeoConfig(bounds, {
+            verticalExaggeration: this.verticalExaggeration,
+        });
+    }
+
     rebuildGeographicLayers() {
-        // Land
+        this.geoConfig = this.getGeoConfig();
+
+        // 1. Land Topography
         if (this.landMesh) {
             this.scene.remove(this.landMesh);
             this.landMesh = null;
         }
         if (this.geometryData) {
-            this.landMesh = buildLandMesh(this.geometryData, this.verticalExaggeration);
-            this.landMesh.visible = this.gui.params.showLand;
+            this.landMesh = buildLandMesh(this.geometryData, this.geoConfig);
+            this.landMesh.visible = this.gui?.params?.showLand ?? true;
             this.scene.add(this.landMesh);
         }
 
-        // Seabed
+        // 2. Coastline Vectors
+        if (this.coastlineMesh) {
+            this.scene.remove(this.coastlineMesh);
+            this.coastlineMesh = null;
+        }
+        if (this.geometryData) {
+            this.coastlineMesh = buildCoastlines(this.geometryData, this.geoConfig);
+            this.coastlineMesh.visible = this.gui?.params?.showCoastline ?? true;
+            this.scene.add(this.coastlineMesh);
+        }
+
+        // 3. Bathymetric Seabed
         if (this.seabedMesh) {
             this.scene.remove(this.seabedMesh);
             this.seabedMesh = null;
         }
         if (this.bathymetryData) {
-            this.seabedMesh = buildSeabedMesh(this.bathymetryData, this.verticalExaggeration);
+            this.seabedMesh = buildSeabedMesh(this.bathymetryData, this.geoConfig);
             if (this.seabedMesh) {
-                this.seabedMesh.visible = this.gui.params.showSeabed;
+                this.seabedMesh.visible = this.gui?.params?.showSeabed ?? true;
                 this.scene.add(this.seabedMesh);
             }
+        }
+
+        // 4. Update Coordinate Grid in OceanVolumeManager
+        if (this.oceanManager) {
+            this.oceanManager.updateCoordinateGrid(this.geoConfig);
         }
     }
 
@@ -218,6 +249,10 @@ class App {
                 throw new Error(errData.detail || 'Failed to inspect dataset');
             }
             const dsInfo = await metaRes.json();
+            this.datasetMeta = dsInfo;
+
+            // Rebuild scene geographic layers matching new dataset domain
+            this.rebuildGeographicLayers();
 
             // Update variables list
             if (dsInfo.variables && dsInfo.variables.length) {
@@ -251,16 +286,20 @@ class App {
         this.showSpinner(`Loading 3D Volume (${this.currentVariable})...`);
 
         try {
-            const url = `/api/volume/binary?dataset=${encodeURIComponent(this.currentDataset)}&variable=${encodeURIComponent(this.currentVariable)}&time=${this.currentTime}&stride=${this.gui.params.stride}`;
-            const metaUrl = `/api/volume/metadata?dataset=${encodeURIComponent(this.currentDataset)}&variable=${encodeURIComponent(this.currentVariable)}&time=${this.currentTime}&stride=${this.gui.params.stride}`;
+            const colorMode = this.gui?.params?.colorMode || 'variable';
+            const url = `/api/volume/binary?dataset=${encodeURIComponent(this.currentDataset)}&variable=${encodeURIComponent(this.currentVariable)}&time=${this.currentTime}&stride=${this.gui.params.stride}&color_mode=${encodeURIComponent(colorMode)}`;
+            const metaUrl = `/api/volume/metadata?dataset=${encodeURIComponent(this.currentDataset)}&variable=${encodeURIComponent(this.currentVariable)}&time=${this.currentTime}&stride=${this.gui.params.stride}&color_mode=${encodeURIComponent(colorMode)}`;
 
             const [metaRes, binRes] = await Promise.all([
                 fetch(metaUrl).then(r => r.json()),
                 fetch(url).then(r => r.arrayBuffer()),
             ]);
 
+            this.geoConfig = this.getGeoConfig();
+
             const volumeResult = createOceanVolumeTexture(binRes, metaRes, {
-                verticalExaggeration: this.verticalExaggeration
+                verticalExaggeration: this.verticalExaggeration,
+                geoConfig: this.geoConfig,
             });
 
             this.oceanManager.applyVolumeData(volumeResult);
@@ -271,6 +310,10 @@ class App {
             alert(`Failed to load volume: ${err.message}`);
             this.hideSpinner();
         }
+    }
+
+    onColorModeChange(mode) {
+        this.reloadVolume();
     }
 
     onDatasetChange(datasetName) {
@@ -336,8 +379,34 @@ class App {
         document.getElementById('probe-lat').textContent = `${result.latitude}°N`;
         document.getElementById('probe-depth').textContent = `${result.depthMeters} m`;
 
-        if (result.isMasked) {
-            document.getElementById('probe-val').textContent = 'Masked / Land (NaN)';
+        const seabedEl = document.getElementById('probe-seabed');
+        const statusEl = document.getElementById('probe-status');
+
+        if (seabedEl) {
+            seabedEl.textContent = result.seabedDepth != null ? `${result.seabedDepth} m` : 'Querying...';
+        }
+
+        let statusText = 'In Ocean';
+        let statusColor = '#34d399'; // green
+
+        if (result.isLand) {
+            statusText = 'Outside Ocean (Land)';
+            statusColor = '#f87171'; // red
+        } else if (result.isBelowSeabed || (result.seabedDepth != null && result.depthMeters > result.seabedDepth)) {
+            statusText = 'Outside Ocean (Below Seabed)';
+            statusColor = '#f59e0b'; // amber
+        } else if (result.isMasked) {
+            statusText = 'Masked / Boundary';
+            statusColor = '#f87171';
+        }
+
+        if (statusEl) {
+            statusEl.textContent = statusText;
+            statusEl.style.color = statusColor;
+        }
+
+        if (statusText !== 'In Ocean') {
+            document.getElementById('probe-val').textContent = `-- (${statusText})`;
             document.getElementById('probe-truth').textContent = '--';
         } else {
             document.getElementById('probe-val').textContent = `${result.physicalValue} ${result.units}`;
@@ -382,14 +451,16 @@ class App {
         // 1. Render ONLY solid geometry (land + seabed) to off-screen renderTarget for depth buffer
         this.oceanManager.volumeRenderer.visible = false;
         this.oceanManager.wireframeBox.visible = false;
-        this.oceanManager.surfaceGrid.visible = false;
+        this.oceanManager.setGridVisible(false);
+        if (this.coastlineMesh) this.coastlineMesh.visible = false;
         this.renderer.setRenderTarget(this.renderTarget);
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
 
-        // 2. Restore wireframe/grid and render scene to screen
+        // 2. Restore wireframe/grid/coastlines and render scene to screen
         this.oceanManager.wireframeBox.visible = this.gui.params.showBoundingBox;
-        this.oceanManager.surfaceGrid.visible = this.gui.params.showGrid;
+        this.oceanManager.setGridVisible(this.gui.params.showGrid);
+        if (this.coastlineMesh) this.coastlineMesh.visible = this.gui.params.showCoastline;
         this.renderer.setRenderTarget(null);
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);

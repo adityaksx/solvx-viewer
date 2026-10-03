@@ -402,7 +402,7 @@ assert.ok(Math.abs(sampledVal - expectedMid) < 1e-4, `Expected ${expectedMid}, g
 console.log('✓ OceanVariableDataset.sampleDepth() passed.');
 
 // 13. Test OceanVariableDataset: Data3DTexture creation
-console.log('[13/13] Testing OceanVariableDataset.createTexture()...');
+console.log('[13/14] Testing OceanVariableDataset.createTexture()...');
 const tex3D = interpDataset.createTexture();
 assert.ok(tex3D.isData3DTexture, 'Must be a THREE.Data3DTexture');
 assert.strictEqual(tex3D.image.width, 2);
@@ -413,8 +413,108 @@ assert.strictEqual(tex3D.type, 1015);   // THREE.FloatType
 tex3D.dispose();
 console.log('✓ OceanVariableDataset.createTexture() passed.');
 
+// 14. Test Full 5 Points x 6 Depths Fixed-Depth Validation Matrix (Sections 17, 30 & 31)
+console.log('[14/14] Testing 5 Points × 6 Depths Fixed-Depth Validation Matrix...');
+const pyMatrixOutput = execSync(`python3 -c "
+import numpy as np
+import xarray as xr
+import json
+
+ds = xr.open_dataset('data/model/temperature.nc')
+t = ds.thetao.values[0] # (32, 90, 106)
+depths = ds.depth.values
+lats = ds.latitude.values
+lons = ds.longitude.values
+
+points = [
+    {'name': 'Shallow Coast', 'lat': 21.5, 'lon': 89.5},
+    {'name': 'Continental Shelf', 'lat': 20.0, 'lon': 87.5},
+    {'name': 'Central Bay of Bengal', 'lat': 18.5, 'lon': 88.5},
+    {'name': 'Deep Ocean Basin', 'lat': 16.5, 'lon': 89.0},
+    {'name': 'Eastern Basin', 'lat': 19.0, 'lon': 91.5}
+]
+
+test_depths = [0.494, 50.0, 100.0, 200.0, 300.0, 500.0]
+matrix = []
+
+for pt in points:
+    lat_idx = int(np.argmin(np.abs(lats - pt['lat'])))
+    lon_idx = int(np.argmin(np.abs(lons - pt['lon'])))
+    pt_res = {
+        'name': pt['name'],
+        'lat_idx': lat_idx,
+        'lon_idx': lon_idx,
+        'lat': float(lats[lat_idx]),
+        'lon': float(lons[lon_idx]),
+        'samples': []
+    }
+    for d in test_depths:
+        if d <= depths[0]:
+            v = t[0, lat_idx, lon_idx]
+        elif d >= depths[-1]:
+            v = t[-1, lat_idx, lon_idx]
+        else:
+            k = int(np.searchsorted(depths, d) - 1)
+            z0, z1 = depths[k], depths[k+1]
+            alpha = (d - z0) / (z1 - z0)
+            v0 = t[k, lat_idx, lon_idx]
+            v1 = t[k+1, lat_idx, lon_idx]
+            v = (1 - alpha) * v0 + alpha * v1 if (np.isfinite(v0) and np.isfinite(v1)) else np.nan
+        pt_res['samples'].append({
+            'depth': float(d),
+            'value': float(v) if np.isfinite(v) else None
+        })
+    matrix.append(pt_res)
+
+t_clean = np.nan_to_num(t, nan=-999.0)
+print(json.dumps({
+    'depth_levels': depths.tolist(),
+    'values3D': t_clean.tolist(),
+    'matrix': matrix
+}))
+"`, { maxBuffer: 50 * 1024 * 1024 }).toString();
+
+const matrixData = JSON.parse(pyMatrixOutput);
+const realDataset = new OceanVariableDataset({
+    variable: 'temperature',
+    values3D: matrixData.values3D,
+    depthLevels: matrixData.depth_levels
+});
+
+console.log('Fixed-Depth Matrix Validation:');
+for (const pt of matrixData.matrix) {
+    console.log(`  Location: ${pt.name} (${pt.lat.toFixed(2)}°N, ${pt.lon.toFixed(2)}°E) [latIdx=${pt.lat_idx}, lonIdx=${pt.lon_idx}]:`);
+    for (const smp of pt.samples) {
+        const cpuSampled = realDataset.sampleDepth(pt.lat_idx, pt.lon_idx, smp.depth);
+        if (smp.value === null) {
+            assert.strictEqual(cpuSampled, null, `Depth ${smp.depth}m at ${pt.name} should be masked (null)`);
+            console.log(`    Depth ${smp.depth.toFixed(1).padStart(5)}m: [MASKED / BELOW SEABED] (verified null)`);
+        } else {
+            assert.ok(cpuSampled !== null, `Depth ${smp.depth}m at ${pt.name} should have data`);
+            const diff = Math.abs(cpuSampled - smp.value);
+            assert.ok(diff < 1e-4, `Depth ${smp.depth}m mismatch: expected ${smp.value}, got ${cpuSampled}`);
+            console.log(`    Depth ${smp.depth.toFixed(1).padStart(5)}m: ${cpuSampled.toFixed(2)}°C (diff=${diff.toExponential(2)})`);
+        }
+    }
+}
+
+// Explicit assertions for Section 30 fixed-depth requirements:
+// 1. Shallow coast at 500m MUST be masked
+const shallowCoast500 = realDataset.sampleDepth(matrixData.matrix[0].lat_idx, matrixData.matrix[0].lon_idx, 500.0);
+assert.strictEqual(shallowCoast500, null, 'Shallow coastal point at 500m must be masked');
+
+// 2. Deep ocean at 500m MUST be visible and cold (~10°C)
+const deepOcean500 = realDataset.sampleDepth(matrixData.matrix[3].lat_idx, matrixData.matrix[3].lon_idx, 500.0);
+assert.ok(deepOcean500 !== null && deepOcean500 > 8.0 && deepOcean500 < 12.0, `Deep ocean at 500m must be ~10°C, got ${deepOcean500}`);
+
+// 3. Central Bay of Bengal surface MUST be warm (> 28°C)
+const centralBaySurface = realDataset.sampleDepth(matrixData.matrix[2].lat_idx, matrixData.matrix[2].lon_idx, 0.494);
+assert.ok(centralBaySurface > 28.0, `Central Bay of Bengal surface must be > 28°C, got ${centralBaySurface}`);
+
+console.log('✓ 5 Points × 6 Depths Fixed-Depth Validation Matrix PASSED.');
+
 console.log('\n==============================================');
-console.log('All 13 OceanVolumeRenderer & Dataset test suites PASSED!');
+console.log('All 14 OceanVolumeRenderer & Dataset test suites PASSED!');
 console.log('==============================================\n');
 
 

@@ -1,6 +1,7 @@
 // SolvX Viewer — True 3D Ocean Variable Volumetric Ray-Marching Renderer
 import * as THREE from 'three';
 import { sampleColor } from '../visualization/colorScale.js';
+import { OceanVariableDataset } from '../visualization/OceanVariableDataset.js';
 
 /**
  * Flattens a 3D array of shape [depthCount][latCount][lonCount] into a Float32Array
@@ -561,30 +562,19 @@ export class OceanVolumeRenderer {
         }
     }
 
-    setField(values3D, depthLevels, variable, valLo, valHi, maxDepthM = null) {
-        if (!values3D || !values3D.length) return;
-        this.lastValues3D = values3D;
+    setDataset(dataset) {
+        if (!dataset) return;
+        this.dataset = dataset;
+        this.lastValues3D = dataset.values3D;
+        const stats = dataset.getStats();
 
-        // Flatten 3D array into Float32Array texture buffer
-        const flat = flatten3DField(values3D);
-        if (!flat) return;
-
-        // Dynamic scalar range calculation (Section 5)
-        if (!Number.isFinite(valLo) || !Number.isFinite(valHi) || valLo >= valHi) {
-            let minV = Infinity, maxV = -Infinity;
-            for (let i = 0; i < flat.buffer.length; i++) {
-                const v = flat.buffer[i];
-                if (v > -900 && Number.isFinite(v)) {
-                    if (v < minV) minV = v;
-                    if (v > maxV) maxV = v;
-                }
-            }
-            this.valLo = Number.isFinite(minV) ? minV : 9.0;
-            this.valHi = Number.isFinite(maxV) ? maxV : 31.0;
-        } else {
-            this.valLo = valLo;
-            this.valHi = valHi;
+        this.valLo = stats.scalarMin != null ? stats.scalarMin : (this.valLo || 9.0);
+        this.valHi = stats.scalarMax != null ? stats.scalarMax : (this.valHi || 31.0);
+        if (dataset.depthLevels && dataset.depthLevels.length) {
+            this.depthLevels = dataset.depthLevels;
         }
+        this.maxDepthM = stats.depthMax || (this.depthLevels.length ? this.depthLevels[this.depthLevels.length - 1] : 541.089);
+        this.variable = dataset.variable || this.variable;
 
         // Dispose previous 3D texture
         if (this.data3DTexture) {
@@ -592,36 +582,15 @@ export class OceanVolumeRenderer {
             this.data3DTexture = null;
         }
 
-        this.data3DTexture = new THREE.Data3DTexture(
-            flat.buffer,
-            flat.width,
-            flat.height,
-            flat.depth
-        );
-        this.data3DTexture.format = THREE.RedFormat;
-        this.data3DTexture.type = THREE.FloatType;
-        this.data3DTexture.minFilter = THREE.LinearFilter;
-        this.data3DTexture.magFilter = THREE.LinearFilter;
-        this.data3DTexture.wrapS = THREE.ClampToEdgeWrapping;
-        this.data3DTexture.wrapT = THREE.ClampToEdgeWrapping;
-        this.data3DTexture.wrapR = THREE.ClampToEdgeWrapping;
-        this.data3DTexture.needsUpdate = true;
+        this.data3DTexture = dataset.createTexture();
 
-        this.variable = variable || this.variable;
-
-        if (depthLevels && depthLevels.length) {
-            this.depthLevels = depthLevels;
-            const uArray = this.material.uniforms.uDepthLevels.value;
-            for (let i = 0; i < 32; i++) {
-                uArray[i] = i < depthLevels.length ? depthLevels[i] : (depthLevels[depthLevels.length - 1] || 0);
-            }
-            this.material.uniforms.uDepthCount.value = Math.min(32, depthLevels.length);
-            this.maxDepthM = maxDepthM || depthLevels[depthLevels.length - 1] || 541.089;
-        } else if (maxDepthM) {
-            this.maxDepthM = maxDepthM;
+        const uArray = this.material.uniforms.uDepthLevels.value;
+        for (let i = 0; i < 32; i++) {
+            uArray[i] = i < this.depthLevels.length ? this.depthLevels[i] : (this.depthLevels[this.depthLevels.length - 1] || 0);
         }
+        this.material.uniforms.uDepthCount.value = Math.min(32, this.depthLevels.length);
+        this.material.uniforms.uMaxDepthM.value = this.maxDepthM;
 
-        // Rebuild colormap texture with actual dynamic range
         if (this.colorMapTexture) {
             this.colorMapTexture.dispose();
         }
@@ -633,12 +602,24 @@ export class OceanVolumeRenderer {
         u.uColorMap.value = this.colorMapTexture;
         u.uValLo.value = this.valLo;
         u.uValHi.value = this.valHi;
-        u.uMaxDepthM.value = this.maxDepthM;
 
         this.updateDimensions();
-
-        // Section 4: Prove Data3DTexture dimensions & samples
         this.debugTextureSample();
+    }
+
+    setField(values3D, depthLevels, variable, valLo, valHi, maxDepthM = null) {
+        if (!values3D || !values3D.length) return;
+        const dataset = new OceanVariableDataset({
+            variable: variable || this.variable,
+            values3D,
+            depthLevels: depthLevels || this.depthLevels,
+            min: Number.isFinite(valLo) ? valLo : null,
+            max: Number.isFinite(valHi) ? valHi : null
+        });
+        if (maxDepthM) {
+            this.maxDepthM = maxDepthM;
+        }
+        this.setDataset(dataset);
     }
 
     debugTextureSample() {

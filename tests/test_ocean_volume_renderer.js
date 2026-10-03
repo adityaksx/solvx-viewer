@@ -13,6 +13,7 @@ import {
     latitudeToWorldZ,
     sampleFieldAtDepth
 } from '../frontend/scene/oceanVolumeRenderer.js';
+import { OceanVariableDataset } from '../frontend/visualization/OceanVariableDataset.js';
 
 console.log('--- Starting OceanVolumeRenderer Tests ---');
 
@@ -362,8 +363,58 @@ assert.ok(Math.abs(flatProof.p_50_45_31 - 9.74) < 0.2, `Expected ~9.74°C, got $
 assert.ok(flatProof.p_50_45_0 > flatProof.p_50_45_31 + 15.0, 'Thermocline drop must exceed 15°C');
 console.log('✓ debugTextureSample() validation passed.');
 
+// 11. Test OceanVariableDataset: Canonical Layout, Validation & Stats
+console.log('[11/13] Testing OceanVariableDataset canonical contract, validation & statistics...');
+const testDataset = new OceanVariableDataset({
+    variable: 'thetao',
+    values3D: mock3D,
+    depthLevels: [0.5, 50.0],
+    latitudes: [16.0, 18.0, 20.0],
+    longitudes: [84.0, 86.0, 88.0, 90.0]
+});
+assert.strictEqual(testDataset.dimensions.depth, 2);
+assert.strictEqual(testDataset.dimensions.latitude, 3);
+assert.strictEqual(testDataset.dimensions.longitude, 4);
+
+const stats = testDataset.getStats();
+assert.strictEqual(stats.validCount, 22); // 24 total - 2 sentinels (NaN and null)
+assert.strictEqual(stats.missingCount, 2);
+assert.strictEqual(stats.depthMin, 0.5);
+assert.strictEqual(stats.depthMax, 50.0);
+
+const flattened = testDataset.flatten();
+assert.strictEqual(flattened.width, 4);
+assert.strictEqual(flattened.height, 3);
+assert.strictEqual(flattened.depth, 2);
+assert.strictEqual(flattened.buffer[0], -999.0); // Sentinel
+assert.strictEqual(flattened.buffer[targetIdx], 112); // Canonical index
+console.log('✓ OceanVariableDataset canonical contract & stats passed.');
+
+// 12. Test OceanVariableDataset: Non-uniform depth sampling
+console.log('[12/13] Testing OceanVariableDataset.sampleDepth()...');
+const interpDataset = new OceanVariableDataset({
+    variable: 'temperature',
+    values3D: mockField,
+    depthLevels: testDepths
+});
+const sampledVal = interpDataset.sampleDepth(0, 0, interpDepth);
+assert.ok(Math.abs(sampledVal - expectedMid) < 1e-4, `Expected ${expectedMid}, got ${sampledVal}`);
+console.log('✓ OceanVariableDataset.sampleDepth() passed.');
+
+// 13. Test OceanVariableDataset: Data3DTexture creation
+console.log('[13/13] Testing OceanVariableDataset.createTexture()...');
+const tex3D = interpDataset.createTexture();
+assert.ok(tex3D.isData3DTexture, 'Must be a THREE.Data3DTexture');
+assert.strictEqual(tex3D.image.width, 2);
+assert.strictEqual(tex3D.image.height, 2);
+assert.strictEqual(tex3D.image.depth, testDepths.length);
+assert.strictEqual(tex3D.format, 1028); // THREE.RedFormat
+assert.strictEqual(tex3D.type, 1015);   // THREE.FloatType
+tex3D.dispose();
+console.log('✓ OceanVariableDataset.createTexture() passed.');
+
 console.log('\n==============================================');
-console.log('All 10 OceanVolumeRenderer test suites PASSED!');
+console.log('All 13 OceanVolumeRenderer & Dataset test suites PASSED!');
 console.log('==============================================\n');
 
 

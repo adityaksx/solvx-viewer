@@ -118,15 +118,6 @@ class VolumeProcessor:
         depths_arr = np.array(final_depths, dtype=np.float32)
         bathy_grid = bathy_service.get_depth_grid(lats_arr, lons_arr)
 
-        # Land mask: where bathymetry <= 20m, water is completely masked
-        land_mask_2d = bathy_grid <= 20.0
-        valid_mask[:, land_mask_2d] = False
-
-        # Water mask below seabed: for each depth level z, if depth > bathy_grid, mask out
-        for z in range(nz):
-            below_seabed = depths_arr[z] > bathy_grid
-            valid_mask[z, below_seabed] = False
-
         # 7. Support debug color modes (Section 27)
         if color_mode == "depth":
             depth_3d = depths_arr[:, np.newaxis, np.newaxis]

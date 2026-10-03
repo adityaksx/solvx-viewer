@@ -55,21 +55,8 @@ export class OceanVolumeManager {
         this.volumeRenderer.uniforms.palette.value = tex;
     }
 
-    setBathymetry(bathyObj) {
-        if (!bathyObj) return;
-        const uniforms = this.volumeRenderer.uniforms;
-        uniforms.bathymetryTexture.value = bathyObj.texture;
-        uniforms.bathyBounds.value.set(
-            bathyObj.bounds[0],
-            bathyObj.bounds[1],
-            bathyObj.bounds[2],
-            bathyObj.bounds[3]
-        );
-        uniforms.hasBathymetry.value = 1.0;
-    }
-
     setVerticalExaggeration(exVal) {
-        this.volumeRenderer.uniforms.verticalExaggeration.value = exVal;
+        // Exaggeration is baked into geoConfig transforms and volume bounds
     }
 
     applyVolumeData(volumeResult) {
@@ -81,19 +68,6 @@ export class OceanVolumeManager {
         uniforms.volumeOrigin.value.copy(volumeResult.volumeOrigin);
         uniforms.volumeResolution.value.copy(volumeResult.volumeResolution);
         uniforms.voxelSize.value.copy(volumeResult.voxelSize);
-
-        const ex = volumeResult.geoConfig?.verticalExaggeration || 70.0;
-        uniforms.verticalExaggeration.value = ex;
-
-        const metaBounds = volumeResult.meta?.bounds;
-        if (metaBounds) {
-            uniforms.datasetBounds.value.set(
-                metaBounds.lon_min,
-                metaBounds.lon_max,
-                metaBounds.lat_min,
-                metaBounds.lat_max
-            );
-        }
 
         // Reset clipping to entire volume
         const b = volumeResult.worldBounds;

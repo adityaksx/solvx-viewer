@@ -59,13 +59,6 @@ uniform float random;
 uniform sampler2D depthTexture;
 #endif
 
-// Bathymetric seafloor and land clipping
-uniform sampler2D bathymetryTexture;
-uniform vec4 bathyBounds;
-uniform vec4 datasetBounds;
-uniform float verticalExaggeration;
-uniform float hasBathymetry;
-
 // Volume spatial transforms
 uniform sampler3D volumeData;
 uniform vec3 volumeOrigin;
@@ -162,37 +155,11 @@ void main() {
         }
 #endif
 
-        // Never sample above ocean surface (Y = 0)
-        if (position.y > 0.01) {
-            continue;
-        }
-
-        // Authoritative 2D bathymetric seafloor and land clipping
-        if (hasBathymetry > 0.5) {
-            float normX = clamp((position.x - volumeOrigin.x) / volumeSize.x, 0.0, 1.0);
-            float normZ = clamp((position.z - volumeOrigin.z) / volumeSize.z, 0.0, 1.0);
-            float lon = datasetBounds.x + normX * (datasetBounds.y - datasetBounds.x);
-            float lat = datasetBounds.z + normZ * (datasetBounds.w - datasetBounds.z);
-
-            float bathyU = (lon - bathyBounds.x) / (bathyBounds.y - bathyBounds.x);
-            float bathyV = (lat - bathyBounds.z) / (bathyBounds.w - bathyBounds.z);
-
-            float localSeabedDepth = texture(bathymetryTexture, clamp(vec2(bathyU, bathyV), 0.0, 1.0)).r;
-            float samplePhysicalDepth = max(0.0, (-position.y / verticalExaggeration) * 1000.0);
-
-            // Discard samples on land (<= 20m) or deeper than the local seafloor
-            if (localSeabedDepth <= 20.0 || samplePhysicalDepth > localSeabedDepth) {
-                continue;
-            }
-        }
-
         float sampledValue = sampleVolume(position);
         float scaledValue = sampledValue * valueMultiplier + valueAdded;
 
         // Discard NaN/masked voxels (encoded as 0.0) below minCutoffValue
-        if (scaledValue < minCutoffValue || scaledValue > maxCutoffValue) {
-            continue;
-        }
+        stepWeight *= step(minCutoffValue, scaledValue) * step(scaledValue, maxCutoffValue);
 
         // Normalize for palette lookup
         float normalizedValue = clamp((scaledValue - minPaletteValue) / max(maxPaletteValue - minPaletteValue, 1e-6), 0.0, 1.0);
@@ -253,12 +220,6 @@ export default class VolumeRenderer extends THREE.Mesh {
         extinctionCoefficient: { value: 0.20 },
         extinctionMultiplier:  { value: 1.0 },
         alphaMultiplier:       { value: 0.85 },
-
-        bathymetryTexture:     { value: null },
-        bathyBounds:           { value: new THREE.Vector4(84.105, 92.993, 16.071, 23.524) },
-        datasetBounds:         { value: new THREE.Vector4(84.167, 92.917, 16.083, 23.500) },
-        verticalExaggeration:  { value: 70.0 },
-        hasBathymetry:         { value: 0.0 },
     };
 
     constructor(options = {}) {
@@ -298,11 +259,6 @@ export default class VolumeRenderer extends THREE.Mesh {
             extinctionCoefficient: this.uniforms.extinctionCoefficient,
             extinctionMultiplier:  this.uniforms.extinctionMultiplier,
             alphaMultiplier:       this.uniforms.alphaMultiplier,
-            bathymetryTexture:     this.uniforms.bathymetryTexture,
-            bathyBounds:           this.uniforms.bathyBounds,
-            datasetBounds:         this.uniforms.datasetBounds,
-            verticalExaggeration:  this.uniforms.verticalExaggeration,
-            hasBathymetry:         this.uniforms.hasBathymetry,
         };
 
         if (this.material) {

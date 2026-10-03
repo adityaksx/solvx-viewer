@@ -73,14 +73,113 @@ const puppeteer = require('puppeteer');
     });
     await new Promise(r => setTimeout(r, 1500));
 
-    // 4. Test interactive probe click
+    // 4. Test Preset: Ocean Only (Test A)
+    console.log('Testing Preset: Ocean Only...');
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app && app.gui) {
+            app.gui.params.showOcean = true;
+            app.gui.params.showSeabed = false;
+            app.gui.params.showLand = false;
+            app.gui.params.showCoastline = false;
+            app.gui.syncLayerVisibility();
+        }
+    });
+    await new Promise(r => setTimeout(r, 1500));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_ocean_only.png' });
+    console.log('Captured screenshot_ocean_only.png');
+
+    // 5. Test Preset: Seabed Only (Test B)
+    console.log('Testing Preset: Seabed Only...');
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app && app.gui) {
+            app.gui.params.showOcean = false;
+            app.gui.params.showSeabed = true;
+            app.gui.params.showLand = false;
+            app.gui.params.showCoastline = true;
+            app.gui.syncLayerVisibility();
+        }
+    });
+    await new Promise(r => setTimeout(r, 1500));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_seabed_only.png' });
+    console.log('Captured screenshot_seabed_only.png');
+
+    // 6. Test Preset: Land + Seabed (Test C)
+    console.log('Testing Preset: Land + Seabed...');
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app && app.gui) {
+            app.gui.params.showOcean = false;
+            app.gui.params.showSeabed = true;
+            app.gui.params.showLand = true;
+            app.gui.params.showCoastline = true;
+            app.gui.syncLayerVisibility();
+        }
+    });
+    await new Promise(r => setTimeout(r, 1500));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_land_seabed.png' });
+    console.log('Captured screenshot_land_seabed.png');
+
+    // Restore All Layers
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app && app.gui) {
+            app.gui.params.showOcean = true;
+            app.gui.params.showSeabed = true;
+            app.gui.params.showLand = true;
+            app.gui.params.showCoastline = true;
+            app.gui.syncLayerVisibility();
+        }
+    });
+    await new Promise(r => setTimeout(r, 1000));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_all_layers.png' });
+    console.log('Captured screenshot_all_layers.png');
+
+    // 7. Test Vertical Exaggeration 10x
+    console.log('Testing Vertical Exaggeration 10x...');
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app) {
+            app.gui.params.verticalExaggeration = 10;
+            app.onExaggerationChange(10);
+        }
+    });
+    await new Promise(r => setTimeout(r, 2000));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_10x.png' });
+    console.log('Captured screenshot_10x.png');
+
+    // 8. Test Vertical Exaggeration 1x
+    console.log('Testing Vertical Exaggeration 1x...');
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app) {
+            app.gui.params.verticalExaggeration = 1;
+            app.onExaggerationChange(1);
+        }
+    });
+    await new Promise(r => setTimeout(r, 2000));
+    await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_1x.png' });
+    console.log('Captured screenshot_1x.png');
+
+    // Restore 70x Exaggeration
+    await page.evaluate(() => {
+        const app = window.appInstance;
+        if (app) {
+            app.gui.params.verticalExaggeration = 70;
+            app.onExaggerationChange(70);
+        }
+    });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 9. Test interactive probe click
     console.log('Testing interactive probe click...');
     await page.mouse.click(750, 420);
     await new Promise(r => setTimeout(r, 2000));
     await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_probe.png' });
     console.log('Captured screenshot_probe.png');
 
-    // 5. Test switching dataset to real temperature.nc
+    // 10. Test switching dataset to real temperature.nc
     console.log('Testing dataset switch to real temperature.nc...');
     await page.evaluate(() => {
         const app = window.appInstance;
@@ -92,7 +191,7 @@ const puppeteer = require('puppeteer');
     await page.screenshot({ path: 'solvx-volume-test/frontend/screenshot_real_temp.png' });
     console.log('Captured screenshot_real_temp.png');
 
-    // 6. Test diagnostic color mode (bathymetry)
+    // 11. Test diagnostic color mode (bathymetry)
     console.log('Testing diagnostic color mode (bathymetry)...');
     await page.evaluate(() => {
         const app = window.appInstance;

@@ -11,7 +11,6 @@ import { buildSeabedMesh } from './scene/seabed.js';
 import { buildCoastlines } from './scene/coastline.js';
 import { GeographicTransform } from './scene/geographicTransform.js';
 import { createOceanVolumeTexture } from './renderer/volumeTexture.js';
-import { createBathymetryTexture } from './renderer/bathymetryTexture.js';
 import { AppGui } from './controls/gui.js';
 import { OceanProbe } from './controls/controls.js';
 
@@ -27,7 +26,6 @@ class App {
         this.coastlineMesh = null;
         this.geometryData = null;
         this.bathymetryData = null;
-        this.bathymetryTextureObj = null;
         this.datasetMeta = null;
         this.geoConfig = null;
 
@@ -165,13 +163,6 @@ class App {
 
             this.geometryData = geomRes;
             this.bathymetryData = bathyRes;
-
-            if (this.bathymetryData) {
-                this.bathymetryTextureObj = createBathymetryTexture(this.bathymetryData);
-                if (this.oceanManager) {
-                    this.oceanManager.setBathymetry(this.bathymetryTextureObj);
-                }
-            }
 
             this.rebuildGeographicLayers();
 

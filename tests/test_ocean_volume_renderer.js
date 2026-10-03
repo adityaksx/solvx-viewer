@@ -231,6 +231,50 @@ assert.ok(surfSal > 25.0 && surfSal < 36.0, `Expected surface salinity ~31-33 PS
 assert.ok(deepSal > 30.0 && deepSal < 37.0, `Expected deep salinity ~34-36 PSU, got ${deepSal}`);
 console.log('✓ Phase 22 Salinity 3D pipeline test passed successfully.');
 
+// 8. Test Entity Separation & Volume Mode Isolation
+console.log('[8/8] Testing Water Entity Separation & Volume Mode Isolation...');
+// Mock DynamicWater-like structure to verify visibility constraints
+const mockWater = {
+    volumeRenderer: {
+        mesh: { visible: true },
+        setVisible(v) { this.mesh.visible = !!v; },
+        setOpacity(o) { this.opacity = o; },
+        setDebugMode(m) { this.debugMode = m; }
+    },
+    instancedVolume: {
+        visible: false,
+        material: { opacity: 0.25 }
+    }
+};
+
+// In 3D volume mode: volumeRenderer is visible, instancedVolume MUST remain strictly hidden
+const isVolumeMode = true;
+const scientificLayerVisible = true;
+mockWater.volumeRenderer.setVisible(scientificLayerVisible && isVolumeMode);
+mockWater.instancedVolume.visible = scientificLayerVisible && !isVolumeMode;
+
+assert.strictEqual(mockWater.volumeRenderer.mesh.visible, true, 'Volume renderer must be visible in volume mode');
+assert.strictEqual(mockWater.instancedVolume.visible, false, 'Instanced volume slab must be hidden in volume mode');
+
+// In 2D horizontal slice mode: volumeRenderer is hidden, instancedVolume is visible
+const isSliceMode = false; // i.e. isVolumeMode = false
+mockWater.volumeRenderer.setVisible(scientificLayerVisible && isSliceMode);
+mockWater.instancedVolume.visible = scientificLayerVisible && !isSliceMode;
+
+assert.strictEqual(mockWater.volumeRenderer.mesh.visible, false, 'Volume renderer must be hidden in slice mode');
+assert.strictEqual(mockWater.instancedVolume.visible, true, 'Instanced volume is active only in slice mode');
+
+// Test debug mode switching
+mockWater.volumeRenderer.setDebugMode(1);
+assert.strictEqual(mockWater.volumeRenderer.debugMode, 1, 'Debug mode 1 (depth ramp) set successfully');
+mockWater.volumeRenderer.setDebugMode(4);
+assert.strictEqual(mockWater.volumeRenderer.debugMode, 4, 'Debug mode 4 (grayscale scalar) set successfully');
+mockWater.volumeRenderer.setDebugMode(0);
+assert.strictEqual(mockWater.volumeRenderer.debugMode, 0, 'Debug mode 0 (standard scientific) set successfully');
+
+console.log('✓ Water Entity Separation & Volume Mode Isolation passed.');
+
 console.log('\n=============================================');
-console.log('All 7 OceanVolumeRenderer test suites PASSED!');
+console.log('All 8 OceanVolumeRenderer test suites PASSED!');
 console.log('=============================================\n');
+

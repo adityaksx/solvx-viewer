@@ -125,71 +125,15 @@ export class DynamicWater {
         const maxDepthVal = Math.max(...this.cells.map(c => c.depthM));
 
         const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-        
-        // Custom attribute to toggle between shader depth gradient and instance color
-        const useDepthArray = new Float32Array(this.cells.length);
-        useDepthArray.fill(1.0); // 1.0 = use depth gradient, 0.0 = use instance color
-        boxGeom.setAttribute('instanceUseDepth', new THREE.InstancedBufferAttribute(useDepthArray, 1));
-
-        // Actual bathymetric depth in meters, independent of rendered vertical exaggeration
-        const depthArray = new Float32Array(this.cells.length);
-        for (let i = 0; i < this.cells.length; i++) {
-            depthArray[i] = this.cells[i].depthM;
-        }
-        boxGeom.setAttribute('instanceDepth', new THREE.InstancedBufferAttribute(depthArray, 1));
-
         const boxMat = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            roughness: 0.2,
-            metalness: 0.15,
+            color: 0x4aa3df,
+            roughness: 0.3,
+            metalness: 0.1,
             transparent: true,
-            opacity: this.opacity,
+            opacity: 0.25,
             depthWrite: false,
             side: THREE.DoubleSide
         });
-
-        boxMat.onBeforeCompile = (shader) => {
-            shader.uniforms.surfaceColor = { value: new THREE.Color(0.18, 0.60, 0.85) };
-            shader.uniforms.deepColor = { value: new THREE.Color(0.08, 0.35, 0.55) };
-            shader.uniforms.minDepth = { value: minDepthVal };
-            shader.uniforms.maxDepth = { value: maxDepthVal };
-
-            shader.vertexShader = `
-                attribute float instanceUseDepth;
-                attribute float instanceDepth;
-                varying float vUseDepth;
-                varying float vInstanceDepth;
-                ${shader.vertexShader}
-            `.replace(
-                '#include <worldpos_vertex>',
-                `
-                #include <worldpos_vertex>
-                vUseDepth = instanceUseDepth;
-                vInstanceDepth = instanceDepth;
-                `
-            );
-
-            shader.fragmentShader = `
-                uniform vec3 surfaceColor;
-                uniform vec3 deepColor;
-                uniform float minDepth;
-                uniform float maxDepth;
-                varying float vUseDepth;
-                varying float vInstanceDepth;
-                ${shader.fragmentShader}
-            `.replace(
-                '#include <color_fragment>',
-                `
-                #include <color_fragment>
-                
-                if (vUseDepth > 0.5) {
-                    float depthRange = max(maxDepth - minDepth, 0.000001);
-                    float t = clamp((vInstanceDepth - minDepth) / depthRange, 0.0, 1.0);
-                    diffuseColor.rgb = mix(surfaceColor, deepColor, t);
-                }
-                `
-            );
-        };
 
         this.instancedVolume = new THREE.InstancedMesh(boxGeom, boxMat, this.cells.length);
         const dummy = new THREE.Object3D();
@@ -211,18 +155,21 @@ export class DynamicWater {
         }
         this.instancedVolume.userData = { isWater: true, cells: this.cells };
         this.instancedVolume.renderOrder = 5;
+        this.instancedVolume.visible = false; // Strictly hidden by default in 3D volume mode
         this.group.add(this.instancedVolume);
     }
 
     setOpacity(opacity) {
         this.opacity = Number(opacity);
+        if (this.volumeRenderer) {
+            this.volumeRenderer.setOpacity(this.opacity);
+        }
         if (this.instancedVolume?.material) {
             this.instancedVolume.material.opacity = this.opacity;
             const isVolumeActive = this.volumeRenderer && this.volumeRenderer.mesh && this.volumeRenderer.mesh.visible;
-            this.instancedVolume.visible = !isVolumeActive && (this.opacity > 0.01);
-        }
-        if (this.volumeRenderer) {
-            this.volumeRenderer.setOpacity(this.opacity);
+            if (isVolumeActive) {
+                this.instancedVolume.visible = false;
+            }
         }
     }
 
@@ -232,14 +179,13 @@ export class DynamicWater {
 
     recolorCells(colorFunc, sliceDepthM = 0) {
         if (!this.instancedVolume) return;
-        const dummy = new THREE.Object3D();
-
-        const geom = this.instancedVolume.geometry;
-        let useDepthAttr = geom.getAttribute('instanceUseDepth');
-        if (!useDepthAttr) {
-            useDepthAttr = new THREE.InstancedBufferAttribute(new Float32Array(this.cells.length), 1);
-            geom.setAttribute('instanceUseDepth', useDepthAttr);
+        // In 3D volume mode, the volumetric ray-marcher is active: instanced cells must remain strictly inactive & hidden
+        if (this.volumeRenderer?.mesh?.visible) {
+            this.instancedVolume.visible = false;
+            return;
         }
+
+        const dummy = new THREE.Object3D();
 
         for (let i = 0; i < this.cells.length; i++) {
             const c = this.cells[i];
@@ -250,7 +196,6 @@ export class DynamicWater {
                 dummy.scale.set(0, 0, 0);
                 dummy.updateMatrix();
                 this.instancedVolume.setMatrixAt(i, dummy.matrix);
-                useDepthAttr.setX(i, 0.0);
                 continue;
             }
 
@@ -261,23 +206,18 @@ export class DynamicWater {
                 dummy.scale.set(c.sx, c.h, c.sz);
                 dummy.updateMatrix();
                 this.instancedVolume.setMatrixAt(i, dummy.matrix);
-                useDepthAttr.setX(i, 0.0);
             } else {
-                // Default depth gradient enabled via shader attribute
-                _tempCol.setRGB(1, 1, 1);
-                this.instancedVolume.setColorAt(i, _tempCol);
+                // If out of bounds, land, or invalid data, collapse instance
                 dummy.position.set(c.x, -c.h / 2, c.z);
-                dummy.scale.set(c.sx, c.h, c.sz);
+                dummy.scale.set(0, 0, 0);
                 dummy.updateMatrix();
                 this.instancedVolume.setMatrixAt(i, dummy.matrix);
-                useDepthAttr.setX(i, 1.0);
             }
         }
         this.instancedVolume.instanceMatrix.needsUpdate = true;
         if (this.instancedVolume.instanceColor) {
             this.instancedVolume.instanceColor.needsUpdate = true;
         }
-        useDepthAttr.needsUpdate = true;
     }
 
     dispose() {

@@ -186,8 +186,15 @@ export class ScalarVisualizer {
         this.range = { lo, hi };
         updateLegendUI(this.variable, lo, hi, dataArray?.units || '');
 
-        // Recolor volume cells at selected depth level
-        this.applyVolumeColors(depthM);
+        if (mode === 'volume') {
+            // Strictly deactivate and hide legacy instanced water columns in 3D volume mode
+            if (this.water?.instancedVolume) {
+                this.water.instancedVolume.visible = false;
+            }
+        } else {
+            // Recolor volume cells at selected depth level for horizontal slice mode
+            this.applyVolumeColors(depthM);
+        }
         this.updateSliceTexture(depthM, mode);
     }
 
@@ -286,7 +293,7 @@ export class ScalarVisualizer {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
-            if (this.water?.instancedVolume) this.water.instancedVolume.visible = true;
+            if (this.water?.instancedVolume) this.water.instancedVolume.visible = (mode !== 'volume');
             return;
         }
 
@@ -294,13 +301,16 @@ export class ScalarVisualizer {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
-            if (this.water?.instancedVolume) this.water.instancedVolume.visible = true;
+            if (this.water?.instancedVolume) this.water.instancedVolume.visible = (mode !== 'volume');
             return;
         }
 
         if (mode === 'volume') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
+            if (this.water?.instancedVolume) {
+                this.water.instancedVolume.visible = false;
+            }
 
             const vals = this.currentData?.values;
             const is3D = Array.isArray(vals) && Array.isArray(vals[0]) && Array.isArray(vals[0][0]);
@@ -336,9 +346,8 @@ export class ScalarVisualizer {
                 if (this.water?.volumeRenderer) {
                     this.water.volumeRenderer.setVisible(false);
                 }
-                if (this.water) {
-                    this.water.setOpacity(0.45);
-                    if (this.water.instancedVolume) this.water.instancedVolume.visible = true;
+                if (this.water?.instancedVolume) {
+                    this.water.instancedVolume.visible = false;
                 }
             }
             return;
@@ -470,6 +479,8 @@ export class ScalarVisualizer {
     sliceAtDepth(depthM, mode = 'slice') {
         if (mode === 'volume') {
             // In 3D volume mode, the volumetric ray marcher already samples and visualizes all depth levels
+            if (this.water?.instancedVolume) this.water.instancedVolume.visible = false;
+            if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(true);
             return;
         }
         this.applyVolumeColors(depthM);

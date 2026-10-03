@@ -370,6 +370,33 @@ export class OceanScene {
         }
     }
 
+    logSceneInventory() {
+        console.group('[SolvX 3D Scene Inventory]');
+        const items = [];
+        this.root.traverse((obj) => {
+            if (obj.isMesh || obj.isInstancedMesh || obj.isPoints || obj.isLine) {
+                const info = {
+                    name: obj.name || (obj.isInstancedMesh ? 'InstancedMesh (water columns)' : (obj.userData?.isWater ? 'Water Mesh' : obj.type)),
+                    type: obj.type,
+                    visible: obj.visible,
+                    parentVisible: obj.parent ? obj.parent.visible : true,
+                    renderOrder: obj.renderOrder,
+                    isWater: !!obj.userData?.isWater,
+                    hasData3D: !!obj.material?.uniforms?.uHasData3D?.value,
+                    opacity: obj.material?.opacity ?? obj.material?.uniforms?.uGlobalOpacity?.value ?? 1.0,
+                    transparent: !!obj.material?.transparent
+                };
+                items.push(info);
+                console.log(`[Mesh] ${info.name}: type=${info.type}, visible=${info.visible}, renderOrder=${info.renderOrder}, opacity=${info.opacity}, transparent=${info.transparent}`);
+            }
+        });
+        if (console.table) {
+            console.table(items);
+        }
+        console.groupEnd();
+        return items;
+    }
+
     destroy() {
         if (this.animId) cancelAnimationFrame(this.animId);
         window.removeEventListener('resize', this.onResize.bind(this));

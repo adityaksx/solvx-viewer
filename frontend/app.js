@@ -397,12 +397,12 @@ class SolvXApp {
 
     applyLayerVisibility(layer, visible) {
         if (layer === 'scientific') {
+            const isVolumeMode = this.activeDepthMode === 'volume';
             if (this.water?.volumeRenderer) {
-                this.water.volumeRenderer.setVisible(visible && this.activeDepthMode === 'volume');
+                this.water.volumeRenderer.setVisible(visible && isVolumeMode);
             }
             if (this.water?.instancedVolume) {
-                const showInstanced = visible && (this.activeDepthMode !== 'volume' || !this.water?.volumeRenderer?.mesh?.visible);
-                this.water.instancedVolume.visible = showInstanced;
+                this.water.instancedVolume.visible = visible && !isVolumeMode;
             }
         } else if (layer === 'observations') {
             if (this.argoMarkersGroup) this.argoMarkersGroup.visible = visible;
@@ -644,6 +644,15 @@ class SolvXApp {
         }
 
         this.scene.fitCamera();
+        
+        // Expose debug & inspection references on window
+        if (typeof window !== 'undefined') {
+            window.solvxScene = this.scene;
+            window.solvxWater = this.water;
+            window.solvxVolumeRenderer = this.water?.volumeRenderer;
+            window.solvxApp = this;
+            window.solvxSceneInventory = () => this.scene.logSceneInventory();
+        }
     }
 
     buildArgoMarkers(observations, bounds) {
@@ -1358,6 +1367,7 @@ class SolvXApp {
     onDepthModeChange(mode, depthM) {
         this.activeDepthMode = mode;
         this.activeDepth = depthM;
+        this.applyLayerVisibility('scientific', this.layerState.scientific);
         if (mode === 'volume' || mode === 'vertical') {
             this.loadTimelineBundle(this.activeTime);
         } else {

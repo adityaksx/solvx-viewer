@@ -24,6 +24,7 @@ export class DynamicWater {
         // 3D Ocean Volume Ray-Marching Renderer
         this.volumeRenderer = new OceanVolumeRenderer(this.bathymetry, this.sceneManager, {
             bathyTex: this.bathyTex,
+            bathyBounds: this.bounds,
             opacity: this.opacity
         });
         this.renderer = this.volumeRenderer; // Alias
@@ -85,6 +86,18 @@ export class DynamicWater {
     setDebugMode(mode, sliceDepthM = 0.49) {
         if (this.volumeRenderer) {
             this.volumeRenderer.setDebugMode(mode, sliceDepthM);
+        }
+    }
+
+    setClipDepth(depthM) {
+        if (this.volumeRenderer) {
+            this.volumeRenderer.setClipDepth(depthM);
+        }
+    }
+
+    setTransferFunction(baseAlpha, transferLow, transferHigh, opacityScale) {
+        if (this.volumeRenderer) {
+            this.volumeRenderer.setTransferFunction(baseAlpha, transferLow, transferHigh, opacityScale);
         }
     }
 

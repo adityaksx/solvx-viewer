@@ -11,7 +11,9 @@ import {
     latitudeToWorldX,
     longitudeToWorldX,
     latitudeToWorldZ,
-    sampleFieldAtDepth
+    sampleFieldAtDepth,
+    buildOpacityMapTexture,
+    OceanVolumeRenderer
 } from '../frontend/scene/oceanVolumeRenderer.js';
 import { OceanVariableDataset } from '../frontend/visualization/OceanVariableDataset.js';
 
@@ -513,8 +515,98 @@ assert.ok(centralBaySurface > 28.0, `Central Bay of Bengal surface must be > 28�
 
 console.log('✓ 5 Points × 6 Depths Fixed-Depth Validation Matrix PASSED.');
 
+// 15. Test Decoupled Opacity Transfer Function and Volumetric Controls (Sections 24, 25, 28)
+console.log('[15/15] Testing Decoupled Opacity Transfer Function & OceanVolumeRenderer Controls...');
+// 15a. Test buildOpacityMapTexture dimensions and values
+const opacityTexDefault = buildOpacityMapTexture(0.0, 1.0);
+assert.ok(opacityTexDefault, 'buildOpacityMapTexture should return a DataTexture');
+assert.strictEqual(opacityTexDefault.image.width, 256);
+assert.strictEqual(opacityTexDefault.image.height, 1);
+assert.ok(opacityTexDefault.image.data.length === 256 * 4);
+
+// At t=0 (index 0), density should be baseline ~0.15 (0.15 * 255 = 38)
+assert.strictEqual(opacityTexDefault.image.data[0], 38);
+// At t=1 (index 255), density should be 1.0 (255)
+assert.strictEqual(opacityTexDefault.image.data[255 * 4], 255);
+
+// Test windowed transfer function: transferLow=0.3, transferHigh=0.8
+const opacityTexWindowed = buildOpacityMapTexture(0.3, 0.8);
+// Below low (e.g. index 0), density should be attenuated (0)
+assert.strictEqual(opacityTexWindowed.image.data[0], 0);
+// Above high (e.g. index 255), density should be 1.0 (255)
+assert.strictEqual(opacityTexWindowed.image.data[255 * 4], 255);
+// At midpoint ~0.55 (index ~140), density should be ~0.65
+const midByte = opacityTexWindowed.image.data[140 * 4];
+assert.ok(midByte > 100 && midByte < 220, `Expected mid density byte between 100 and 220, got ${midByte}`);
+
+opacityTexDefault.dispose();
+opacityTexWindowed.dispose();
+
+// 15b. Test OceanVolumeRenderer constructor, uniforms, clipping, and transfer function updates
+const mockBathymetry = {
+    bounds: [84.0, 93.0, 16.0, 24.0],
+    terrain: {
+        x: new Float32Array([0, 100]),
+        y: new Float32Array([0, 100]),
+        rawDepthKm: [[1.0, 2.0], [3.0, 4.0]]
+    }
+};
+
+const renderer = new OceanVolumeRenderer(mockBathymetry, null, {
+    opacity: 0.75,
+    opacityScale: 1.5,
+    transferLow: 0.1,
+    transferHigh: 0.9
+});
+
+assert.strictEqual(renderer.opacity, 0.75);
+assert.strictEqual(renderer.opacityScale, 1.5);
+assert.strictEqual(renderer.transferLow, 0.1);
+assert.strictEqual(renderer.transferHigh, 0.9);
+assert.strictEqual(renderer.material.uniforms.uGlobalOpacity.value, 0.75);
+assert.strictEqual(renderer.material.uniforms.uOpacityScale.value, 1.5);
+assert.ok(renderer.material.uniforms.uOpacityMap.value, 'uOpacityMap uniform must be set');
+
+// Test setClipDepth
+renderer.setClipDepth(200);
+assert.strictEqual(renderer.clipMaxDepthM, 200);
+assert.strictEqual(renderer.material.uniforms.uClipMaxDepthM.value, 200);
+const expectedFrac = 200 / renderer.maxDepthM;
+assert.ok(Math.abs(renderer.material.uniforms.u_clipMaxDepthFrac.value - expectedFrac) < 1e-4);
+
+// Test setBounds
+renderer.setBounds([85.0, 91.0, 17.0, 22.0], [84.0, 92.0, 16.0, 23.0]);
+assert.deepStrictEqual(renderer.scalarBounds, [85.0, 91.0, 17.0, 22.0]);
+assert.strictEqual(renderer.material.uniforms.uScalarBounds.value.x, 85.0);
+assert.strictEqual(renderer.material.uniforms.uBathyBounds.value.x, 84.0);
+
+// Test setTransferFunction
+const oldTex = renderer.opacityMapTexture;
+renderer.setTransferFunction(0.05, 0.2, 0.7, 2.0);
+assert.strictEqual(renderer.opacityScale, 2.0);
+assert.strictEqual(renderer.material.uniforms.uOpacityScale.value, 2.0);
+assert.strictEqual(renderer.transferLow, 0.2);
+assert.strictEqual(renderer.transferHigh, 0.7);
+assert.notStrictEqual(renderer.opacityMapTexture, oldTex, 'opacityMapTexture should be rebuilt on range change');
+
+// Test debug mode switching (Modes 0 through 7)
+for (let mode = 0; mode <= 7; mode++) {
+    renderer.setDebugMode(mode, 50.0);
+    assert.strictEqual(renderer.material.uniforms.uDebugMode.value, mode);
+    assert.strictEqual(renderer.material.uniforms.uDebugSliceDepthM.value, 50.0);
+}
+
+// Test volumeTexture getter
+assert.strictEqual(renderer.volumeTexture, renderer.data3DTexture);
+
+// Clean up
+renderer.dispose();
+assert.strictEqual(renderer.mesh, null);
+assert.strictEqual(renderer.opacityMapTexture, null);
+console.log('✓ Decoupled Opacity Transfer Function & OceanVolumeRenderer controls passed.');
+
 console.log('\n==============================================');
-console.log('All 14 OceanVolumeRenderer & Dataset test suites PASSED!');
+console.log('All 15 OceanVolumeRenderer & Dataset test suites PASSED!');
 console.log('==============================================\n');
 
 

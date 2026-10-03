@@ -121,6 +121,41 @@ function buildColorMapTexture(variable, lo, hi) {
 }
 
 /**
+ * Builds a 256x1 DataTexture for decoupled scalar-to-opacity transfer function (Section 24 & 25).
+ * Generates density profile for step-size-aware physical accumulation.
+ */
+export function buildOpacityMapTexture(transferLow = 0.0, transferHigh = 1.0) {
+    const width = 256;
+    const data = new Uint8Array(width * 4);
+    const lo = Math.max(0.0, Math.min(1.0, transferLow));
+    const hi = Math.max(lo + 1e-4, Math.min(1.0, transferHigh));
+
+    for (let i = 0; i < width; i++) {
+        const t = i / (width - 1);
+        let s = (t - lo) / (hi - lo);
+        s = Math.max(0.0, Math.min(1.0, s));
+        const smoothS = s * s * (3.0 - 2.0 * s);
+        // Base density 0.15 + 0.85 * smoothS across the scalar range
+        let density = 0.15 + 0.85 * smoothS;
+        if (lo > 0.01 && t < lo) {
+            density = 0.15 * Math.max(0.0, t / lo);
+        }
+        const byteVal = Math.round(Math.max(0, Math.min(1, density)) * 255);
+        data[i * 4 + 0] = byteVal;
+        data[i * 4 + 1] = byteVal;
+        data[i * 4 + 2] = byteVal;
+        data[i * 4 + 3] = 255;
+    }
+    const tex = new THREE.DataTexture(data, width, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate = true;
+    return tex;
+}
+
+/**
  * Geographic <-> Scene World coordinate conversion helpers (Phase 7).
  * In SolvX:
  * - Three.js X = Northing (Latitude direction, km)
@@ -177,18 +212,25 @@ export class OceanVolumeRenderer {
         this.options = options;
 
         this.maxDepthM = 541.089; // Default max depth of 4D model
+        this.clipMaxDepthM = options.clipMaxDepthM != null ? options.clipMaxDepthM : this.maxDepthM;
         this.opacity = options.opacity != null ? options.opacity : 0.55;
         this.baseAlpha = options.baseAlpha != null ? options.baseAlpha : 0.035;
+        this.opacityScale = options.opacityScale != null ? options.opacityScale : 1.0;
         this.transferLow = options.transferLow != null ? options.transferLow : 0.0;
         this.transferHigh = options.transferHigh != null ? options.transferHigh : 1.0;
         this.variable = 'ocean_temperature';
         this.valLo = 9.0;
         this.valHi = 31.0;
 
+        this.scalarBounds = options.scalarBounds || [84.167, 92.917, 16.083, 23.500];
+        this.bathyBounds = options.bathyBounds || (bathymetry?.bounds ? [...bathymetry.bounds] : [84.167, 92.917, 16.083, 23.500]);
+
         this.data3DTexture = null;
         this.colorMapTexture = null;
+        this.opacityMapTexture = null;
         this.bathyTex = options.bathyTex || null;
         this.lastValues3D = null;
+        this.dataset = null;
 
         // Default 32 depth levels matching INCOIS/NEMO 4D model
         this.depthLevels = [
@@ -209,6 +251,7 @@ export class OceanVolumeRenderer {
         }
 
         this.colorMapTexture = buildColorMapTexture(this.variable, this.valLo, this.valHi);
+        this.opacityMapTexture = buildOpacityMapTexture(this.transferLow, this.transferHigh);
 
         this.material = new THREE.ShaderMaterial({
             glslVersion: THREE.GLSL3,
@@ -220,11 +263,17 @@ export class OceanVolumeRenderer {
                 uData3D: { value: null },
                 uHasData3D: { value: false },
                 uColorMap: { value: this.colorMapTexture },
+                uOpacityMap: { value: this.opacityMapTexture },
+                uOpacityScale: { value: this.opacityScale },
                 uBathyTex: { value: this.bathyTex },
                 uHasBathyTex: { value: this.bathyTex ? true : false },
+                uScalarBounds: { value: new THREE.Vector4(this.scalarBounds[0], this.scalarBounds[1], this.scalarBounds[2], this.scalarBounds[3]) },
+                uBathyBounds: { value: new THREE.Vector4(this.bathyBounds[0], this.bathyBounds[1], this.bathyBounds[2], this.bathyBounds[3]) },
                 uDepthLevels: { value: depthUniformArray },
                 uDepthCount: { value: 32 },
                 uMaxDepthM: { value: this.maxDepthM },
+                uClipMaxDepthM: { value: this.clipMaxDepthM },
+                u_clipMaxDepthFrac: { value: 1.0 },
                 uValLo: { value: this.valLo },
                 uValHi: { value: this.valHi },
                 uGlobalOpacity: { value: this.opacity },
@@ -255,12 +304,19 @@ export class OceanVolumeRenderer {
                 uniform sampler3D uData3D;
                 uniform bool uHasData3D;
                 uniform sampler2D uColorMap;
+                uniform sampler2D uOpacityMap;
+                uniform float uOpacityScale;
                 uniform sampler2D uBathyTex;
                 uniform bool uHasBathyTex;
+
+                uniform vec4 uScalarBounds;
+                uniform vec4 uBathyBounds;
 
                 uniform float uDepthLevels[32];
                 uniform int uDepthCount;
                 uniform float uMaxDepthM;
+                uniform float uClipMaxDepthM;
+                uniform float u_clipMaxDepthFrac;
                 uniform float uValLo;
                 uniform float uValHi;
                 uniform float uGlobalOpacity;
@@ -286,8 +342,19 @@ export class OceanVolumeRenderer {
                     return true;
                 }
 
+                vec2 getBathyUv(float normLon, float normLat) {
+                    if (uBathyBounds.y > uBathyBounds.x && uScalarBounds.y > uScalarBounds.x) {
+                        float lon = mix(uScalarBounds.x, uScalarBounds.y, normLon);
+                        float lat = mix(uScalarBounds.z, uScalarBounds.w, normLat);
+                        float u = clamp((lon - uBathyBounds.x) / (uBathyBounds.y - uBathyBounds.x), 0.0, 1.0);
+                        float v = clamp((lat - uBathyBounds.z) / (uBathyBounds.w - uBathyBounds.z), 0.0, 1.0);
+                        return vec2(u, v);
+                    }
+                    return vec2(normLon, normLat);
+                }
+
                 void main() {
-                    if (!uHasData3D) {
+                    if (!uHasData3D || uGlobalOpacity <= 0.0001) {
                         discard;
                     }
 
@@ -309,6 +376,9 @@ export class OceanVolumeRenderer {
                     // Analytical ray-plane intersection directly at requested physical depth (Section 6 & 18)
                     if (uDebugMode == 5) {
                         float targetDepth = clamp(uDebugSliceDepthM, 0.0, uMaxDepthM);
+                        if (targetDepth > uClipMaxDepthM) {
+                            discard;
+                        }
                         float yTarget = 0.5 - (targetDepth / max(uMaxDepthM, 1.0));
 
                         if (abs(rd.y) > 1e-6) {
@@ -319,7 +389,8 @@ export class OceanVolumeRenderer {
                                 float normLon = clamp(pSlice.z + 0.5, 0.0, 1.0);
 
                                 if (uHasBathyTex) {
-                                    float seabedM = texture(uBathyTex, vec2(normLon, normLat)).r * 6000.0;
+                                    vec2 bathyUv = getBathyUv(normLon, normLat);
+                                    float seabedM = texture(uBathyTex, bathyUv).r * 6000.0;
                                     if (seabedM < 0.5 || targetDepth > seabedM) {
                                         discard;
                                     }
@@ -377,10 +448,17 @@ export class OceanVolumeRenderer {
                         float normLon = clamp(p.z + 0.5, 0.0, 1.0);
                         float depthM = clamp((0.5 - p.y) * uMaxDepthM, 0.0, uMaxDepthM);
 
+                        // Depth clipping
+                        if (depthM > uClipMaxDepthM) {
+                            p += stepVec;
+                            continue;
+                        }
+
                         // Seabed clipping via bathymetry texture
                         float seabedM = 6000.0;
                         if (uHasBathyTex) {
-                            seabedM = texture(uBathyTex, vec2(normLon, normLat)).r * 6000.0;
+                            vec2 bathyUv = getBathyUv(normLon, normLat);
+                            seabedM = texture(uBathyTex, bathyUv).r * 6000.0;
                             // If land or sample is beneath seabed floor, skip
                             if (seabedM < 0.5 || depthM > seabedM) {
                                 p += stepVec;
@@ -392,33 +470,33 @@ export class OceanVolumeRenderer {
                         // Mode 1: Normalized depth (surface = 0/black, bottom = 1/white)
                         if (uDebugMode == 1) {
                             float normD = clamp(depthM / max(uMaxDepthM, 1.0), 0.0, 1.0);
-                            float stepA = clamp(uBaseAlpha * uGlobalOpacity * 1.5, 0.0, 1.0);
+                            float stepA = 1.0 - exp(-dt * uOpacityScale * uGlobalOpacity * 30.0);
                             float w = (1.0 - accColor.a) * stepA;
                             accColor.rgb += vec3(normD) * w;
                             accColor.a += w;
-                            if (accColor.a >= 0.95) break;
+                            if (accColor.a >= 0.98) break;
                             p += stepVec;
                             continue;
                         }
 
                         // Mode 2: Normalized longitude (West = 0/black, East = 1/white)
                         if (uDebugMode == 2) {
-                            float stepA = clamp(uBaseAlpha * uGlobalOpacity * 1.5, 0.0, 1.0);
+                            float stepA = 1.0 - exp(-dt * uOpacityScale * uGlobalOpacity * 30.0);
                             float w = (1.0 - accColor.a) * stepA;
                             accColor.rgb += vec3(normLon) * w;
                             accColor.a += w;
-                            if (accColor.a >= 0.95) break;
+                            if (accColor.a >= 0.98) break;
                             p += stepVec;
                             continue;
                         }
 
                         // Mode 3: Normalized latitude (South = 0/black, North = 1/white)
                         if (uDebugMode == 3) {
-                            float stepA = clamp(uBaseAlpha * uGlobalOpacity * 1.5, 0.0, 1.0);
+                            float stepA = 1.0 - exp(-dt * uOpacityScale * uGlobalOpacity * 30.0);
                             float w = (1.0 - accColor.a) * stepA;
                             accColor.rgb += vec3(normLat) * w;
                             accColor.a += w;
-                            if (accColor.a >= 0.95) break;
+                            if (accColor.a >= 0.98) break;
                             p += stepVec;
                             continue;
                         }
@@ -454,12 +532,12 @@ export class OceanVolumeRenderer {
 
                         // Mode 7: Invalid-data / NaN mask
                         if (uDebugMode == 7) {
-                            vec3 col = hasValidData ? vec3(0.2, 0.5, 0.8) : vec3(1.0, 0.0, 0.8);
-                            float a = hasValidData ? (0.015 * uGlobalOpacity) : (0.12 * uGlobalOpacity);
+                            vec3 col = hasValidData ? vec3(0.1, 0.7, 0.3) : vec3(0.9, 0.1, 0.1);
+                            float a = hasValidData ? (0.02 * uGlobalOpacity) : (0.15 * uGlobalOpacity);
                             float w = (1.0 - accColor.a) * a;
                             accColor.rgb += col * w;
                             accColor.a += w;
-                            if (accColor.a >= 0.95) break;
+                            if (accColor.a >= 0.98) break;
                             p += stepVec;
                             continue;
                         }
@@ -479,29 +557,26 @@ export class OceanVolumeRenderer {
 
                             // Mode 4: Raw normalized scalar (grayscale)
                             if (uDebugMode == 4) {
-                                float stepA = clamp(uBaseAlpha * uGlobalOpacity, 0.0, 1.0);
+                                float density = texture(uOpacityMap, vec2(normVal, 0.5)).r;
+                                float stepA = 1.0 - exp(-density * dt * uOpacityScale * uGlobalOpacity * 60.0);
                                 float weight = (1.0 - accColor.a) * stepA;
                                 accColor.rgb += vec3(normVal) * weight;
                                 accColor.a += weight;
-                                if (accColor.a >= 0.95) break;
+                                if (accColor.a >= 0.98) break;
                                 p += stepVec;
                                 continue;
                             }
 
-                            // Mode 0: Normal scientific scalar volume rendering (Section 12, 13, 14)
+                            // Mode 0: Normal scientific scalar volume rendering (Section 12, 13, 14, 24, 25)
                             vec4 sampleCol = texture(uColorMap, vec2(normVal, 0.5));
-
-                            // Transfer function reveals internal thermal structures without opacity saturation
-                            float scalarVisibility = smoothstep(uTransferLow, uTransferHigh, normVal);
-                            float transferWeight = 0.12 + 0.88 * scalarVisibility;
-                            float stepA = clamp(uBaseAlpha * transferWeight * uGlobalOpacity, 0.0, 1.0);
+                            float density = texture(uOpacityMap, vec2(normVal, 0.5)).r;
+                            float sampleAlpha = 1.0 - exp(-density * dt * uOpacityScale * uGlobalOpacity * 60.0);
 
                             // Front-to-back accumulation
-                            float weight = (1.0 - accColor.a) * stepA;
-                            accColor.rgb += sampleCol.rgb * weight;
-                            accColor.a += weight;
+                            accColor.rgb += (1.0 - accColor.a) * sampleCol.rgb * sampleAlpha;
+                            accColor.a   += (1.0 - accColor.a) * sampleAlpha;
 
-                            if (accColor.a >= 0.95) break;
+                            if (accColor.a >= 0.98) break;
                         }
 
                         p += stepVec;
@@ -554,11 +629,42 @@ export class OceanVolumeRenderer {
         }
     }
 
+    get volumeTexture() {
+        return this.data3DTexture;
+    }
+
     setBathyTex(tex) {
         this.bathyTex = tex;
         if (this.material?.uniforms?.uBathyTex) {
             this.material.uniforms.uBathyTex.value = tex;
             this.material.uniforms.uHasBathyTex.value = !!tex;
+        }
+    }
+
+    setBounds(scalarBounds, bathyBounds) {
+        if (scalarBounds && scalarBounds.length >= 4) {
+            this.scalarBounds = [scalarBounds[0], scalarBounds[1], scalarBounds[2], scalarBounds[3]];
+            if (this.material?.uniforms?.uScalarBounds) {
+                this.material.uniforms.uScalarBounds.value.set(...this.scalarBounds);
+            }
+        }
+        if (bathyBounds && bathyBounds.length >= 4) {
+            this.bathyBounds = [bathyBounds[0], bathyBounds[1], bathyBounds[2], bathyBounds[3]];
+            if (this.material?.uniforms?.uBathyBounds) {
+                this.material.uniforms.uBathyBounds.value.set(...this.bathyBounds);
+            }
+        }
+    }
+
+    setClipDepth(depthM) {
+        const d = Math.max(0.0, Math.min(this.maxDepthM, Number(depthM) || this.maxDepthM));
+        this.clipMaxDepthM = d;
+        const frac = d / Math.max(this.maxDepthM, 1.0);
+        if (this.material?.uniforms?.uClipMaxDepthM) {
+            this.material.uniforms.uClipMaxDepthM.value = d;
+        }
+        if (this.material?.uniforms?.u_clipMaxDepthFrac) {
+            this.material.uniforms.u_clipMaxDepthFrac.value = frac;
         }
     }
 
@@ -574,7 +680,19 @@ export class OceanVolumeRenderer {
             this.depthLevels = dataset.depthLevels;
         }
         this.maxDepthM = stats.depthMax || (this.depthLevels.length ? this.depthLevels[this.depthLevels.length - 1] : 541.089);
+        this.clipMaxDepthM = this.maxDepthM;
         this.variable = dataset.variable || this.variable;
+
+        if (dataset.longitudes?.length && dataset.latitudes?.length) {
+            const minLon = dataset.longitudes[0];
+            const maxLon = dataset.longitudes[dataset.longitudes.length - 1];
+            const minLat = dataset.latitudes[0];
+            const maxLat = dataset.latitudes[dataset.latitudes.length - 1];
+            this.scalarBounds = [minLon, maxLon, minLat, maxLat];
+            if (this.material?.uniforms?.uScalarBounds) {
+                this.material.uniforms.uScalarBounds.value.set(minLon, maxLon, minLat, maxLat);
+            }
+        }
 
         // Dispose previous 3D texture
         if (this.data3DTexture) {
@@ -590,6 +708,8 @@ export class OceanVolumeRenderer {
         }
         this.material.uniforms.uDepthCount.value = Math.min(32, this.depthLevels.length);
         this.material.uniforms.uMaxDepthM.value = this.maxDepthM;
+        this.material.uniforms.uClipMaxDepthM.value = this.clipMaxDepthM;
+        this.material.uniforms.u_clipMaxDepthFrac.value = 1.0;
 
         if (this.colorMapTexture) {
             this.colorMapTexture.dispose();
@@ -691,18 +811,34 @@ export class OceanVolumeRenderer {
         }
     }
 
-    setTransferFunction(baseAlpha, transferLow, transferHigh) {
+    setTransferFunction(baseAlpha, transferLow, transferHigh, opacityScale = null) {
         if (baseAlpha != null && this.material?.uniforms?.uBaseAlpha) {
             this.baseAlpha = Number(baseAlpha);
             this.material.uniforms.uBaseAlpha.value = this.baseAlpha;
         }
+        if (opacityScale != null && this.material?.uniforms?.uOpacityScale) {
+            this.opacityScale = Number(opacityScale);
+            this.material.uniforms.uOpacityScale.value = this.opacityScale;
+        }
+        let needsRebuild = false;
         if (transferLow != null && this.material?.uniforms?.uTransferLow) {
             this.transferLow = Number(transferLow);
             this.material.uniforms.uTransferLow.value = this.transferLow;
+            needsRebuild = true;
         }
         if (transferHigh != null && this.material?.uniforms?.uTransferHigh) {
             this.transferHigh = Number(transferHigh);
             this.material.uniforms.uTransferHigh.value = this.transferHigh;
+            needsRebuild = true;
+        }
+        if (needsRebuild) {
+            if (this.opacityMapTexture) {
+                this.opacityMapTexture.dispose();
+            }
+            this.opacityMapTexture = buildOpacityMapTexture(this.transferLow, this.transferHigh);
+            if (this.material?.uniforms?.uOpacityMap) {
+                this.material.uniforms.uOpacityMap.value = this.opacityMapTexture;
+            }
         }
     }
 
@@ -732,6 +868,10 @@ export class OceanVolumeRenderer {
         if (this.colorMapTexture) {
             this.colorMapTexture.dispose();
             this.colorMapTexture = null;
+        }
+        if (this.opacityMapTexture) {
+            this.opacityMapTexture.dispose();
+            this.opacityMapTexture = null;
         }
     }
 }

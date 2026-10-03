@@ -97,6 +97,56 @@ function buildColorMapTexture(variable, lo, hi) {
     return tex;
 }
 
+/**
+ * Geographic <-> Scene World coordinate conversion helpers (Phase 7).
+ * In SolvX:
+ * - Three.js X = Northing (Latitude direction, km)
+ * - Three.js Z = Easting (Longitude direction, km)
+ * - Three.js Y = Height / Depth
+ */
+export function worldToLongitude(worldZ, bounds = [84.167, 92.917, 16.083, 23.500]) {
+    if (!bounds || bounds.length < 4) return 88.5;
+    const [minLon, maxLon, minLat, maxLat] = bounds;
+    const midLon = (minLon + maxLon) / 2.0;
+    const midLat = (minLat + maxLat) / 2.0;
+    const klon = 111.32 * Math.cos((midLat * Math.PI) / 180.0);
+    return midLon + worldZ / (klon || 1.0);
+}
+
+export function worldToLatitude(worldX, bounds = [84.167, 92.917, 16.083, 23.500]) {
+    if (!bounds || bounds.length < 4) return 19.8;
+    const [minLon, maxLon, minLat, maxLat] = bounds;
+    const midLat = (minLat + maxLat) / 2.0;
+    const klat = 111.32;
+    return midLat + worldX / klat;
+}
+
+export function longitudeToWorldZ(lon, bounds = [84.167, 92.917, 16.083, 23.500]) {
+    if (!bounds || bounds.length < 4) return 0;
+    const [minLon, maxLon, minLat, maxLat] = bounds;
+    const midLon = (minLon + maxLon) / 2.0;
+    const midLat = (minLat + maxLat) / 2.0;
+    const klon = 111.32 * Math.cos((midLat * Math.PI) / 180.0);
+    return (lon - midLon) * klon;
+}
+
+export function latitudeToWorldX(lat, bounds = [84.167, 92.917, 16.083, 23.500]) {
+    if (!bounds || bounds.length < 4) return 0;
+    const [minLon, maxLon, minLat, maxLat] = bounds;
+    const midLat = (minLat + maxLat) / 2.0;
+    const klat = 111.32;
+    return (lat - midLat) * klat;
+}
+
+// Coordinate aliases
+export function longitudeToWorldX(lon, bounds) {
+    return longitudeToWorldZ(lon, bounds);
+}
+
+export function latitudeToWorldZ(lat, bounds) {
+    return latitudeToWorldX(lat, bounds);
+}
+
 export class OceanVolumeRenderer {
     constructor(bathymetry, sceneManager, options = {}) {
         this.bathymetry = bathymetry;
@@ -105,7 +155,7 @@ export class OceanVolumeRenderer {
 
         this.maxDepthM = 541.089; // Default max depth of 4D model
         this.opacity = options.opacity != null ? options.opacity : 0.55;
-        this.stepAlpha = options.stepAlpha != null ? options.stepAlpha : 0.045;
+        this.stepAlpha = options.stepAlpha != null ? options.stepAlpha : 0.025;
         this.variable = 'ocean_temperature';
         this.valLo = 24.0;
         this.valHi = 31.0;
@@ -153,7 +203,8 @@ export class OceanVolumeRenderer {
                 uValHi: { value: this.valHi },
                 uGlobalOpacity: { value: this.opacity },
                 uStepAlpha: { value: this.stepAlpha },
-                uDebugMode: { value: 0 }
+                uDebugMode: { value: 0 },
+                uDebugSliceDepthM: { value: 0.0 }
             },
             vertexShader: `
                 out vec3 vLocalPos;
@@ -187,6 +238,7 @@ export class OceanVolumeRenderer {
                 uniform float uGlobalOpacity;
                 uniform float uStepAlpha;
                 uniform int uDebugMode;
+                uniform float uDebugSliceDepthM;
 
                 // Ray-AABB intersection on unit box [-0.5, 0.5]^3
                 bool intersectBox(vec3 ro, vec3 rd, out float tEnter, out float tExit) {
@@ -241,8 +293,9 @@ export class OceanVolumeRenderer {
                         float depthM = clamp((0.5 - p.y) * uMaxDepthM, 0.0, uMaxDepthM);
 
                         // Seabed clipping via bathymetry texture
+                        float seabedM = 6000.0;
                         if (uHasBathyTex) {
-                            float seabedM = texture(uBathyTex, vec2(normLon, normLat)).r * 6000.0;
+                            seabedM = texture(uBathyTex, vec2(normLon, normLat)).r * 6000.0;
                             // If land or sample is beneath seabed floor, skip
                             if (seabedM < 0.5 || depthM > seabedM) {
                                 p += stepVec;
@@ -250,16 +303,43 @@ export class OceanVolumeRenderer {
                             }
                         }
 
-                        // Debug Mode 1: Depth slice coloring
+                        // ================= DEBUG MODES (Phase 30) =================
+                        // Mode 1: Normalized depth (surface = 0/black, bottom = 1/white)
                         if (uDebugMode == 1) {
-                            float frac = depthM / uMaxDepthM;
-                            vec4 c = vec4(frac, 1.0 - frac, 0.5, 0.08 * uGlobalOpacity);
-                            float w = (1.0 - accColor.a) * c.a;
-                            accColor.rgb += c.rgb * w;
+                            float normD = clamp(depthM / uMaxDepthM, 0.0, 1.0);
+                            float w = (1.0 - accColor.a) * (0.08 * uGlobalOpacity);
+                            accColor.rgb += vec3(normD) * w;
                             accColor.a += w;
                             if (accColor.a >= 0.95) break;
                             p += stepVec;
                             continue;
+                        }
+
+                        // Mode 2: Normalized longitude (West = 0/black, East = 1/white)
+                        if (uDebugMode == 2) {
+                            float w = (1.0 - accColor.a) * (0.08 * uGlobalOpacity);
+                            accColor.rgb += vec3(normLon) * w;
+                            accColor.a += w;
+                            if (accColor.a >= 0.95) break;
+                            p += stepVec;
+                            continue;
+                        }
+
+                        // Mode 3: Normalized latitude (South = 0/black, North = 1/white)
+                        if (uDebugMode == 3) {
+                            float w = (1.0 - accColor.a) * (0.08 * uGlobalOpacity);
+                            accColor.rgb += vec3(normLat) * w;
+                            accColor.a += w;
+                            if (accColor.a >= 0.95) break;
+                            p += stepVec;
+                            continue;
+                        }
+
+                        // Mode 6: Bathymetry seabed mask
+                        if (uDebugMode == 6) {
+                            float bathyNorm = clamp(seabedM / 3500.0, 0.0, 1.0);
+                            accColor = vec4(vec3(bathyNorm), 0.95 * uGlobalOpacity);
+                            break;
                         }
 
                         // Non-uniform vertical level lookup
@@ -282,8 +362,21 @@ export class OceanVolumeRenderer {
                         float v0 = texture(uData3D, vec3(normLon, normLat, w0)).r;
                         float v1 = texture(uData3D, vec3(normLon, normLat, w1)).r;
 
-                        // Check sentinel value (-999.0 indicates land/no-data)
-                        if (v0 > -900.0 || v1 > -900.0) {
+                        bool hasValidData = (v0 > -900.0 || v1 > -900.0);
+
+                        // Mode 7: Invalid-data / NaN mask
+                        if (uDebugMode == 7) {
+                            vec3 col = hasValidData ? vec3(0.2, 0.4, 0.6) : vec3(1.0, 0.0, 1.0);
+                            float a = hasValidData ? (0.02 * uGlobalOpacity) : (0.15 * uGlobalOpacity);
+                            float w = (1.0 - accColor.a) * a;
+                            accColor.rgb += col * w;
+                            accColor.a += w;
+                            if (accColor.a >= 0.95) break;
+                            p += stepVec;
+                            continue;
+                        }
+
+                        if (hasValidData) {
                             float sampleVal = 0.0;
                             if (v0 <= -900.0) {
                                 sampleVal = v1;
@@ -295,9 +388,32 @@ export class OceanVolumeRenderer {
 
                             // Normalize against active variable range
                             float normVal = clamp((sampleVal - uValLo) / max(uValHi - uValLo, 0.0001), 0.0, 1.0);
-                            vec4 sampleCol = texture(uColorMap, vec2(normVal, 0.5));
 
-                            // Step opacity with global volume slider
+                            // Mode 4: Raw normalized scalar (grayscale)
+                            if (uDebugMode == 4) {
+                                float stepA = clamp(uStepAlpha * uGlobalOpacity, 0.0, 1.0);
+                                float weight = (1.0 - accColor.a) * stepA;
+                                accColor.rgb += vec3(normVal) * weight;
+                                accColor.a += weight;
+                                if (accColor.a >= 0.95) break;
+                                p += stepVec;
+                                continue;
+                            }
+
+                            // Mode 5: Fixed depth slice (sample nearest to uDebugSliceDepthM)
+                            if (uDebugMode == 5) {
+                                float sliceTol = uMaxDepthM / 48.0;
+                                if (abs(depthM - uDebugSliceDepthM) <= sliceTol) {
+                                    vec4 sampleCol = texture(uColorMap, vec2(normVal, 0.5));
+                                    accColor = vec4(sampleCol.rgb, 0.95 * uGlobalOpacity);
+                                    break;
+                                }
+                                p += stepVec;
+                                continue;
+                            }
+
+                            // Mode 0: Normal scientific scalar volume rendering
+                            vec4 sampleCol = texture(uColorMap, vec2(normVal, 0.5));
                             float stepA = clamp(uStepAlpha * uGlobalOpacity, 0.0, 1.0);
 
                             // Front-to-back accumulation
@@ -311,7 +427,7 @@ export class OceanVolumeRenderer {
                         p += stepVec;
                     }
 
-                    if (accColor.a < 0.01) {
+                    if (accColor.a < 0.005) {
                         discard;
                     }
 
@@ -440,9 +556,12 @@ export class OceanVolumeRenderer {
         }
     }
 
-    setDebugMode(mode) {
+    setDebugMode(mode, sliceDepthM = 0) {
         if (this.material?.uniforms?.uDebugMode) {
             this.material.uniforms.uDebugMode.value = Number(mode) || 0;
+        }
+        if (this.material?.uniforms?.uDebugSliceDepthM) {
+            this.material.uniforms.uDebugSliceDepthM.value = Number(sliceDepthM) || 0.0;
         }
     }
 

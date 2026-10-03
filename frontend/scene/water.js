@@ -149,8 +149,8 @@ export class DynamicWater {
         });
 
         boxMat.onBeforeCompile = (shader) => {
-            shader.uniforms.surfaceColor = { value: new THREE.Color(0.20, 0.65, 0.90) };
-            shader.uniforms.deepColor = { value: new THREE.Color(0.04, 0.22, 0.46) };
+            shader.uniforms.surfaceColor = { value: new THREE.Color(0.18, 0.60, 0.85) };
+            shader.uniforms.deepColor = { value: new THREE.Color(0.08, 0.35, 0.55) };
             shader.uniforms.minDepth = { value: minDepthVal };
             shader.uniforms.maxDepth = { value: maxDepthVal };
 
@@ -159,7 +159,6 @@ export class DynamicWater {
                 attribute float instanceDepth;
                 varying float vUseDepth;
                 varying float vInstanceDepth;
-                varying float vColumnDepth;
                 ${shader.vertexShader}
             `.replace(
                 '#include <worldpos_vertex>',
@@ -167,10 +166,6 @@ export class DynamicWater {
                 #include <worldpos_vertex>
                 vUseDepth = instanceUseDepth;
                 vInstanceDepth = instanceDepth;
-                // Unit BoxGeometry(1, 1, 1) has position.y in [-0.5, 0.5].
-                // +0.5 corresponds to sea surface (top), -0.5 corresponds to seabed (bottom).
-                // vColumnDepth maps to: 0.0 at sea surface, 0.5 at mid-column, 1.0 at seabed.
-                vColumnDepth = clamp(0.5 - position.y, 0.0, 1.0);
                 `
             );
 
@@ -181,7 +176,6 @@ export class DynamicWater {
                 uniform float maxDepth;
                 varying float vUseDepth;
                 varying float vInstanceDepth;
-                varying float vColumnDepth;
                 ${shader.fragmentShader}
             `.replace(
                 '#include <color_fragment>',
@@ -190,14 +184,8 @@ export class DynamicWater {
                 
                 if (vUseDepth > 0.5) {
                     float depthRange = max(maxDepth - minDepth, 0.000001);
-                    float bathymetryT = clamp((vInstanceDepth - minDepth) / depthRange, 0.0, 1.0);
-                    float columnT = clamp(vColumnDepth, 0.0, 1.0);
-
-                    // Combine vertical water-column gradient (primary) with bathymetric depth variation
-                    float bathymetryInfluence = 0.25;
-                    float finalT = clamp(columnT * (1.0 - bathymetryInfluence) + bathymetryT * bathymetryInfluence, 0.0, 1.0);
-
-                    diffuseColor.rgb = mix(surfaceColor, deepColor, finalT);
+                    float t = clamp((vInstanceDepth - minDepth) / depthRange, 0.0, 1.0);
+                    diffuseColor.rgb = mix(surfaceColor, deepColor, t);
                 }
                 `
             );
@@ -213,8 +201,7 @@ export class DynamicWater {
             dummy.updateMatrix();
             this.instancedVolume.setMatrixAt(k, dummy.matrix);
 
-            // The color here is ignored by our shader when instanceUseDepth = 1.0, 
-            // but we set it to white as a clean default.
+            // Clean default
             this.instancedVolume.setColorAt(k, new THREE.Color(1, 1, 1));
         }
 
@@ -231,7 +218,8 @@ export class DynamicWater {
         this.opacity = Number(opacity);
         if (this.instancedVolume?.material) {
             this.instancedVolume.material.opacity = this.opacity;
-            this.instancedVolume.visible = this.opacity > 0.01;
+            const isVolumeActive = this.volumeRenderer && this.volumeRenderer.mesh && this.volumeRenderer.mesh.visible;
+            this.instancedVolume.visible = !isVolumeActive && (this.opacity > 0.01);
         }
         if (this.volumeRenderer) {
             this.volumeRenderer.setOpacity(this.opacity);

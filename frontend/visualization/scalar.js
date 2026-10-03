@@ -25,7 +25,7 @@ function calculatePercentileRange(data2dOr3d, maxSamples = 1500) {
                 for (let i = 0; i < lonLen; i++) {
                     if (count % step === 0) {
                         const val = data2dOr3d[d][j][i];
-                        if (val != null && isFinite(val)) samples.push(val);
+                        if (val != null && isFinite(val) && val > -900 && val < 10000) samples.push(val);
                     }
                     count++;
                 }
@@ -42,7 +42,7 @@ function calculatePercentileRange(data2dOr3d, maxSamples = 1500) {
             for (let i = 0; i < lonLen; i++) {
                 if (count % step === 0) {
                     const val = data2dOr3d[j][i];
-                    if (val != null && isFinite(val)) samples.push(val);
+                    if (val != null && isFinite(val) && val > -900 && val < 10000) samples.push(val);
                 }
                 count++;
             }
@@ -307,6 +307,20 @@ export class ScalarVisualizer {
             const depthLevels = this.currentData?.metadata?.depth_levels || this.currentData?.depth_levels;
 
             if (is3D && this.water?.volumeRenderer) {
+                // Phase 2 Runtime Data Proof
+                const midLat = Math.floor((vals[0]?.length || 0) / 2);
+                const midLon = Math.floor((vals[0]?.[0]?.length || 0) / 2);
+                console.log('[Phase 2 Proof] 3D Array Shape:', vals.length, vals[0].length, vals[0][0].length);
+                if (depthLevels) {
+                    console.log('[Phase 2 Proof] Depth Levels count:', depthLevels.length, 'min:', depthLevels[0], 'max:', depthLevels[depthLevels.length - 1]);
+                }
+                console.log(`[Phase 2 Proof] Vertical Profile at [${midLat}][${midLon}]:`,
+                    'z=0:', vals[0]?.[midLat]?.[midLon],
+                    'z=10:', vals[10]?.[midLat]?.[midLon],
+                    'z=20:', vals[20]?.[midLat]?.[midLon],
+                    'z=31:', vals[31]?.[midLat]?.[midLon]
+                );
+
                 this.water.volumeRenderer.setField(
                     vals,
                     depthLevels,
@@ -454,6 +468,10 @@ export class ScalarVisualizer {
     }
 
     sliceAtDepth(depthM, mode = 'slice') {
+        if (mode === 'volume') {
+            // In 3D volume mode, the volumetric ray marcher already samples and visualizes all depth levels
+            return;
+        }
         this.applyVolumeColors(depthM);
         this.updateSliceTexture(depthM, mode);
     }

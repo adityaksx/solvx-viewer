@@ -34,48 +34,10 @@ export class AnomalyVisualizer {
         
         const { scores, lats, lons } = this.currentData;
         if (!scores || scores.length === 0) return;
-
-        // Use the existing recolorCells function on DynamicWater
-        this.water.recolorCells((cell) => {
-            // Find closest lat/lon index
-            let minLatDist = Infinity, latIdx = 0;
-            let minLonDist = Infinity, lonIdx = 0;
-            
-            for (let i = 0; i < lats.length; i++) {
-                const d = Math.abs(lats[i] - cell.lat);
-                if (d < minLatDist) { minLatDist = d; latIdx = i; }
-            }
-            for (let i = 0; i < lons.length; i++) {
-                const d = Math.abs(lons[i] - cell.lon);
-                if (d < minLonDist) { minLonDist = d; lonIdx = i; }
-            }
-            
-            const score = scores[latIdx][lonIdx];
-            if (score < 0 || score < 20) {
-                return new THREE.Color(0x0c659e); // Normal ocean color
-            } else if (score < 40) {
-                return new THREE.Color(0xcccc00); // Low anomaly (yellow)
-            } else if (score < 60) {
-                return new THREE.Color(0xff8800); // Moderate anomaly (orange)
-            } else if (score < 80) {
-                return new THREE.Color(0xff4400); // High anomaly (red-orange)
-            } else {
-                return new THREE.Color(0xff0000); // Extreme anomaly (bright red)
-            }
-        });
+        // Legacy recolorCells removed in favor of true volumetric / shader-based rendering
     }
 
     clear() {
-        if (this.water) {
-            this.water.recolorCells((cell) => {
-                const maxH = 5000;
-                const depthFrac = Math.min(cell.h / maxH, 1.0);
-                const r = 0.08 + (1.0 - depthFrac) * 0.10; 
-                const g = 0.35 + (1.0 - depthFrac) * 0.25; 
-                const b = 0.55 + (1.0 - depthFrac) * 0.30; 
-                return new THREE.Color(r, g, b);
-            });
-        }
         this.currentData = null;
         this.hazards = [];
     }

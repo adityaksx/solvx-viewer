@@ -401,8 +401,11 @@ class SolvXApp {
             if (this.water?.volumeRenderer) {
                 this.water.volumeRenderer.setVisible(visible && isVolumeMode);
             }
-            if (this.water?.instancedVolume) {
-                this.water.instancedVolume.visible = visible && !isVolumeMode;
+            if (this.scalarViz?.sliceMesh) {
+                this.scalarViz.sliceMesh.visible = visible && !isVolumeMode && (this.activeDepthMode === 'slice');
+            }
+            if (this.scalarViz?.verticalSliceMesh) {
+                this.scalarViz.verticalSliceMesh.visible = visible && !isVolumeMode && (this.activeDepthMode === 'vertical' || this.activeDepthMode === 'vertical_custom');
             }
         } else if (layer === 'observations') {
             if (this.argoMarkersGroup) this.argoMarkersGroup.visible = visible;

@@ -232,9 +232,8 @@ assert.ok(surfSal > 25.0 && surfSal < 36.0, `Expected surface salinity ~31-33 PS
 assert.ok(deepSal > 30.0 && deepSal < 37.0, `Expected deep salinity ~34-36 PSU, got ${deepSal}`);
 console.log('✓ Phase 22 Salinity 3D pipeline test passed successfully.');
 
-// 8. Test Entity Separation & Volume Mode Isolation
+// 8. Test Entity Separation & Volume Mode Isolation (Legacy instancedVolume eradicated)
 console.log('[8/10] Testing Water Entity Separation & Volume Mode Isolation...');
-// Mock DynamicWater-like structure to verify visibility constraints
 const mockWater = {
     volumeRenderer: {
         mesh: { visible: true },
@@ -242,28 +241,28 @@ const mockWater = {
         setOpacity(o) { this.opacity = o; },
         setDebugMode(m) { this.debugMode = m; }
     },
-    instancedVolume: {
-        visible: false,
-        material: { opacity: 0.25 }
+    sliceMesh: {
+        visible: false
     }
 };
 
-// In 3D volume mode: volumeRenderer is visible, instancedVolume MUST remain strictly hidden
+// In 3D volume mode: volumeRenderer is visible, sliceMesh is hidden
 const isVolumeMode = true;
 const scientificLayerVisible = true;
 mockWater.volumeRenderer.setVisible(scientificLayerVisible && isVolumeMode);
-mockWater.instancedVolume.visible = scientificLayerVisible && !isVolumeMode;
+mockWater.sliceMesh.visible = scientificLayerVisible && !isVolumeMode;
 
 assert.strictEqual(mockWater.volumeRenderer.mesh.visible, true, 'Volume renderer must be visible in volume mode');
-assert.strictEqual(mockWater.instancedVolume.visible, false, 'Instanced volume slab must be hidden in volume mode');
+assert.strictEqual(mockWater.sliceMesh.visible, false, 'Slice mesh must be hidden in volume mode');
+assert.strictEqual(mockWater.instancedVolume, undefined, 'instancedVolume must not exist');
 
-// In 2D horizontal slice mode: volumeRenderer is hidden, instancedVolume is visible
+// In 2D horizontal slice mode: volumeRenderer is hidden, sliceMesh is visible
 const isSliceMode = false; // i.e. isVolumeMode = false
 mockWater.volumeRenderer.setVisible(scientificLayerVisible && isSliceMode);
-mockWater.instancedVolume.visible = scientificLayerVisible && !isSliceMode;
+mockWater.sliceMesh.visible = scientificLayerVisible && !isSliceMode;
 
 assert.strictEqual(mockWater.volumeRenderer.mesh.visible, false, 'Volume renderer must be hidden in slice mode');
-assert.strictEqual(mockWater.instancedVolume.visible, true, 'Instanced volume is active only in slice mode');
+assert.strictEqual(mockWater.sliceMesh.visible, true, 'Slice mesh is active in slice mode');
 
 // Test debug mode switching
 mockWater.volumeRenderer.setDebugMode(1);

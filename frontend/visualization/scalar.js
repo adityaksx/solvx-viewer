@@ -186,101 +186,7 @@ export class ScalarVisualizer {
         this.range = { lo, hi };
         updateLegendUI(this.variable, lo, hi, dataArray?.units || '');
 
-        if (mode === 'volume') {
-            // Strictly deactivate and hide legacy instanced water columns in 3D volume mode
-            if (this.water?.instancedVolume) {
-                this.water.instancedVolume.visible = false;
-            }
-        } else {
-            // Recolor volume cells at selected depth level for horizontal slice mode
-            this.applyVolumeColors(depthM);
-        }
         this.updateSliceTexture(depthM, mode);
-    }
-
-    applyVolumeColors(depthM = 0) {
-        if (!this.water || !this.water.cells) return;
-
-        // When currents variable is selected: Render ocean water in beautiful translucent marine blue
-        if (this.variable === 'currents') {
-            const maxH = Math.max(...this.water.cells.map(c => c.h), 1);
-            this.water.recolorCells(c => {
-                const depthFrac = Math.min(c.h / maxH, 1.0);
-                // Clean translucent marine sapphire / cyan-blue depth gradient
-                const r = 0.04 + (1.0 - depthFrac) * 0.06;
-                const g = 0.28 + (1.0 - depthFrac) * 0.22;
-                const b = 0.62 + (1.0 - depthFrac) * 0.28;
-                _reusableColor.setRGB(r, g, b);
-                return _reusableColor;
-            }, depthM);
-            this.water.setOpacity(0.55);
-            return;
-        }
-
-        if (!this.currentData) return;
-        const vals = this.currentData.values;
-        if (!vals || !vals.length) return;
-        
-        const bounds = this.water.bounds;
-        const dLat = bounds[3] - bounds[2];
-        const dLon = bounds[1] - bounds[0];
-        
-        const is3D = Array.isArray(vals[0]) && Array.isArray(vals[0][0]);
-        const lats = is3D ? (vals[0]?.length || 0) : vals.length;
-        const lons = is3D ? (vals[0]?.[0]?.length || 0) : (vals[0]?.length || 0);
-        if (!lats || !lons) return;
-        
-        const depthLevels = this.currentData.metadata?.depth_levels;
-        let dIdx = 0;
-        if (is3D && depthLevels && depthLevels.length > 0) {
-            dIdx = findDepthIndex(depthLevels, depthM);
-        }
-
-        const volLo = this.range.lo;
-        const volHi = this.range.hi;
-        const variable = this.variable;
-
-        this.water.recolorCells(c => {
-            // Map the rendered cell center onto the actual data-grid coordinates.
-            // Using (N - 1) keeps both grid edges aligned with the regional bounds.
-            const u = ((c.lon - bounds[0]) / dLon) * Math.max(0, lons - 1);
-            const v = ((c.lat - bounds[2]) / dLat) * Math.max(0, lats - 1);
-
-            if (u < 0 || v < 0 || u > Math.max(0, lons - 1) || v > Math.max(0, lats - 1)) {
-                return null;
-            }
-
-            const i0 = Math.floor(u);
-            const j0 = Math.floor(v);
-            const i1 = Math.min(i0 + 1, lons - 1);
-            const j1 = Math.min(j0 + 1, lats - 1);
-            const fu = u - i0;
-            const fv = v - j0;
-
-            const grid = is3D ? vals[dIdx] : vals;
-            const q00 = grid?.[j0]?.[i0];
-            const q10 = grid?.[j0]?.[i1];
-            const q01 = grid?.[j1]?.[i0];
-            const q11 = grid?.[j1]?.[i1];
-
-            const samples = [
-                [q00, (1 - fu) * (1 - fv)],
-                [q10, fu * (1 - fv)],
-                [q01, (1 - fu) * fv],
-                [q11, fu * fv]
-            ].filter(([value]) => Number.isFinite(value));
-
-            if (!samples.length) return null;
-
-            // Bilinear interpolation makes adjacent rendered cells transition
-            // continuously instead of snapping to one nearest grid point.
-            const weightSum = samples.reduce((sum, [, weight]) => sum + weight, 0) || 1;
-            const val = samples.reduce((sum, [value, weight]) => sum + value * weight, 0) / weightSum;
-
-            const color = sampleColor(variable, val, volLo, volHi);
-            _reusableColor.setRGB(color.r, color.g, color.b);
-            return _reusableColor;
-        }, depthM);
     }
 
     applyVerticalSlicePlane(sLat, sLon, eLat, eLon, transectData = null) {
@@ -293,7 +199,6 @@ export class ScalarVisualizer {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
-            if (this.water?.instancedVolume) this.water.instancedVolume.visible = (mode !== 'volume');
             return;
         }
 
@@ -301,16 +206,12 @@ export class ScalarVisualizer {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
             if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(false);
-            if (this.water?.instancedVolume) this.water.instancedVolume.visible = (mode !== 'volume');
             return;
         }
 
         if (mode === 'volume') {
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
-            if (this.water?.instancedVolume) {
-                this.water.instancedVolume.visible = false;
-            }
 
             const vals = this.currentData?.values;
             const is3D = Array.isArray(vals) && Array.isArray(vals[0]) && Array.isArray(vals[0][0]);
@@ -339,15 +240,9 @@ export class ScalarVisualizer {
                     this.range.hi
                 );
                 this.water.volumeRenderer.setVisible(true);
-                if (this.water.instancedVolume) {
-                    this.water.instancedVolume.visible = false;
-                }
             } else {
                 if (this.water?.volumeRenderer) {
                     this.water.volumeRenderer.setVisible(false);
-                }
-                if (this.water?.instancedVolume) {
-                    this.water.instancedVolume.visible = false;
                 }
             }
             return;
@@ -356,9 +251,6 @@ export class ScalarVisualizer {
         if (mode === 'vertical' || mode === 'vertical_custom') {
             if (this.water?.volumeRenderer) {
                 this.water.volumeRenderer.setVisible(false);
-            }
-            if (this.water?.instancedVolume) {
-                this.water.instancedVolume.visible = false;
             }
             if (this.sliceMesh) this.sliceMesh.visible = false;
             if (this.verticalSliceMesh) this.verticalSliceMesh.visible = true;
@@ -424,9 +316,6 @@ export class ScalarVisualizer {
         if (this.water?.volumeRenderer) {
             this.water.volumeRenderer.setVisible(false);
         }
-        if (this.water?.instancedVolume) {
-            this.water.instancedVolume.visible = true;
-        }
 
         const isSurface = (depthM == null || Math.abs(depthM) < 1);
 
@@ -442,48 +331,35 @@ export class ScalarVisualizer {
         const tempFakeArray = { values: slice2d };
         const texture = createDataTexture2D(tempFakeArray, this.variable, this.range.lo, this.range.hi);
         
-        if (isSurface) {
-            if (this.sliceMesh) this.sliceMesh.visible = false;
-            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
-            if (this.water) {
-                this.water.setOpacity(0.45);
-            }
-        } else {
-            // Subsurface depth slice: position underwater mesh at actual depth
-            if (this.water) {
-                this.water.setOpacity(0.45);
-            }
-            if (this.sliceMesh) this.sliceMesh.visible = true;
-            if (this.verticalSliceMesh) this.verticalSliceMesh.visible = false;
-
-            if (texture && this.sliceMesh && this.sliceMesh.material) {
-                if (this.sliceMesh.material.uniforms) {
-                    if (this.sliceMesh.material.uniforms.map.value) {
-                        this.sliceMesh.material.uniforms.map.value.dispose();
-                    }
-                    this.sliceMesh.material.uniforms.map.value = texture;
-                    if (this.water.bathyTex && !this.sliceMesh.material.uniforms.uHasBathyTex.value) {
-                        this.sliceMesh.material.uniforms.uBathyTex.value = this.water.bathyTex;
-                        this.sliceMesh.material.uniforms.uHasBathyTex.value = true;
-                    }
+        if (texture && this.sliceMesh && this.sliceMesh.material) {
+            if (this.sliceMesh.material.uniforms) {
+                if (this.sliceMesh.material.uniforms.map.value) {
+                    this.sliceMesh.material.uniforms.map.value.dispose();
+                }
+                this.sliceMesh.material.uniforms.map.value = texture;
+                if (this.water?.bathyTex && !this.sliceMesh.material.uniforms.uHasBathyTex.value) {
+                    this.sliceMesh.material.uniforms.uBathyTex.value = this.water.bathyTex;
+                    this.sliceMesh.material.uniforms.uHasBathyTex.value = true;
                 }
             }
-            
-            const yPos = this.sceneManager.depthY(depthM);
-            if (this.sliceMesh) {
-                this.sliceMesh.position.set(this._centerX || 0, yPos, this._centerZ || 0);
-            }
+        }
+
+        const yPos = isSurface ? 0 : this.sceneManager.depthY(depthM);
+        if (this.sliceMesh) {
+            this.sliceMesh.position.set(this._centerX || 0, yPos, this._centerZ || 0);
+            this.sliceMesh.visible = true;
+        }
+        if (this.verticalSliceMesh) {
+            this.verticalSliceMesh.visible = false;
         }
     }
 
     sliceAtDepth(depthM, mode = 'slice') {
         if (mode === 'volume') {
-            // In 3D volume mode, the volumetric ray marcher already samples and visualizes all depth levels
-            if (this.water?.instancedVolume) this.water.instancedVolume.visible = false;
             if (this.water?.volumeRenderer) this.water.volumeRenderer.setVisible(true);
+            if (this.sliceMesh) this.sliceMesh.visible = false;
             return;
         }
-        this.applyVolumeColors(depthM);
         this.updateSliceTexture(depthM, mode);
     }
 

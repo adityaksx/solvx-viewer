@@ -1,8 +1,0 @@
-{
-  "selected_provider": "gemini",
-  "selected_models": {
-    "gemini": "gemini-2.5-flash",
-    "nvidia": "deepseek-ai/deepseek-v4.1-flash"
-  },
-  "auto_fallback": false
-}

@@ -4,6 +4,7 @@
 // Synchronized Evidence Graphs, and Data-Driven Warning System.
 
 import * as THREE from 'three';
+import Chart from 'chart.js/auto';
 import { ApiClient } from '../api/apiClient.js';
 import { OceanScene } from '../scene/oceanScene.js';
 import { buildLand, buildIslands } from '../scene/land.js';

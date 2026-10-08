@@ -496,17 +496,23 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-This installs the application's current Python stack:
+This installs the application's current Python stack, including the Copernicus Marine SDK and `.env` loader:
 
 ```text
 fastapi
 uvicorn
+python-dotenv
 numpy
 pandas
 xarray
 netCDF4
+python-dateutil
 geopandas
 shapely
+scikit-learn
+joblib
+copernicusmarine
+google-genai
 ```
 
 ---
@@ -531,26 +537,59 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
-The repository currently includes environment variables for:
+SolvX loads `.env` automatically at backend startup.
 
-- Copernicus Marine credentials
+### Copernicus Marine credentials
+
+The current `CopernicusAdapter` expects these variables:
+
+```env
+COPERNICUSMARINE_SERVICE_USERNAME=YOUR_USERNAME
+COPERNICUSMARINE_SERVICE_PASSWORD=YOUR_PASSWORD
+```
+
+The adapter also accepts these underscore aliases:
+
+```env
+COPERNICUS_MARINE_SERVICE_USERNAME=YOUR_USERNAME
+COPERNICUS_MARINE_SERVICE_PASSWORD=YOUR_PASSWORD
+```
+
+The primary form above is recommended.
+
+The adapter also supports the Copernicus Marine credentials file:
+
+```text
+.copernicusmarine/.copernicusmarine-credentials
+```
+
+with:
+
+```text
+username=YOUR_USERNAME
+password=YOUR_PASSWORD
+```
+
+The file may be placed in the project root or in:
+
+```text
+~/.copernicusmarine/.copernicusmarine-credentials
+```
+
+### Other environment variables
+
+The `.env.example` file contains the supported configuration for:
+
 - INCOIS API/auth configuration
 - NOAA endpoint configuration
+- MapTiler
 - Request timeouts
 - Cache size / TTL
 - Local-data mode
+- NVIDIA NIM
+- Gemini
 
-Example:
-
-```env
-COPERNICUSMARINE_SERVICE_USERNAME=
-COPERNICUSMARINE_SERVICE_PASSWORD=
-```
-
-Do **not** commit real credentials to GitHub.
-
----
-
+**Never commit real credentials to GitHub.** `.env` and `.copernicusmarine/.copernicusmarine-credentials` are ignored by Git.
 ## Running SolvX
 
 The easiest way to start the complete application is:

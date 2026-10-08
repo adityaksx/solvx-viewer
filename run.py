@@ -4,6 +4,8 @@ from pathlib import Path
 import json
 import subprocess
 import threading
+import time
+import urllib.request
 import webbrowser
 
 ROOT=Path(__file__).resolve().parent
@@ -21,7 +23,23 @@ def main():
         print('Using existing GEBCO/coast/EEZ geometry cache.')
     else:
         print('Dynamic geometry mode enabled (fetching on demand via /api/geography and /api/bathymetry).')
-    threading.Thread(target=start_api,daemon=True).start()
+    api_thread = threading.Thread(target=start_api, daemon=True, name='solvx-api')
+    api_thread.start()
+
+    # Do not expose the frontend until FastAPI is actually ready. The backend
+    # performs scientific-data cache warmup in the background after readiness.
+    health_url = 'http://127.0.0.1:8080/health'
+    print('Starting SolvX API...')
+    for _ in range(60):
+        try:
+            with urllib.request.urlopen(health_url, timeout=1) as response:
+                if response.status == 200:
+                    print('SolvX API is ready.')
+                    break
+        except Exception:
+            time.sleep(0.25)
+    else:
+        raise RuntimeError('SolvX API did not become ready on http://127.0.0.1:8080')
 
     # Vite resolves npm dependencies (Three.js, MapLibre, Chart.js) through its
     # module graph instead of serving manually copied files from frontend/vendor.

@@ -2,11 +2,15 @@
 fastapi
 uvicorn
 
+# Environment / configuration
+python-dotenv
+
 # Scientific / array processing
 numpy
 pandas
 xarray
 netCDF4
+python-dateutil
 
 # Geospatial processing
 geopandas
@@ -15,6 +19,9 @@ shapely
 # Machine Learning
 scikit-learn>=1.9.0
 joblib>=1.4.0
+
+# Copernicus Marine
+copernicusmarine
 
 # AI / LLM
 google-genai>=1.0.0

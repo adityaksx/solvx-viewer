@@ -20,20 +20,21 @@ from .processing.normalization import variable_catalog, sanitize
 
 from contextlib import asynccontextmanager
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    from .services.gpu_service import init_gpu
+def _warm_data_cache():
+    """Warm the scientific-data cache without blocking API readiness."""
     from .services.ocean_data_service import find_logical
     from .services.data_collector import COLLECTOR
     from .config import DEFAULT_BBOX
-    init_gpu()
-    # Pre-warm catalog
+
+    # Pre-warm the logical dataset catalog.
     for v in ('temperature', 'salinity', 'currents', 'sea_level', 'chlorophyll'):
         try:
             find_logical(v)
         except Exception:
             pass
-    # Pre-warm default ocean bundle so initial user request is instantaneous
+
+    # Pre-warm the default ocean bundle. This may download data from
+    # Copernicus Marine, so it must not delay FastAPI startup.
     try:
         COLLECTOR.get_ocean_bundle(
             provider='auto',
@@ -47,6 +48,22 @@ async def lifespan(app: FastAPI):
         )
     except Exception:
         pass
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from .services.gpu_service import init_gpu
+    import threading
+
+    init_gpu()
+
+    # API readiness must not wait for remote scientific-data downloads.
+    threading.Thread(
+        target=_warm_data_cache,
+        name='solvx-data-warmup',
+        daemon=True
+    ).start()
+
     yield
 
 app = FastAPI(

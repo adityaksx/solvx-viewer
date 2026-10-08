@@ -28,7 +28,6 @@
   "dependencies": {
     "chart.js": "^4.5.1",
     "maplibre-gl": "^4.7.1",
-    "puppeteer": "^25.11.0",
     "three": "^0.186.1"
   },
   "devDependencies": {

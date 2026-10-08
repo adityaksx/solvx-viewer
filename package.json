@@ -9,7 +9,10 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "npx --yes vite@8.3.3",
+    "build": "npx --yes vite@8.3.3 build",
+    "preview": "npx --yes vite@8.3.3 preview"
   },
   "repository": {
     "type": "git",

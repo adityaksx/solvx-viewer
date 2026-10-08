@@ -2,6 +2,9 @@
 // Handles 2D MapLibre map drawing, timeline bounds, multi-layer selection,
 // cache status verification, batch download orchestration, and storage inventory.
 
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
 import { ApiClient } from './api/apiClient.js';
 import { themeManager } from './context/themeManager.js';
 import { SelectionContext, PRESET_REGIONS } from './context/selectionContext.js';

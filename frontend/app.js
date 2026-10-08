@@ -4,6 +4,10 @@
 // Dynamic Multi-Resolution Timeline, 9 Layer Toggles, and Provenance Reporting.
 
 import * as THREE from 'three';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
+window.maplibregl = maplibregl;
 import { ApiClient } from './api/apiClient.js';
 import { WorldMap2D } from './map/worldMap2D.js';
 import { RegionDrawer } from './map/regionDrawing.js';

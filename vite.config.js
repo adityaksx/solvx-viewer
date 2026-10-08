@@ -2,6 +2,11 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: 'frontend',
+  resolve: {
+    // Every Three.js import, including three/addons/*, must resolve to the
+    // same npm package instance. This prevents duplicate WebGL class registries.
+    dedupe: ['three']
+  },
   server: {
     host: '127.0.0.1',
     port: 5500,

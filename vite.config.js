@@ -8,7 +8,12 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8080',
-        changeOrigin: true
+        changeOrigin: true,
+        // /api/apiClient.js is a frontend module, not a FastAPI endpoint.
+        bypass(req) {
+          const path = req.url?.split('?')[0];
+          if (path === '/api/apiClient.js') return req.url;
+        }
       }
     }
   },
